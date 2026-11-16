@@ -124,3 +124,23 @@ func TestBrowserTerminalDiagnosticsLogTheSocketWithoutTouchingTheStream(t *testi
 		time.Sleep(10 * time.Millisecond)
 	}
 }
+
+// A reconnect's socket takes the log over: the old socket's teardown, which
+// can land later, leaves the new log alone.
+func TestTerminalDiagnosticsOldSocketTeardownKeepsTheNewLog(t *testing.T) {
+	oldSocket, newSocket := &termDiagSocket{}, &termDiagSocket{}
+	oldSocket.apply("diag_shared")
+	newSocket.apply("diag_shared")
+	oldSocket.close()
+	if termDiagLookup("diag_shared") == nil {
+		t.Fatal("the old socket's teardown dropped the new socket's log")
+	}
+	newSocket.input(3)
+	if events := termDiagLookup("diag_shared").since(0); len(events) != 1 || events[0].Bytes != 3 {
+		t.Fatalf("the new socket logs into the served log, got %+v", events)
+	}
+	newSocket.close()
+	if termDiagLookup("diag_shared") != nil {
+		t.Fatal("the new socket's own teardown drops it")
+	}
+}

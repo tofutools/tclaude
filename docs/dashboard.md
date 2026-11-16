@@ -279,7 +279,9 @@ last 5 seconds:
 
 For a terminal on this node, it also reads the server's side of the socket:
 when each frame went out, its size, how long the write took, and how soon
-output followed input. **Copy report** copies it all as text. Diagnostics
+output followed input. **Copy report** copies it all as text, and **▾** folds
+the readout so the terminal under it takes swipes again. Rendered frames
+include the cursor's blink, about two a second. Diagnostics
 only measures: the stream, the terminal and its renderer work exactly as with
 it off.
 

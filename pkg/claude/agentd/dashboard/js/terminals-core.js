@@ -1313,7 +1313,7 @@ export function mountTerminalWidget({
       if (!firstOutputSeen) { attached(); setStatus('connected'); }
       if (diag) {
         // Diagnostics: the same write, timed (terminal-diagnostics.js).
-        diag.message(event.data instanceof ArrayBuffer ? event.data.byteLength : String(event.data).length);
+        diag.message(event.data instanceof ArrayBuffer ? event.data.byteLength : new TextEncoder().encode(String(event.data)).byteLength);
         const parsed = diag.wrote();
         term.write(event.data instanceof ArrayBuffer ? new Uint8Array(event.data) : event.data, () => { parsed(); markOutputParsed(); });
       } else {

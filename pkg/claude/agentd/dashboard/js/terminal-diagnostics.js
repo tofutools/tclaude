@@ -44,6 +44,14 @@ export function setDiagnosticsEnabled(on) {
   for (const listener of [...listeners]) listener(!!on);
 }
 
+// Another tab or window of this device turning it on or off.
+try {
+  globalThis.addEventListener?.('storage', (event) => {
+    if (event.key !== DIAG_STORAGE_KEY) return;
+    for (const listener of [...listeners]) listener(event.newValue === '1');
+  });
+} catch { /* no window */ }
+
 // onDiagnosticsChange calls fn(on) on each change. Returns the unsubscribe.
 export function onDiagnosticsChange(fn) {
   listeners.add(fn);
@@ -69,6 +77,8 @@ export function gapsOf(times) {
 // a gap of k refresh intervals is k - 1 missed. The interval is the
 // display's own, read from the shortest gaps (60 Hz, 120 Hz alike).
 export function droppedFrames(gaps) {
+  // A gap of a second or more is a page that was hidden, not frames dropped.
+  gaps = gaps.filter((gap) => gap < 1000);
   if (gaps.length < 2) return { interval: null, dropped: 0 };
   const sorted = [...gaps].sort((a, b) => a - b);
   const interval = sorted[Math.floor(sorted.length * 0.1)];
@@ -99,9 +109,10 @@ export function createDiagRecorder({ now = () => globalThis.performance?.now?.()
   const frames = []; // t (rAF)
   const steps = []; // {t, arrival, render} scroll steps
   const keys = []; // t, other input
-  let pendingWrites = []; // write times awaiting a render
+  let pendingWrites = []; // parsed writes' times, awaiting a render
   let waitingArrival = []; // steps awaiting a frame
-  let waitingRender = []; // steps whose frame arrived, awaiting a render
+  let arrived = []; // steps whose frame arrived, awaiting its parse
+  let waitingRender = []; // steps whose frame is parsed, awaiting a render
   const started = now();
 
   const prune = (list, t, get = (x) => x.t) => {
@@ -110,27 +121,40 @@ export function createDiagRecorder({ now = () => globalThis.performance?.now?.()
   const pruneAll = (t) => {
     for (const list of [messages, parses, writeToRender, longTasks, steps]) prune(list, t);
     for (const list of [renders, frames, keys]) prune(list, t, (x) => x);
+    // A terminal that does not draw (hidden, a background tab) keeps
+    // receiving: what waits on a render is given up after a while.
     const stale = t - LATENCY_GIVE_UP_MS;
     waitingArrival = waitingArrival.filter((step) => step.t >= stale);
+    arrived = arrived.filter((step) => step.t >= stale);
     waitingRender = waitingRender.filter((step) => step.t >= stale);
+    pendingWrites = pendingWrites.filter((w) => w >= stale).slice(-1000);
   };
 
   return {
     message(bytes) {
       const t = now();
       messages.push({ t, bytes });
-      for (const step of waitingArrival) { step.arrival = t - step.t; waitingRender.push(step); }
+      for (const step of waitingArrival) { step.arrival = t - step.t; arrived.push(step); }
       waitingArrival = [];
       pruneAll(t);
     },
     // wrote marks a term.write; call the returned function from its callback.
+    // Only a parsed write waits for a render: a render before the parse (a
+    // cursor blink, earlier data) did not draw it.
     wrote() {
       const t = now();
-      pendingWrites.push(t);
-      return () => { const done = now(); parses.push({ t: done, ms: done - t }); };
+      const steps = arrived;
+      arrived = [];
+      return () => {
+        const done = now();
+        parses.push({ t: done, ms: done - t });
+        pendingWrites.push(t);
+        waitingRender.push(...steps);
+      };
     },
     rendered() {
       const t = now();
+      pruneAll(t);
       renders.push(t);
       for (const w of pendingWrites) writeToRender.push({ t, ms: t - w });
       pendingWrites = [];
@@ -283,7 +307,8 @@ function randomID() {
 export function mountDiagnostics({ host, term, serverSide = false, sendControl = () => false, fetchImpl = globalThis.fetch, copy, onClose, win = globalThis }) {
   const doc = host.ownerDocument;
   const recorder = createDiagRecorder();
-  const id = randomID();
+  // A fresh id per socket: an old socket's teardown never touches the new log.
+  let id = randomID();
   const disposers = [];
   let server = null;
   let serverNote = serverSide ? 'waiting for the server…' : 'not read for a remote terminal';
@@ -322,13 +347,18 @@ export function mountDiagnostics({ host, term, serverSide = false, sendControl =
   copyButton.type = 'button';
   copyButton.textContent = 'Copy report';
   copyButton.setAttribute('data-term-diag-copy', '');
+  const foldButton = doc.createElement('button');
+  foldButton.type = 'button';
+  foldButton.textContent = '▾';
+  foldButton.setAttribute('aria-label', 'Fold the readout');
+  foldButton.setAttribute('aria-expanded', 'true');
   const closeButton = doc.createElement('button');
   closeButton.type = 'button';
   closeButton.textContent = '✕';
   closeButton.setAttribute('aria-label', 'Turn diagnostics off');
   const body = doc.createElement('pre');
   body.className = 'term-diag-body';
-  head.append(title, copyButton, closeButton);
+  head.append(title, foldButton, copyButton, closeButton);
   panel.append(head, body);
   host.append(panel);
   // The panel sits over the terminal's corner: its box anchors it.
@@ -346,21 +376,35 @@ export function mountDiagnostics({ host, term, serverSide = false, sendControl =
     const srv = server && serverEvents.length ? serverStats(serverEvents, serverNow) : null;
     return reportLines(recorder.stats(), env, srv).join('\n');
   };
-  const paint = () => { if (!stopped) body.textContent = report(); };
+  const paint = () => { if (!stopped && !body.hidden) body.textContent = report(); };
   copyButton.addEventListener('click', () => {
     const text = `${report()}\nAt: ${new Date().toISOString()}`;
     void Promise.resolve(copy ? copy(text) : win.navigator?.clipboard?.writeText?.(text)).catch(() => {});
   });
   closeButton.addEventListener('click', () => onClose?.());
+  // Folded, only the bar shows: the terminal under it takes swipes again.
+  foldButton.addEventListener('click', () => {
+    const folded = !body.hidden;
+    body.hidden = folded;
+    foldButton.textContent = folded ? '▸' : '▾';
+    foldButton.setAttribute('aria-expanded', folded ? 'false' : 'true');
+    if (!folded) paint();
+  });
 
   // The server's log of this socket, read each tick.
   const announce = () => { if (serverSide) sendControl({ type: 'diag', id }); };
+  // Read only while this terminal can be seen: the reads ride the same
+  // connection, and a hidden pane's would only add to what is measured.
+  const shown = () => doc.visibilityState !== 'hidden' && host.isConnected && host.offsetParent !== null;
   const readServer = async () => {
-    if (!serverSide || typeof fetchImpl !== 'function') return;
+    if (!serverSide || typeof fetchImpl !== 'function' || !shown()) return;
+    const asked = id;
     try {
-      const response = await fetchImpl(`/api/terminal-diag?id=${id}&since=${serverSeq}`, { cache: 'no-store', credentials: 'same-origin' });
+      const response = await fetchImpl(`/api/terminal-diag?id=${asked}&since=${serverSeq}`, { cache: 'no-store', credentials: 'same-origin' });
+      if (asked !== id) return;
       if (!response.ok) { serverNote = response.status === 404 ? 'no log yet (connecting)' : `unavailable (${response.status})`; server = null; return; }
       const data = await response.json();
+      if (asked !== id) return;
       serverNow = Number(data.now_ms) || serverNow;
       const fresh = Array.isArray(data.events) ? data.events : [];
       if (fresh.length) serverSeq = fresh[fresh.length - 1].seq;
@@ -381,7 +425,7 @@ export function mountDiagnostics({ host, term, serverSide = false, sendControl =
     wrote: () => recorder.wrote(),
     input: (scroll) => recorder.input(scroll),
     // reconnected: a new socket starts its own server log.
-    reconnected() { serverEvents = []; serverSeq = 0; announce(); },
+    reconnected() { id = randomID(); serverEvents = []; serverSeq = 0; server = null; serverNote = 'waiting for the server…'; announce(); },
     report,
     stop() {
       if (stopped) return;

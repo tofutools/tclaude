@@ -27,9 +27,6 @@ const (
 	// termDiagCap bounds one socket's log: the overlay polls every second,
 	// far more often than this many frames go by.
 	termDiagCap = 2048
-	// termDiagIdle drops a log nobody has polled for this long (a tab that
-	// went away with its overlay on).
-	termDiagIdle = time.Minute
 )
 
 var termDiagIDPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,40}$`)
@@ -83,27 +80,24 @@ var termDiagLogs = struct {
 	byID map[string]*termDiagLog
 }{byID: map[string]*termDiagLog{}}
 
-// termDiagOpen starts (or restarts) the log for id, dropping logs left idle.
+// termDiagOpen starts (or restarts) the log for id. A log lives as long as
+// its socket's diagnostics are on: the socket's teardown closes it.
 func termDiagOpen(id string) *termDiagLog {
 	termDiagLogs.Lock()
 	defer termDiagLogs.Unlock()
-	for other, log := range termDiagLogs.byID {
-		log.mu.Lock()
-		idle := time.Since(log.polled) > termDiagIdle
-		log.mu.Unlock()
-		if idle {
-			delete(termDiagLogs.byID, other)
-		}
-	}
 	log := &termDiagLog{polled: time.Now()}
 	termDiagLogs.byID[id] = log
 	return log
 }
 
-func termDiagClose(id string) {
+// termDiagClose drops id's log if it is still log: a socket that took the id
+// over since keeps its own.
+func termDiagClose(id string, log *termDiagLog) {
 	termDiagLogs.Lock()
 	defer termDiagLogs.Unlock()
-	delete(termDiagLogs.byID, id)
+	if termDiagLogs.byID[id] == log {
+		delete(termDiagLogs.byID, id)
+	}
 }
 
 func termDiagLookup(id string) *termDiagLog {
@@ -141,8 +135,8 @@ type termDiagSocket struct {
 
 // apply handles a diag frame: start a log under id, or stop.
 func (s *termDiagSocket) apply(id string) {
-	if old, _ := s.id.Load().(string); old != "" && old != id {
-		termDiagClose(old)
+	if old, _ := s.id.Load().(string); old != "" {
+		termDiagClose(old, s.log.Load())
 	}
 	s.id.Store(id)
 	if id == "" {

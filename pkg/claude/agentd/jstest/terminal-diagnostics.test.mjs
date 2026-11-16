@@ -78,7 +78,7 @@ test('the server side: send gaps, write times and how soon output followed input
 test('the report leads with frame rate and latency, and says what it could not read', () => {
   let t = 0;
   const rec = createDiagRecorder({ now: () => t });
-  t = 10; rec.input(true); t = 60; rec.message(10); t = 70; rec.rendered();
+  t = 10; rec.input(true); t = 60; rec.message(10); rec.wrote()(); t = 70; rec.rendered();
   t = 1000;
   const lines = reportLines(rec.stats(), { renderer: 'DOM', dpr: 3, cols: 50, rows: 30, fontSize: 12, layout: 'phone layout', serverNote: 'not read for a remote terminal' });
   assert.match(lines[1], /^Frames: {3}received 1\.0\/s · rendered 1\.0\/s$/);
@@ -86,4 +86,20 @@ test('the report leads with frame rate and latency, and says what it could not r
   assert.match(lines[4], /→ render {2}p50 60 · p95 60 · max 60 ms/);
   assert.ok(lines.includes('Server:   not read for a remote terminal'));
   assert.ok(lines.some((line) => /Renderer: DOM · dpr 3\.00 · 50×30 · font 12\.0 px/.test(line)));
+});
+
+test('a render before the frame is parsed is not its render, and what never renders is given up', () => {
+  let t = 0;
+  const rec = createDiagRecorder({ now: () => t });
+  rec.input(true);
+  t = 50; rec.message(10); const parsed = rec.wrote();
+  t = 55; rec.rendered(); // a cursor blink: the frame is not parsed yet
+  t = 60; parsed();
+  t = 75; rec.rendered();
+  assert.deepEqual(rec.stats().scroll.toRender, { n: 1, p50: 75, p95: 75, max: 75 });
+  assert.equal(rec.stats().writeToRender.max, 25, 'from the write to the render after its parse');
+  // A hidden terminal: parsed writes pile up with no render, and are dropped after a while.
+  for (let i = 0; i < 5000; i += 1) { t += 1; rec.message(1); rec.wrote()(); }
+  t += 10000; rec.rendered();
+  assert.equal(rec.stats().writeToRender.n, 0, 'nothing waited that long');
 });
