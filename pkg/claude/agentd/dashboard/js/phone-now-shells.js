@@ -6,8 +6,11 @@
 //
 // A row says whose shell it is, how long it has been quiet and how long it
 // has run. A tap opens it in the phone terminal, as the panel does
-// (openRailItem); its ⋯ is the panel row's menu (railRowActions: Attach,
-// Kill session…, asking first) plus the tmux attach command to copy. ＋ Shell
+// (openRailItem); a touch and hold (phone-hold.js, as on an agent's row), or
+// its ⋯, opens its menu (ShellMenu): the panel row's entries (railRowActions:
+// Attach, Kill session…, asking first), then its name, directory and tmux
+// attach command to copy. The open-sessions list (phone-sessions.js) opens
+// the same menu for its shells (openShellMenu). ＋ Shell
 // in the header starts a group's shell, as the Groups tab's ＋ → Shell does;
 // with more than one group it asks which.
 
@@ -19,6 +22,7 @@ import { collabItems, openRailItem } from './collab-rail-actions.js';
 import { defaultRowContext, railRowActions } from './collab-rail-menu.js';
 import { onPeerPage } from './node-api.js';
 import { openPhoneSheet } from './phone-sheet.js';
+import { useHold } from './phone-hold.js';
 import { Avatar, Card, IconButton, Section } from './phone-ui.js';
 import { terminalShellState } from './terminal-shell-state.js';
 import { openShellResource } from './terminals-tab.js';
@@ -97,20 +101,44 @@ export function shellGroups(snapshot) {
 
 const startShell = async (group) => (await import('./groups-resources.js')).addGroupShell({ name: group });
 
-// ShellMenu is a row's ⋯ sheet: the panel row's entries, then the attach
-// command to copy, with the destructive ones last.
+// shellDir is the directory a shell runs in, as its group resource says
+// (a group's default directory, an agent's shell's), or ''.
+export function shellDir(item) {
+  return item?.kind === 'shell' ? item.resource?.detail || '' : '';
+}
+
+// shellCopies are the menu's copy entries: [{ id, label, text, done }].
+export function shellCopies(item) {
+  const dir = shellDir(item);
+  const command = attachCommand(item);
+  return [
+    { id: 'copy-name', label: 'Copy name', text: item.title, done: 'Copied the name' },
+    dir && { id: 'copy-dir', label: 'Copy directory', text: dir, done: 'Copied the directory' },
+    command && { id: 'copy-attach', label: 'Copy tmux attach command', text: command, done: 'Copied the attach command' },
+  ].filter(Boolean);
+}
+
+// ShellMenu is a shell's sheet (a hold on its row, or its ⋯): the panel
+// row's entries, then what to copy, with the destructive ones last.
 export function ShellMenu({ item, ctx, notify = () => {}, copy = writeClipboard, close }) {
   const { open, end } = railRowActions(item);
-  const command = attachCommand(item);
+  const dir = shellDir(item);
   const entry = (action) => html`<li key=${action.id}><button data-ui-exempt type="button" data-shell-action=${action.id}
     class=${`phone-menu-item${action.danger ? ' phone-menu-danger' : ''}`} disabled=${action.disabled} title=${action.title || undefined}
     onClick=${() => { close(); void action.run(ctx); }}>${action.label}</button></li>`;
-  const copyEntry = command && html`<li><button data-ui-exempt type="button" data-shell-action="copy-attach" class="phone-menu-item"
-    onClick=${async () => { close(); notify(await copy(command) ? 'Copied the attach command' : command); }}>Copy tmux attach command</button></li>`;
+  const copyEntry = (c) => html`<li key=${c.id}><button data-ui-exempt type="button" data-shell-action=${c.id} class="phone-menu-item"
+    onClick=${async () => { close(); notify(await copy(c.text) ? c.done : c.text); }}>${c.label}</button></li>`;
   return html`<div class="phone-shell-menu">
     <h2 class="phone-sheet-title">${item.title}</h2>
-    <ul class="phone-menu">${open.map(entry)}${copyEntry}${end.map(entry)}</ul>
+    ${dir && html`<p class="phone-sheet-meta phone-shell-dir">${dir}</p>`}
+    <ul class="phone-menu">${open.map(entry)}${shellCopies(item).map(copyEntry)}${end.map(entry)}</ul>
   </div>`;
+}
+
+// openShellMenu opens a shell's menu; open(item) is how the list opens it.
+export function openShellMenu(item, { open, notify = () => {} }) {
+  const ctx = { ...defaultRowContext(), open, notify };
+  openPhoneSheet({ label: item.title, Body: ShellMenu, props: { item, ctx, notify } });
 }
 
 // GroupPick is ＋ Shell's sheet when there is more than one group.
@@ -122,10 +150,11 @@ function GroupPick({ groups, start, close }) {
   </div>`;
 }
 
-// ShellRow is one shell: a tap opens it, ⋯ its menu.
+// ShellRow is one shell: a tap opens it; a hold, or its ⋯, its menu.
 function ShellRow({ shell, onOpen, onMenu }) {
-  return html`<div class="phone-now-agent phone-now-shell" data-shell-row=${shell.item.key}>
-    <button data-ui-exempt type="button" class="phone-row" onClick=${() => onOpen(shell.item)}
+  const { holding, handlers } = useHold(() => onMenu(shell.item));
+  return html`<div class=${`phone-now-agent phone-now-shell${holding ? ' phone-holding' : ''}`} data-shell-row=${shell.item.key}>
+    <button data-ui-exempt type="button" class="phone-row phone-holdable" ...${handlers} onClick=${() => onOpen(shell.item)}
       aria-label=${`${shell.title}, ${shell.sub}: open it`}>
       <${Avatar} name=${shell.title} glyph="›_" bot />
       <span class="phone-row-text"><span class="phone-who-name">${shell.title}</span>
@@ -146,8 +175,7 @@ export function NowShells({ snapshot, notify = () => {}, panes = terminalShellSt
   // (openShellResource finds its pane): Now has no strip to activate.
   const attach = (item) => open(item, { snapshot, notify,
     actions: { activatePane: () => (item.resource ? openShellResource(item.resource, item.title) : null) } });
-  const ctx = { ...defaultRowContext(), open: attach, notify };
-  const onMenu = (item) => openPhoneSheet({ label: item.title, Body: ShellMenu, props: { item, ctx, notify } });
+  const onMenu = (item) => openShellMenu(item, { open: attach, notify });
   // A session the dashboard cannot attach (superseded, locked: it has no
   // key) opens its menu instead, where it can be killed, as on the desktop.
   const onOpen = (item) => (item.row && !item.row.key ? onMenu(item) : attach(item));

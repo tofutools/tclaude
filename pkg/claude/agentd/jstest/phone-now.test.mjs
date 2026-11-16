@@ -78,7 +78,12 @@ test('an access request is an amber card: countdown, Deny / +5 min / Approve, an
   const card = harness.getByRole(root, 'group', { name: 'payments-fix asks: git.push: push PR #4351' });
   assert.ok(card.classList.contains('phone-box-key'));
   assert.equal(card.querySelector('.phone-av-badge').textContent, '🔑');
-  assert.match(card.querySelector('.phone-pill-key').textContent, /^0:4[12]$/);
+  // What is left is 42.5 s less however long setup took (a loaded run takes
+  // seconds), so the pill is checked against the time actually elapsed.
+  const [, mm, ss] = card.querySelector('.phone-pill-key').textContent.match(/^(\d+):(\d\d)$/) || [];
+  const left = Number(mm) * 60 + Number(ss);
+  const most = Math.ceil((Date.parse(deadline) - Date.now()) / 1000);
+  assert.ok(left <= 42 && left >= most - 2, `the countdown reads ${left}s left, with ${most}s to the deadline`);
   assert.match(card.querySelector('.phone-who').textContent, /payments-fix\s*webshop/);
   const buttons = [...card.querySelectorAll('.phone-btns .ui-btn')].map((b) => b.textContent.trim());
   assert.deepEqual(buttons, ['Deny', '+5 min', 'Approve']);
