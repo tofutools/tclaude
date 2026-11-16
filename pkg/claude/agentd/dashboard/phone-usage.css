@@ -50,6 +50,47 @@
 :root[data-layout="phone"] .phone-cost-bar { grid-column: 1 / -1; height: 4px; border-radius: 2px; background: var(--phone-tile); overflow: hidden; }
 :root[data-layout="phone"] .phone-cost-bar b { display: block; height: 100%; background: var(--phone-accent); }
 
+/* Costs: the daily spend bars (PhoneSpendChart), the Overview's stacks by
+   provider in the .cost-seg-hN palette. Each day is a full-height button, so
+   a tap anywhere in its column picks it. */
+:root[data-layout="phone"] .phone-spend { margin-top: 12px; }
+:root[data-layout="phone"] .phone-spend-head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; margin-bottom: 8px; }
+:root[data-layout="phone"] .phone-spend-head strong { color: var(--ui-text-strong); font-size: 15px; }
+:root[data-layout="phone"] .phone-spend-head span { color: var(--ui-muted-text); font-size: 12px; }
+:root[data-layout="phone"] .phone-spend-plot {
+  display: grid; grid-template-columns: repeat(var(--phone-spend-days), minmax(0, 1fr));
+  column-gap: clamp(1px, calc(120px / var(--phone-spend-days)), 6px); height: 150px;
+}
+:root[data-layout="phone"] .phone-spend-day {
+  display: grid; grid-template-rows: minmax(0, 1fr) 16px; grid-template-columns: minmax(0, 1fr); align-items: end; justify-items: stretch;
+  min-width: 0; height: 100%; padding: 0; border: 0; background: none; color: inherit; cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+:root[data-layout="phone"] .phone-spend-stack {
+  display: flex; flex-direction: column-reverse; min-height: 1px; border-radius: 2px 2px 0 0; overflow: hidden;
+}
+:root[data-layout="phone"] .phone-spend-stack i { display: block; flex-basis: 0; min-height: 0; }
+:root[data-layout="phone"] .phone-spend-day.what-if .phone-spend-stack i { opacity: .55; }
+:root[data-layout="phone"] .phone-spend-day.picked .phone-spend-stack {
+  outline: 2px solid var(--ui-text-strong); outline-offset: 1px; border-radius: 3px;
+}
+:root[data-layout="phone"] .phone-spend-day.picked .phone-spend-stack i { opacity: 1; }
+:root[data-layout="phone"] .phone-spend-day:focus-visible { outline: 2px solid var(--phone-accent); outline-offset: 1px; border-radius: 3px; }
+:root[data-layout="phone"] .phone-spend-tick { align-self: end; justify-self: center; width: max-content; white-space: nowrap; color: var(--ui-muted-text); font-size: 11px; line-height: 14px; }
+:root[data-layout="phone"] .phone-spend-legend { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: 8px; color: var(--ui-muted-text); font-size: 12px; }
+:root[data-layout="phone"] :is(.phone-spend-legend, .phone-spend-row) span { display: inline-flex; align-items: center; gap: 6px; }
+:root[data-layout="phone"] :is(.phone-spend-legend, .phone-spend-row) i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; }
+:root[data-layout="phone"] .phone-spend-status {
+  position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap;
+}
+:root[data-layout="phone"] .phone-spend-detail { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--phone-line); }
+:root[data-layout="phone"] :is(.phone-spend-detail-head, .phone-spend-row) {
+  display: flex; justify-content: space-between; gap: 10px; font-variant-numeric: tabular-nums;
+}
+:root[data-layout="phone"] .phone-spend-detail-head { color: var(--ui-text-strong); margin-bottom: 4px; }
+:root[data-layout="phone"] .phone-spend-latest { color: var(--ui-muted-text); font-weight: 400; font-size: 12px; }
+:root[data-layout="phone"] .phone-spend-row { padding: 3px 0; color: var(--ui-muted-text); font-size: 14px; }
+
 /* Fallback, without the hub: Usage › Costs: each agent's row is two lines (name and cost, then harness,
    model and last activity) instead of a six-column table wider than the
    phone. The header stays as a row of sort buttons. */

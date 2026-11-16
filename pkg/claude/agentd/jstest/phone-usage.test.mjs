@@ -126,6 +126,44 @@ test('phone Usage Costs: the total, per provider, per model and the top agents; 
   assert.deepEqual(picked, ['7d']);
 });
 
+test('phone Usage Costs: the daily spend bars stack by provider; a tapped day shows its breakdown, else the latest day', async (t) => {
+  const { harness, mounted, chip } = await mountPhone(t);
+  await harness.act(() => harness.fireEvent(chip('Costs'), 'click', { button: 0 }));
+  const chart = mounted.container.querySelector('.phone-usage-costs [role="group"][aria-label="Daily spend"]');
+  assert.ok(chart, 'the chart sits in the Costs view');
+  const next = chart.nextElementSibling;
+  assert.equal(next.getAttribute('aria-label'), 'By provider', 'between the total and the per-provider list');
+  const days = () => [...chart.querySelectorAll('.phone-spend-day')];
+  assert.deepEqual(days().map((day) => day.getAttribute('aria-label')), ['Jul 9, $1.00', 'Jul 10, $3.00']);
+  const stacks = days().map((day) => [...day.querySelectorAll('.phone-spend-stack i')].map((seg) => seg.className));
+  assert.deepEqual(stacks, [['cost-seg-h0'], ['cost-seg-h0', 'cost-seg-h1']], 'the Overview\'s provider palette, in its order');
+  assert.match(days()[0].querySelector('.phone-spend-stack').style.height, /^33\.33/, 'scaled to the tallest day');
+  assert.equal(days()[1].querySelector('.phone-spend-stack').style.height, '100%');
+  assert.deepEqual([...chart.querySelectorAll('.phone-spend-legend span')].map((item) => item.textContent), ['claude', 'codex']);
+  const detail = () => squash(chart.querySelector('.phone-spend-detail').textContent);
+  assert.equal(detail(), 'Jul 10 · latest$3.00claude$2.00codex$1.00', 'nothing tapped: the latest day');
+  assert.ok(days().every((day) => day.getAttribute('aria-pressed') === 'false'), 'and no day outlined');
+
+  await harness.act(() => harness.fireEvent(days()[0], 'click', { button: 0 }));
+  assert.equal(detail(), 'Jul 9$1.00claude$1.00codex$0.00', 'a provider idle that day reads $0');
+  assert.deepEqual(days().map((day) => day.classList.contains('picked')), [true, false]);
+  assert.equal(days()[0].getAttribute('aria-pressed'), 'true');
+  assert.equal(chart.querySelector('[role="status"]').textContent, 'Jul 9: $1.00; claude $1.00, codex $0.00', 'a tap is read out in one line');
+  await harness.act(() => harness.fireEvent(days()[0], 'click', { button: 0 }));
+  assert.equal(detail(), 'Jul 10 · latest$3.00claude$2.00codex$1.00', 'tapping it again lets go');
+});
+
+test('phone Usage Costs: a span without spend says so in place of the chart', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { PhoneSpendChart, spendBars, dayBreakdown } = await harness.importDashboardModule('js/phone-usage.js');
+  const empty = { providers: [], narrowed: { days: [{ day: '2026-07-01', cost_usd: 0 }], agents: [] } };
+  assert.deepEqual(spendBars(empty).days, [], 'a span of $0 days has no bars');
+  assert.equal(dayBreakdown(spendBars(empty), null), null);
+  const view = await harness.mount(harness.html`<${PhoneSpendChart} costs=${empty} />`);
+  assert.equal(view.container.querySelector('.phone-spend-day'), null);
+  assert.equal(squash(view.container.textContent), 'Daily spendNo spend in this span.');
+});
+
 test('phone Usage helpers', async (t) => {
   const harness = await createPreactHarness(t);
   const { quotaBarTone, spanChips, costTotals } = await harness.importDashboardModule('js/phone-usage.js');

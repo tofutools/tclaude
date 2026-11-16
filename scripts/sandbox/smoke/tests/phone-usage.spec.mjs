@@ -1,6 +1,6 @@
 // Usage on a phone (js/phone-usage.js) in a real browser on the sandbox's
 // data: the subnav is a chip row, Quota is one card per window, Costs is the
-// totals per provider and model plus the top agents, a span chip reloads and
+// daily spend bars (tap a day), the totals per provider and model plus the top agents, a span chip reloads and
 // is a history step, and the desktop views under them stay hidden.
 //
 //   scripts/sandbox/ui.sh smoke phone-usage
@@ -58,6 +58,18 @@ test('Usage: chips, a card per quota window, and the Costs totals', async ({ pag
   }
   await expect(page.locator('#costs-root')).toBeHidden();
   await expectNoSideScroll(page, 'Usage › Costs');
+
+  // The daily spend bars: nothing tapped shows the latest day; a tap picks one.
+  const chart = costs.getByRole('group', { name: 'Daily spend' });
+  const days = chart.locator('.phone-spend-day');
+  expect(await days.count()).toBeGreaterThan(1);
+  await expect(chart.locator('.phone-spend-legend span').first()).toBeVisible();
+  await expect(chart.locator('.phone-spend-detail-head')).toContainText('latest');
+  const first = days.first();
+  await first.click();
+  await expect(first).toHaveAttribute('aria-pressed', 'true');
+  const label = (await first.getAttribute('aria-label')).split(',')[0];
+  await expect(chart.locator('.phone-spend-detail-head')).toHaveText(new RegExp(`^${label}\\s*\\$`));
 
   // A span chip is the desktop's span button: a reload and a history step.
   const total = await costs.locator('.phone-cost-big').textContent();

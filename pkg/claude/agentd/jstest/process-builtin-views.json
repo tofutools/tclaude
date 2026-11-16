@@ -18,6 +18,7 @@
         "nodes": {
           "accept": {
             "type": "decision",
+            "name": "Accept the result",
             "performer": {
               "kind": "human",
               "ask": "Accept the result of {{ params.task }}?\n{{ outputs.result }}",
@@ -42,14 +43,17 @@
           },
           "done": {
             "type": "end",
+            "name": "Done",
             "result": "success"
           },
           "escalated": {
             "type": "end",
+            "name": "Escalated",
             "result": "failed"
           },
           "go": {
             "type": "decision",
+            "name": "Agree on the approach",
             "performer": {
               "kind": "human",
               "ask": "Go ahead with {{ params.task }}?",
@@ -71,10 +75,12 @@
           },
           "stopped": {
             "type": "end",
+            "name": "Stopped",
             "result": "canceled"
           },
           "work": {
             "type": "task",
+            "name": "Do the work",
             "performer": {
               "kind": "agent",
               "prompt": "Do this: {{ params.task }}\nReport what you did (and the PR link, if any) as result. When it comes back for rework, address the notes.",
@@ -160,14 +166,17 @@
         "nodes": {
           "done": {
             "type": "end",
+            "name": "Done",
             "result": "success"
           },
           "escalated": {
             "type": "end",
+            "name": "Escalated",
             "result": "failed"
           },
           "fix": {
             "type": "task",
+            "name": "Fix it",
             "performer": {
               "kind": "agent",
               "prompt": "Fix this bug: {{ params.task }}\nIt reproduces with:\n{{ outputs.repro }}\nAdd a test for it, open a PR and report its link as pr.",
@@ -189,6 +198,7 @@
           },
           "merge": {
             "type": "task",
+            "name": "Merge",
             "performer": {
               "kind": "agent",
               "prompt": "The tester verified this fix. Merge it:\n{{ outputs.pr }}",
@@ -200,6 +210,7 @@
           },
           "reproduce": {
             "type": "task",
+            "name": "Reproduce the bug",
             "performer": {
               "kind": "agent",
               "prompt": "Reproduce this bug: {{ params.task }}\nReport the steps (or a failing test) as repro.",
@@ -223,6 +234,7 @@
           },
           "verify": {
             "type": "decision",
+            "name": "Verify the fix",
             "performer": {
               "kind": "agent",
               "prompt": "Verify that this fix:\n{{ outputs.pr }}\nfixes the bug you reproduced with:\n{{ outputs.repro }}\nChoose fixed, or broken with what still fails.",
@@ -305,6 +317,7 @@
         "nodes": {
           "build": {
             "type": "task",
+            "name": "Build it",
             "performer": {
               "kind": "agent",
               "prompt": "Build this: {{ params.task }}\nOpen a PR and report its link as pr.",
@@ -323,14 +336,17 @@
           },
           "done": {
             "type": "end",
+            "name": "Done",
             "result": "success"
           },
           "escalated": {
             "type": "end",
+            "name": "Escalated",
             "result": "failed"
           },
           "review": {
             "type": "decision",
+            "name": "Review",
             "performer": {
               "kind": "agent",
               "prompt": "Review the PR for this task: {{ params.task }}\nThe PR:\n{{ outputs.pr }}\nChoose approve, or changes with what to change.",
@@ -356,6 +372,7 @@
           },
           "ship": {
             "type": "task",
+            "name": "Ship",
             "performer": {
               "kind": "agent",
               "prompt": "The review approved this PR. Merge and ship it:\n{{ outputs.pr }}",
@@ -430,6 +447,7 @@
         "nodes": {
           "check": {
             "type": "decision",
+            "name": "Check",
             "performer": {
               "kind": "agent",
               "prompt": "Run {{ params.task }}. Choose green, or red with what fails as your note.",
@@ -445,14 +463,17 @@
           },
           "done": {
             "type": "end",
+            "name": "Done",
             "result": "success"
           },
           "escalated": {
             "type": "end",
+            "name": "Escalated",
             "result": "failed"
           },
           "fix": {
             "type": "task",
+            "name": "Fix what failed",
             "performer": {
               "kind": "agent",
               "prompt": "{{ params.task }} is red. Run it to see what fails, fix it, open a PR and report its link as pr.",
@@ -474,6 +495,7 @@
           },
           "recheck": {
             "type": "decision",
+            "name": "Check again",
             "performer": {
               "kind": "agent",
               "prompt": "Run {{ params.task }} again with this fix:\n{{ outputs.pr }}\nChoose green, or red with what still fails.",
@@ -562,10 +584,12 @@
         "nodes": {
           "done": {
             "type": "end",
+            "name": "Done",
             "result": "success"
           },
           "fan-out": {
             "type": "parallel",
+            "name": "Fan out",
             "next": {
               "part-1": "part-1",
               "part-2": "part-2",
@@ -575,6 +599,7 @@
           "integrate": {
             "type": "task",
             "join": "all",
+            "name": "Integrate the parts",
             "performer": {
               "kind": "agent",
               "prompt": "All three parts are in. Integrate them and merge.\nPart 1:\n{{ outputs.pr1 }}\nPart 2:\n{{ outputs.pr2 }}\nPart 3:\n{{ outputs.pr3 }}",
@@ -587,6 +612,7 @@
           },
           "part-1": {
             "type": "task",
+            "name": "Part 1",
             "performer": {
               "kind": "agent",
               "prompt": "Build part 1 of this plan:\n{{ outputs.plan }}\nOpen a PR and report its link as pr1.",
@@ -609,6 +635,7 @@
           },
           "part-2": {
             "type": "task",
+            "name": "Part 2",
             "performer": {
               "kind": "agent",
               "prompt": "Build part 2 of this plan:\n{{ outputs.plan }}\nOpen a PR and report its link as pr2.",
@@ -631,6 +658,7 @@
           },
           "part-3": {
             "type": "task",
+            "name": "Part 3",
             "performer": {
               "kind": "agent",
               "prompt": "Build part 3 of this plan:\n{{ outputs.plan }}\nOpen a PR and report its link as pr3.",
@@ -653,6 +681,7 @@
           },
           "plan": {
             "type": "task",
+            "name": "Plan and split",
             "performer": {
               "kind": "agent",
               "prompt": "Split this task into three independent parts that can be built at the same time: {{ params.task }}. Report the three parts, numbered, as your note.",
@@ -745,6 +774,7 @@
         "nodes": {
           "brief": {
             "type": "task",
+            "name": "Frame the task",
             "performer": {
               "kind": "agent",
               "prompt": "Frame this task for the team: {{ params.task }}. Report the brief (goal, constraints, what done looks like) as your note.",
@@ -759,6 +789,7 @@
           },
           "build": {
             "type": "task",
+            "name": "Build it",
             "performer": {
               "kind": "agent",
               "prompt": "Build this plan:\n{{ outputs.plan }}\nReport the PR link as pr.",
@@ -777,14 +808,17 @@
           },
           "done": {
             "type": "end",
+            "name": "Done",
             "result": "success"
           },
           "escalated": {
             "type": "end",
+            "name": "Escalated",
             "result": "failed"
           },
           "merge": {
             "type": "task",
+            "name": "Merge",
             "performer": {
               "kind": "agent",
               "prompt": "Both reviewers approved {{ outputs.pr }}. Check it against your brief and merge it.",
@@ -797,6 +831,7 @@
           },
           "plan": {
             "type": "task",
+            "name": "Plan it",
             "performer": {
               "kind": "agent",
               "prompt": "Plan the work in this brief:\n{{ outputs.brief }}\nReport the plan as your note.",
@@ -814,6 +849,7 @@
           },
           "review": {
             "type": "decision",
+            "name": "Review (two approvals)",
             "next": {
               "approve": "merge",
               "changes": "build",
@@ -859,6 +895,7 @@
           },
           "vet": {
             "type": "decision",
+            "name": "Vet the plan",
             "performer": {
               "kind": "agent",
               "prompt": "Vet this plan for usability:\n{{ outputs.plan }}\nChoose ok, or rework with what to change.",
@@ -963,6 +1000,7 @@
         "nodes": {
           "change": {
             "type": "task",
+            "name": "Make the change",
             "performer": {
               "kind": "agent",
               "prompt": "Make this change: {{ params.task }}\nOpen a PR and report its link as pr.",
@@ -980,14 +1018,17 @@
           },
           "done": {
             "type": "end",
+            "name": "Done",
             "result": "success"
           },
           "escalated": {
             "type": "end",
+            "name": "Escalated",
             "result": "failed"
           },
           "merge": {
             "type": "task",
+            "name": "Merge",
             "performer": {
               "kind": "agent",
               "prompt": "The review approved your PR. Merge it:\n{{ outputs.pr }}",
@@ -1000,6 +1041,7 @@
           },
           "review": {
             "type": "decision",
+            "name": "Review",
             "performer": {
               "kind": "agent",
               "prompt": "Review the PR for this change: {{ params.task }}\nThe PR:\n{{ outputs.pr }}\nChoose approve, or changes with what to change.",
