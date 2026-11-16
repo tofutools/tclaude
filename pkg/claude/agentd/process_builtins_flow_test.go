@@ -321,7 +321,7 @@ func TestProcessBuiltins_CheckFixEndToEnd(t *testing.T) {
 	step := builtinRun(t, f, g, "check-fix", runID, "the nightly suite", convOf)
 
 	step("check", tess, []string{"Run the nightly suite"}, map[string]any{"verdict": "red", "note": "TestLogin fails"})
-	step("fix", dev, []string{"the nightly suite is red"}, map[string]any{"outputs": map[string]any{"pr": "PR #8"}})
+	step("fix", dev, []string{"the nightly suite is red. Run it to see what fails"}, map[string]any{"outputs": map[string]any{"pr": "PR #8"}})
 	assert.Equal(t, "same_as", resolutionOf(t, showPerformerRun(t, f, runID), "recheck"))
 	step("recheck", tess, []string{"PR #8"}, map[string]any{"verdict": "red", "note": "still flaky"})
 	step("fix", dev, []string{"still flaky"}, map[string]any{"outputs": map[string]any{"pr": "PR #8 v2"}})
@@ -344,6 +344,24 @@ func TestProcessBuiltins_OutOfRoundsFails(t *testing.T) {
 		step("change", dev, nil, map[string]any{"outputs": map[string]any{"pr": "PR #3"}})
 		step("review", rita, nil, map[string]any{"verdict": "changes", "note": "not yet"})
 		agentd.WaitForProcessDispatchForTest()
+	}
+	assert.Equal(t, engine.RunFailed, showPerformerRun(t, f, runID).Status)
+}
+
+// Scenario: in Ask me first, the operator keeps sending the work back; out of
+// rework rounds the run fails rather than ending as their own reject.
+func TestProcessBuiltins_AskMeFirstOutOfRoundsFails(t *testing.T) {
+	f, _ := processRuntimeFlow(t)
+	g := f.HaveGroup("crew")
+	const devConv = "afdev-111-2222-3333-4444"
+	dev := havePerformerAgent(t, f, "crew", devConv, "dana", "dev", "idle")
+	convOf := map[string]string{dev: devConv}
+	const runID = "run_builtin_ask_rounds"
+	step := builtinRun(t, f, g, "ask-me-first", runID, "rename the API", convOf)
+	require.Equal(t, http.StatusAccepted, decideLoop(t, f, runID, map[string]any{"nodeId": "go", "verdict": "go"}))
+	for round := 1; round <= 6 && showPerformerRun(t, f, runID).Status == engine.RunRunning; round++ {
+		step("work", dev, nil, map[string]any{"outputs": map[string]any{"result": "try"}})
+		require.Equal(t, http.StatusAccepted, decideLoop(t, f, runID, map[string]any{"nodeId": "accept", "verdict": "rework"}))
 	}
 	assert.Equal(t, engine.RunFailed, showPerformerRun(t, f, runID).Status)
 }

@@ -44,7 +44,10 @@ lead's steps go to the group's lead (a member with the role `lead`, else an
 agent that owns the group) and wait when it has none. Running out of rounds,
 or a performer choosing escalate, fails the run, so a board task it runs for
 is blocked with the reason; only your own stop or reject in Ask me first
-cancels one. Each names the group's lead as its overseer (`overseer: lead`),
+cancels one. Plan → fan out → integrate has no decision to escalate from: a
+part that fails blocks its branch, and the overseer is told once the step
+has been stuck past its patience. Check → fix if red takes what to run as its
+`task` (a schedule passes it, for example `--param task='make test'`). Each names the group's lead as its overseer (`overseer: lead`),
 and a step stuck longer than its patience (an hour; two for building or
 fixing) raises a concern to it (see
 [Oversight and escalation](#oversight-and-escalation)). Your own decisions in

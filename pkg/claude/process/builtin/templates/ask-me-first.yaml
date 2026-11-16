@@ -46,9 +46,9 @@ nodes:
       kind: human
       ask: "Accept the result of {{ params.task }}?\n{{ outputs.result }}"
       choices: [accept, rework, reject]
-    next: { accept: done, rework: work, reject: stopped }
+    next: { accept: done, rework: work, reject: stopped, escalate: escalated }
     loops:
-      rework: { maxIterations: 3, onExhausted: reject }
+      rework: { maxIterations: 3, onExhausted: escalate }
 
   done:
     type: end
@@ -57,3 +57,8 @@ nodes:
   stopped:
     type: end
     result: canceled
+  # Out of rework rounds: the run fails, so a board task it runs for is
+  # blocked with the reason.
+  escalated:
+    type: end
+    result: failed

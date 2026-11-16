@@ -9,7 +9,6 @@ params:
   task:
     type: string
     required: true
-    default: "the test suite"
 # The group's lead oversees a run; a step stuck longer than its patience
 # (an hour, two for a fix) raises a concern to it.
 overseer: lead
@@ -40,7 +39,7 @@ nodes:
       role: dev
       differentFrom: [check]
       fallback: { action: spawn }
-      prompt: "{{ params.task }} is red. Fix it, open a PR and report its link as pr."
+      prompt: "{{ params.task }} is red. Run it to see what fails, fix it, open a PR and report its link as pr."
     next: { next: recheck }
 
   # The tester who found it red checks the fix.
