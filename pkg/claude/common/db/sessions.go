@@ -311,6 +311,13 @@ func saveSession(s *SessionRow, preserveLaunchHook bool) error {
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
+	// A save that moves the row to another conv (an in-pane /resume) carries
+	// the pane's whole launch posture to that conv: projected in full below.
+	var priorConv string
+	if err := tx.QueryRow(`SELECT conv_id FROM sessions WHERE id = ?`, s.ID).Scan(&priorConv); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+	rotated := priorConv != "" && priorConv != s.ConvID
 	_, err = tx.Exec(`INSERT INTO sessions
 		(id, tmux_session, pid, cwd, conv_id, status, status_detail, subagent_count, subagents_json, bg_shells_json, monitors_json, auto_registered, created_at, updated_at, last_hook, harness, sandbox_mode, sandbox_implementation, sandbox_mode_source, os_sandbox_state, os_sandbox_source, os_sandbox_unverified, ask_user_question_timeout, effective_sandbox_config, approval_policy, approval_auto_review, resume_provenance, agent_id,
 		 exit_callback_generation, exit_callback_token_hash, exit_callback_pane_id, exit_callback_used_at,
@@ -369,7 +376,11 @@ func saveSession(s *SessionRow, preserveLaunchHook bool) error {
 	if err := bindCodexNativePermissionProfileOwnerTx(tx, s.ID, s.ConvID); err != nil {
 		return err
 	}
-	if err := projectSessionRelaunchProfilesTx(tx, s.ID, relaunchProjectionOptions{}); err != nil {
+	opts := relaunchProjectionOptions{}
+	if rotated {
+		opts = fullRelaunchProjection
+	}
+	if err := projectSessionRelaunchProfilesTx(tx, s.ID, opts); err != nil {
 		return fmt.Errorf("project durable relaunch profiles: %w", err)
 	}
 	return tx.Commit()
@@ -1214,6 +1225,11 @@ func SetSessionConvID(id, convID string) error {
 	}
 	if err := bindCodexNativePermissionProfileOwnerTx(tx, id, convID); err != nil {
 		return err
+	}
+	// The row's launch is now the conv's (an in-pane /resume): its whole
+	// posture goes with it.
+	if err := projectSessionRelaunchProfilesTx(tx, id, fullRelaunchProjection); err != nil {
+		return fmt.Errorf("project durable relaunch profiles: %w", err)
 	}
 	return tx.Commit()
 }

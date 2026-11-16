@@ -1030,6 +1030,18 @@ func projectSessionRelaunchProfilesTx(q dbExecQuerier, sessionID string, opts re
 	if strings.TrimSpace(harnessName) == "" {
 		harnessName = DefaultHarness
 	}
+	// The durable profiles follow the conv's current launch (currentLaunchOrder:
+	// live rows first, then the launch that started last). A row that is not
+	// it — the stopped launch's row marked exited after its successor, or a
+	// dead row of a conv a live pane has rotated onto with an in-pane /resume
+	// (which keeps the pane's older launch time) — leaves them as they are.
+	currentLaunch, err := currentLaunchSessionIDTx(q, convID)
+	if err != nil {
+		return err
+	}
+	if currentLaunch != "" && currentLaunch != sessionID {
+		return nil
+	}
 	var existingConversation *ConversationResumeProfile
 	var existingConversationRaw string
 	err = q.QueryRow(`SELECT profile_json FROM conversation_resume_profiles WHERE conv_id = ?`, convID).
@@ -1041,9 +1053,6 @@ func projectSessionRelaunchProfilesTx(q dbExecQuerier, sessionID string, opts re
 		existingConversation, err = decodeConversationResumeProfile(existingConversationRaw)
 		if err != nil {
 			return err
-		}
-		if existingConversation != nil && sessionProjectionIsOlder(existingConversation, createdAt, rowID) {
-			return nil
 		}
 	}
 	// Capability-incompatible legacy flags are process telemetry, not durable
@@ -1386,21 +1395,6 @@ func sessionsHaveColumn(q dbExecQuerier, column string) (bool, error) {
 	return n > 0, nil
 }
 
-func sessionProjectionIsOlder(existing *ConversationResumeProfile, createdAt string, rowID int64) bool {
-	if existing == nil || existing.SourceSessionCreatedAt == "" {
-		return false
-	}
-	currentTime, currentErr := parseLegacyDBTime(existing.SourceSessionCreatedAt)
-	incomingTime, incomingErr := parseLegacyDBTime(createdAt)
-	if currentErr == nil && incomingErr == nil && !incomingTime.Equal(currentTime) {
-		return incomingTime.Before(currentTime)
-	}
-	if (currentErr != nil || incomingErr != nil) && createdAt != existing.SourceSessionCreatedAt {
-		return createdAt < existing.SourceSessionCreatedAt
-	}
-	return rowID < existing.SourceSessionRowID
-}
-
 // conservativeCodexApprovalProjection repairs legacy rows whose harness tag
 // changed to Codex while retaining a Claude permission-mode token. The mapping
 // is deliberately narrow: a known FOREIGN value — an input that was recorded
@@ -1435,17 +1429,50 @@ func projectLatestSessionRelaunchProfilesForConvTx(q dbExecQuerier, convID strin
 	if haveProfiles == 0 {
 		return nil // enrollment during the pre-v145 migration chain
 	}
-	sessionIDs, err := sessionIDsByCreatedAt(q, strings.TrimSpace(convID))
-	if err != nil {
+	// The conv's current launch: the one row the projection accepts.
+	sessionID, err := currentLaunchSessionIDTx(q, strings.TrimSpace(convID))
+	if err != nil || sessionID == "" {
 		return err
 	}
-	if len(sessionIDs) == 0 {
-		return nil
+	return projectSessionRelaunchProfilesTx(q, sessionID, fullRelaunchProjection)
+}
+
+// fullRelaunchProjection projects every opt-gated field too: for a row whose
+// launch becomes the conv's as a whole (its head advance, enrollment, an
+// in-pane rotation onto it), not a status tick that only knows its own field.
+var fullRelaunchProjection = relaunchProjectionOptions{
+	RemoteControl: true, AutoMemory: true, PeerMessaging: true, ContextFeatures: true, AutoCompactWindow: true,
+}
+
+// currentLaunchSessionIDTx is the conv's current launch, by the order
+// currentLaunchOrder states (rows not exited first, then the launch that
+// started last, then rowid), computed here with sessionIDsByCreatedAt's exact
+// timestamps so it holds on both sides of v181 (the v145 migration projects
+// over text timestamps). "" when the conv has no row.
+func currentLaunchSessionIDTx(q dbExecQuerier, convID string) (string, error) {
+	rows, err := q.Query(`SELECT id, rowid, created_at, status FROM sessions WHERE conv_id = ?`, convID)
+	if err != nil {
+		return "", err
 	}
-	sessionID := sessionIDs[len(sessionIDs)-1]
-	return projectSessionRelaunchProfilesTx(q, sessionID, relaunchProjectionOptions{
-		RemoteControl: true, AutoMemory: true, PeerMessaging: true, ContextFeatures: true, AutoCompactWindow: true,
-	})
+	defer rows.Close()
+	best, bestRowID, bestLive := "", int64(0), false
+	var bestAt time.Time
+	for rows.Next() {
+		var id, status string
+		var rowID int64
+		var at migrationBridgeTimestamp
+		if err := rows.Scan(&id, &rowID, &at, &status); err != nil {
+			return "", fmt.Errorf("session created_at: %w", err)
+		}
+		live := status != "exited"
+		stamp := at.Time()
+		newer := best == "" || (live && !bestLive) ||
+			(live == bestLive && (stamp.After(bestAt) || (stamp.Equal(bestAt) && rowID > bestRowID)))
+		if newer {
+			best, bestRowID, bestLive, bestAt = id, rowID, live, stamp
+		}
+	}
+	return best, rows.Err()
 }
 
 // sessionIDsByCreatedAt provides exact chronological ordering on both sides of
