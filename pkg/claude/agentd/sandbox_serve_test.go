@@ -322,10 +322,16 @@ func seedSandboxRemoteAccess(s *sandboxSeeder) {
 	}
 	cc.Receive("/remote-control")
 	cc.Receive("Enter")
+	// The link comes from the bridge_status record Claude Code writes to its
+	// transcript, which the follower records on the session row; the sandbox
+	// records it as the follower would.
+	if _, err := db.RecordSessionRCLink(sbUI, db.RCSessionURLPrefix+"session_01SandboxCheckoutUI", time.Now()); err != nil {
+		s.t.Fatalf("sandbox: recording checkout-ui's Remote Access link: %v", err)
+	}
 	var st struct {
 		SessionURL string `json:"session_url"`
 	}
-	s.dashAPI(http.MethodPost, "/api/agents/"+sbUI+"/remote-control", map[string]any{"intent": "status"}, &st)
+	s.dashAPI(http.MethodPost, "/api/agents/"+sbUI+"/remote-control", map[string]any{"intent": "link"}, &st)
 	if st.SessionURL == "" {
 		s.t.Fatalf("sandbox: checkout-ui's Remote Access link was not read")
 	}

@@ -579,9 +579,8 @@ The dashboard covers the whole loop: authoring,
 starting a run in a group or for one agent, following it, and acting on it.
 All of it goes through the same daemon routes and permissions as the CLI.
 
-**New process** (Groups). The group's **＋** menu › **◈ New process** (or
-*New process* in a group with none yet) stores an untitled draft pinned to the
-group at once and opens it in place in the graph editor, with its name field
+**New process** (Groups). The group's **＋** menu › **◈ New process** stores
+an untitled draft pinned to the group at once and opens it in place in the graph editor, with its name field
 focused: type the name and press Enter. There is no name dialog. The draft
 saves itself as you edit (*draft · autosaved to* the group), and one closed
 untouched is not kept. *◈ Graph* and *☰ Steps* show the same draft from the

@@ -615,8 +615,6 @@ function GroupRuns({ group, roster, context, filter, wizard, api, runApi = runDe
         onGraph=${quick.saved && quick.process ? toGraph : null}
         onNewer=${quick.saved && quick.process ? (view) => openStored(quick.process, view) : null} />`
     : null;
-  const newButton = html`<${Button} size="sm" variant="primary" data-process-new=${group.name} onClick=${() => void newProcess()}
-    title=${wizard ? `Shape a new rite for ${group.name}, here` : `Make a new process for ${group.name}, here`}>${wizard ? '◈ New rite' : '◈ New process'}<//>`;
   // In Both, ＋ also makes the drawing boards, pages and shell its section lists.
   const add = html`<${AddResource} group=${group} pages=${entry?.pages || []} api=${api} source=${source} wizard=${wizard}
     notify=${say} processesOnly=${!fused} open=${adding} onOpen=${setAdding}
@@ -648,7 +646,7 @@ function GroupRuns({ group, roster, context, filter, wizard, api, runApi = runDe
     ${runs.map((run) => html`<${RunCard} key=${run.runId} run=${run} group=${group} entry=${entry} nameOf=${nameOf} wizard=${wizard} onOpen=${open} />`)}
     <${MemberRuns} entries=${memberRuns} label=${wizard ? 'Hero rites' : 'Member runs'} onOpen=${open} />
     ${planned.length > 0 && html`<div class="gp-planned-list">${planned.map((item) => html`<${PlannedRow} key=${item.id} item=${item} wizard=${wizard} />`)}</div>`}
-    ${!fused && fresh && !starting && !quick && html`<div class="gp-empty ui-empty" data-process-empty=${group.name}>${wizard ? 'No rites yet' : 'No processes yet'} ${newButton}</div>`}
+    ${!fused && fresh && !starting && !quick && html`<div class="gp-empty ui-empty" data-process-empty=${group.name}>${wizard ? 'No rites yet. The ＋ menu shapes one.' : 'No processes yet. The ＋ menu makes one.'}</div>`}
     ${!fused && !runs.length && !planned.length && !memberRuns.length && !fresh && html`<div class="gp-empty ui-empty">${!label
       ? (wizard ? 'No rites in this party yet.' : 'No processes in this group yet.')
       : `No ${label} ${wizard ? 'rites' : 'processes'}.`}</div>`}
@@ -662,7 +660,7 @@ function GroupRuns({ group, roster, context, filter, wizard, api, runApi = runDe
     // what it lists, and the ＋ menu is the one way to add (no "Get started ▸").
     const empty = !shown && !starting && !quick && html`<div class="gp-empty ui-empty" data-resources-empty=${group.name}>${wizard
       ? 'Nothing here yet. The ＋ menu adds a rite, drawing board, page or shell.'
-      : 'No resources yet. The ＋ menu adds a process, drawing board, page or shell.'} ${newButton}</div>`;
+      : 'No resources yet. The ＋ menu adds a process, drawing board, page or shell.'}</div>`;
     // The run controls head the open section's content on their own title
     // row, where the Agents half has its table header; folded, they ride
     // the section line.
