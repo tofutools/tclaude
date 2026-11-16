@@ -1,6 +1,7 @@
 package agentd
 
 import (
+	"encoding/json"
 	"fmt"
 	"io/fs"
 	"path"
@@ -78,7 +79,10 @@ var bootIslandDescriptors = []string{"shellDescriptor"}
 // bootLayoutIslands are the descriptors a boot awaits in one layout only: the
 // desktop Jobs island; on a phone, the phone Jobs island (awaited in its
 // place) and the phone shell (the top bar, bottom nav and Now view the phone
-// boots into). Keyed by the layout js/layout-boot.js marks on <html>.
+// boots into). Keyed by the layout js/layout-boot.js marks on <html>. A
+// descriptor's every import() is a root, so the phone shell's also brings the
+// few modules of its agent menu (phone-agent-menu.js and its graph), which
+// load later: a small price against parsing which import() runs when.
 var bootLayoutIslands = map[string][]string{
 	"desktop": {"jobsDescriptor"},
 	"phone":   {"phoneJobsDescriptor", "phoneShellDescriptor"},
@@ -213,12 +217,18 @@ func injectBootPreload(html []byte, fsys fs.FS) []byte {
 	// The layout's own modules, added once js/layout-boot.js (a synchronous
 	// script above) has marked the layout. The links and the total are in
 	// place before the inline progress counter below reads them.
+	// JSON, which escapes <, > and &, so a list can never close the script.
+	// Each path is a "/static/… string, which versionStaticRefs versions.
 	list := func(mods []string) string {
-		quoted := make([]string, len(mods))
+		hrefs := make([]string, len(mods))
 		for i, m := range mods {
-			quoted[i] = fmt.Sprintf("%q", "/static/"+m)
+			hrefs[i] = "/static/" + m
 		}
-		return "[" + strings.Join(quoted, ",") + "]"
+		out, err := json.Marshal(hrefs)
+		if err != nil {
+			panic(err)
+		}
+		return string(out)
 	}
 	fmt.Fprintf(&b, "<script>(function(){var own=document.documentElement.getAttribute('data-layout')==='phone'?%s:%s;"+
 		"for(var i=0;i<own.length;i++){var l=document.createElement('link');l.rel='modulepreload';l.href=own[i];document.head.appendChild(l);}"+

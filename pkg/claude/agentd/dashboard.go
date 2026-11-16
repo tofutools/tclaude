@@ -34,9 +34,9 @@ var dashboardAssetsFS fs.FS = dashboard.FS
 
 // dashboardIndexHTML is dashboard.html, read once at init — the page
 // handleDashboardRoot serves at "/". injectBootPreload splices in the
-// modulepreload block + module-total for the boot progress bar, so the entry
-// import graph is fetched in parallel rather than as a discover-one-at-a-time
-// waterfall.
+// modulepreload block (the shared links, and the script adding the layout's
+// own) + module-total for the boot progress bar, so the boot import graph is
+// fetched in parallel rather than as a discover-one-at-a-time waterfall.
 var dashboardIndexHTML = versionStaticRefs(injectAssetsVersion(injectBootPreload(mustReadFS(dashboardAssetsFS, "dashboard.html"), dashboardAssetsFS)))
 
 func mustReadFS(fsys fs.FS, name string) []byte {

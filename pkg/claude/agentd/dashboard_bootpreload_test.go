@@ -93,6 +93,14 @@ func TestInjectBootPreload_EmitsLinksAndTotal(t *testing.T) {
 			}
 		}
 	}
+	// The script reads the layout js/layout-boot.js marked, and the progress
+	// counter counts the links it adds: it sits between the two.
+	layoutBoot := strings.Index(out, `js/layout-boot.js"></script>`)
+	script := strings.Index(out, m[0])
+	counter := strings.Index(out, "var MODULE_BAND")
+	if layoutBoot < 0 || counter < 0 || !(layoutBoot < script && script < counter) {
+		t.Errorf("the layout preload script (at %d) must follow layout-boot.js (%d) and precede the progress counter (%d)", script, layoutBoot, counter)
+	}
 	total, _ := strconv.Atoi(m[3])
 	if total != len(mods) {
 		t.Errorf("__BOOT_MODULE_TOTAL__ adds %d shared modules, but %d links emitted", total, len(mods))
