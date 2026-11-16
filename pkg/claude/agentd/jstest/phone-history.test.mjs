@@ -177,3 +177,93 @@ test('a layer that is a location of its own (routed) is no extra step', async (t
   assert.equal(routes.overlayParams().phone, '', 'its own route carries it');
   assert.deepEqual(announced, [], 'so it takes no history entry of the phone\'s');
 });
+
+// GUARDS is every way a phone form guards a draft, each as a form holding
+// one: a phone sheet's useSheetGuard (the message sheet: Mail's Reply and
+// Write, ✉ Message), and a Dialog's guarded close whose question is a layer
+// of its own (shellConfirmDiscard: All options… and every desktop form a
+// phone reaches). Each opens over a page with a route of its own (Mail's
+// reader, a terminal), whose onBack must never run.
+const GUARDS = [
+  {
+    name: 'a phone sheet (useSheetGuard)',
+    async mount(t, harness, sheet) {
+      const { useSheetGuard, PhoneSheetHost } = await harness.importDashboardModule('js/phone-sheet.js');
+      const asking = harness.signals.signal(false);
+      // As the message sheet: a close asks; asked again, it means Keep.
+      const Body = () => {
+        useSheetGuard(() => { asking.value = !asking.peek(); return true; });
+        return harness.html`<textarea>draft</textarea>`;
+      };
+      sheet.openPhoneSheet({ label: 'Message lead', Body });
+      await harness.mount(harness.html`<${PhoneSheetHost} />`);
+      return {
+        open: () => !!sheet.phoneSheet.value,
+        asking: () => asking.value,
+        keep: () => { asking.value = false; },
+        discard: () => { asking.value = false; sheet.closePhoneSheet(); },
+      };
+    },
+  },
+  {
+    name: 'a Dialog whose question is a layer of its own (shellConfirmDiscard)',
+    async mount(t, harness) {
+      const { registerBackLayer } = await harness.importDashboardModule('js/back-layers.js');
+      let answer = null;
+      let off = null;
+      // The shell's confirmation: a modal of its own, which Back cancels. It
+      // registers as it renders, a microtask after it is asked for.
+      const confirmDiscard = () => new Promise((resolve) => {
+        answer = (yes) => { off?.(); off = null; answer = null; resolve(yes); };
+        queueMicrotask(() => { if (answer) off = registerBackLayer({ close: () => { answer?.(false); return true; } }); });
+      });
+      const { open } = await mountDialog(t, harness, { dirty: true, confirmDiscard });
+      return {
+        open: () => open.value,
+        asking: () => !!answer,
+        keep: () => answer(false),
+        discard: () => answer(true),
+      };
+    },
+  },
+];
+
+for (const guard of GUARDS) {
+  test(`Back over a draft in ${guard.name}: asks, keeps its step, and never moves the page behind`, async (t) => {
+    const harness = await createPreactHarness(t);
+    const { routes, phonePage, sheet, announced, tick } = await setupWith(t, harness);
+    const behind = [];
+    phonePage.value = { title: 'reader', routed: true, onBack: () => behind.push('back') };
+    const form = await guard.mount(t, harness, sheet);
+    await tick();
+    assert.equal(routes.overlayParams().phone, '1', 'the form is a step');
+    announced.length = 0;
+
+    // Back: the router restores the entry below, then reads what is on
+    // screen at once to correct that entry. The form, asking, must not be on
+    // it yet, or it would take the page's entry for its own.
+    const back = async () => {
+      let read;
+      await harness.act(async () => { routes.restoreOverlays({}); read = routes.overlayParams().phone; await tick(); });
+      return read;
+    };
+    assert.equal(await back(), '', 'Back leaves the entry the page behind is on as it was');
+    assert.equal(form.asking(), true, 'Back asks');
+    assert.equal(form.open(), true);
+    assert.equal(routes.overlayParams().phone, '1', 'and the form takes its step back');
+    assert.deepEqual(announced.map((detail) => detail.closed), [false], 'as a step of its own');
+
+    await harness.act(async () => { form.keep(); await tick(); });
+    assert.equal(form.open(), true, 'kept, it stays');
+    assert.equal(routes.overlayParams().phone, '1', 'with its step');
+
+    announced.length = 0;
+    assert.equal(await back(), '');
+    assert.equal(form.asking(), true, 'the next Back asks again');
+    assert.deepEqual(announced.map((detail) => detail.closed), [false]);
+
+    await harness.act(async () => { form.discard(); await tick(); });
+    assert.equal(form.open(), false, 'discarded, it closes');
+    assert.deepEqual(behind, [], 'and nothing ever stepped the page behind back');
+  });
+}

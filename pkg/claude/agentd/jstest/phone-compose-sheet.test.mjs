@@ -185,6 +185,9 @@ test('Back is a close too: a draft holds it and takes its entry back; an empty s
 
   await harness.act(() => routes.restoreOverlays({}));
   assert.equal(dialog().querySelector('.phone-compose-ask'), null, 'Back again while asked means Keep');
+  // Each Back is a task of its own: the kept sheet has taken its entry back
+  // before the next one.
+  await turn();
   await harness.input(field(), '');
   await harness.act(() => routes.restoreOverlays({}));
   assert.equal(dialog(), null, 'an empty sheet just closes');
