@@ -24,6 +24,8 @@ export function runCopyConfig({ runId, reached = [], reroutable = [], direct = f
   return {
     mode: 'run',
     nodeEditable: (id) => !isLocked(id),
+    // Where a step is drawn is no change to the run: reached steps move too.
+    layoutEditable: () => true,
     // The start stays where it is; a reached step's ways out stay, unless it
     // may still be rerouted.
     edgeEditable: (edge) => !!edge?.from && (!isLocked(edge.from) || reroute.has(authoredRoot(edge.from))),
@@ -82,7 +84,9 @@ export function RunCopyEditor({ runId, api, onChanged, onClose, onYaml, openEdit
             runId, reached: got.reached, reroutable: got.reroutable, direct: !!got.canAmendDirectly,
             send: async (body) => {
               const { sourceHash, ...edit } = body;
-              const result = await api.amendRun(runId, { edit, note: noteRef.current.trim() });
+              // The state the copy was read at: if the run moved on (another
+              // amendment, say), this edit is refused rather than undoing it.
+              const result = await api.amendRun(runId, { edit, note: noteRef.current.trim(), baseStateVersion: got.stateVersion || 0 });
               const amendment = result?.amendment;
               return { status: amendment?.state === 'applied' ? 'Applied to this run.' : 'Proposed to the operator.', amendment };
             },

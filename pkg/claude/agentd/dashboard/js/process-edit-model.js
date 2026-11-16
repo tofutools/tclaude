@@ -260,6 +260,11 @@ export class ProcessEditModel {
       mode: config.mode || 'template',
       nodeEditable: typeof config.nodeEditable === 'function' ? config.nodeEditable : () => true,
       edgeEditable: typeof config.edgeEditable === 'function' ? config.edgeEditable : () => true,
+      // layoutEditable gates position-only edits (drag, tidy). It follows
+      // nodeEditable unless the view says otherwise: a run's copy locks the
+      // steps the run reached, but where they are drawn is no change to it.
+      layoutEditable: typeof config.layoutEditable === 'function' ? config.layoutEditable
+        : typeof config.nodeEditable === 'function' ? config.nodeEditable : () => true,
       // canInsert is the mode-level permission for growing the topology (new
       // nodes, snippet compounds). Per-node/edge predicates lock EXISTING
       // items; whether the view may add material at all is a mode property —
@@ -501,6 +506,10 @@ export class ProcessEditModel {
     if (this.undoStack.length > this.config.maxUndo) this.undoStack.shift();
     this.restoreState(snapshot);
     return true;
+  }
+
+  assertLayoutEditable(id) {
+    if (!this.config.layoutEditable(id)) throw new Error(`node ${id} is read-only in this view`);
   }
 
   assertNodeEditable(id) {
@@ -754,7 +763,7 @@ export class ProcessEditModel {
     // back rather than stay stranded at the old place.
     const folded = !ids?.length && this.expansions?.size > 0;
     if (!keys.length && !folded && !turn) return false;
-    for (const id of chosen) this.assertNodeEditable(id);
+    for (const id of chosen) this.assertLayoutEditable(id);
     this.begin();
     for (const key of keys) delete this.layout.nodes[key];
     if (turn && direction === 'down') delete this.layout.direction;
@@ -770,7 +779,7 @@ export class ProcessEditModel {
     if (!unique.size) return false;
     for (const { id, x, y } of unique.values()) {
       if (!this.template.nodes[id]) throw new Error(`unknown node ${id}`);
-      this.assertNodeEditable(id);
+      this.assertLayoutEditable(id);
       if (!Number.isFinite(x) || !Number.isFinite(y)) throw new Error('moveNodes needs finite coordinates');
     }
     this.begin();
@@ -1536,7 +1545,7 @@ for (const [name, positions] of Object.entries(NESTED_ROUTES)) {
     for (const { move, target } of unique.values()) {
       if (!target && !this.template.nodes[move.id]) throw new Error(`unknown node ${move.id}`);
       if (target && !this.node(move.id)) throw new Error(`unknown node ${move.id}`);
-      this.assertNodeEditable(target ? target.owner : move.id);
+      this.assertLayoutEditable(target ? target.owner : move.id);
       if (!Number.isFinite(move.x) || !Number.isFinite(move.y)) throw new Error('moveNodes needs finite coordinates');
     }
     this.begin();

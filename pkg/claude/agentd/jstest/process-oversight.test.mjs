@@ -219,11 +219,11 @@ test('an amended run lists its amendments; a proposal is applied from the run; t
   }
   assert.equal(form.querySelector('textarea').value, 'id: amendme\n');
   await harness.act(async () => { form.querySelector('[data-amend-check-open]').click(); await tick(); });
-  assert.deepEqual(calls.at(-1), ['amend', 'run_ov', { yaml: 'id: amendme\n', note: '', dryRun: true }]);
+  assert.deepEqual(calls.at(-1), ['amend', 'run_ov', { yaml: 'id: amendme\n', note: '', dryRun: true, baseStateVersion: 0 }]);
   assert.match(form.querySelector('[data-amend-check]').textContent, /adds security/);
   const submit = form.querySelector('[data-amend-submit]');
   assert.equal(submit.textContent, 'Apply to this run');
   await harness.act(async () => { submit.click(); await tick(); });
-  assert.deepEqual(calls.at(-1), ['amend', 'run_ov', { yaml: 'id: amendme\n', note: '', dryRun: false }]);
+  assert.deepEqual(calls.at(-1), ['amend', 'run_ov', { yaml: 'id: amendme\n', note: '', dryRun: false, baseStateVersion: 0 }]);
   assert.equal(root.querySelector('[data-run-amend]'), null, 'the form closes once applied');
 });

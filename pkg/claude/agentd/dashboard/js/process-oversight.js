@@ -335,7 +335,7 @@ export function AmendRun({ runId, api, onChanged, onClose }) {
     setBusy(true);
     setError('');
     try {
-      const got = await api.amendRun(runId, { yaml: text, note: note.trim(), dryRun });
+      const got = await api.amendRun(runId, { yaml: text, note: note.trim(), dryRun, baseStateVersion: source?.stateVersion || 0 });
       if (dryRun) {
         setChecked(got);
       } else {

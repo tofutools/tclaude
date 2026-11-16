@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"maps"
 	"net/http"
 	"slices"
 	"strconv"
@@ -46,6 +47,10 @@ type processRunAmendRequest struct {
 	Note string                   `json:"note,omitempty"`
 	// DryRun checks the amendment and says what it changes, storing nothing.
 	DryRun bool `json:"dryRun,omitempty"`
+	// BaseStateVersion, when set, is the run state the amender read the
+	// copy at (GET …/template's stateVersion): a run that moved on since
+	// refuses it, so an edit begun before another amendment cannot undo it.
+	BaseStateVersion int64 `json:"baseStateVersion,omitempty"`
 }
 
 // MaxProcessAmendYAMLBytes bounds an amendment sent as YAML.
@@ -231,6 +236,11 @@ func handleProcessRunAmend(w http.ResponseWriter, r *http.Request) {
 	run, err := executor.LoadRun(runID)
 	if err != nil {
 		writeProcessRuntimeError(w, err)
+		return
+	}
+	if request.BaseStateVersion != 0 && request.BaseStateVersion != run.StateVersion() {
+		writeError(w, http.StatusConflict, "process_amendment_stale",
+			"the run moved on since you opened its copy; open it again and redo the change")
 		return
 	}
 	_, _, summary, err := executor.PlanAmendment(run, amended)
@@ -515,6 +525,13 @@ func handleProcessRunTemplate(w http.ResponseWriter, r *http.Request) {
 			edit = &processTemplateEditView{Template: &semantic, Edges: parsed.Edges, Layout: parsed.Template.Layout}
 		}
 	}
+	// Draw the copy where its template draws its steps, under any layout the
+	// copy has of its own.
+	if fs, err := store.NewFS(processStoreRoot()); err == nil && edit.Template != nil {
+		if stored, err := fs.GetTemplate(r.Context(), record.TemplateRef); err == nil {
+			edit.Layout = mergeProcessLayout(stored.Layout, edit.Layout, edit.Template.Nodes)
+		}
+	}
 	var checkpoint engine.Checkpoint
 	_ = json.Unmarshal(record.CheckpointJSON, &checkpoint)
 	writeProcessJSON(w, http.StatusOK, map[string]any{
@@ -582,6 +599,10 @@ func handleProcessRunAmendmentSaveBack(w http.ResponseWriter, r *http.Request) {
 		writeProcessRuntimeError(w, fmt.Errorf("%w: decode amendment template: %v", executor.ErrInvalidRun, err))
 		return
 	}
+	// The operator's lock on the template holds here as on any template save.
+	if refuseLockedForAgent(w, r, resourceKindProcess, tmpl.ID, "process template "+tmpl.ID) {
+		return
+	}
 	fs, err := store.NewFS(processStoreRoot())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "process_store", err.Error())
@@ -599,6 +620,11 @@ func handleProcessRunAmendmentSaveBack(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, "process_template_moved",
 			"the template was changed since this run started; open it in the editor and carry the amendment over by hand")
 		return
+	}
+	// A run's snapshot carries no layout of its own: keep where the template
+	// drew its steps, unless the amendment placed them.
+	if current, err := fs.GetTemplate(r.Context(), head.Ref); err == nil {
+		tmpl.Layout = mergeProcessLayout(current.Layout, tmpl.Layout, tmpl.Nodes)
 	}
 	commit, err := fs.PutTemplateEditorSourceAttributed(r.Context(), &tmpl, head.SourceHash, actor)
 	var conflict *store.TemplateSourceConflictError
@@ -632,4 +658,46 @@ func decodeProcessAmendRequest(w http.ResponseWriter, r *http.Request, dst *proc
 	}
 	r.Body = io.NopCloser(bytes.NewReader(data))
 	return strictjson.Decode(data, dst)
+}
+
+// mergeProcessLayout lays own over base: own's positions, direction and edge
+// metadata win, and base fills in for the steps own does not place, as long
+// as the step is still there.
+func mergeProcessLayout(base, own *model.Layout, nodes map[string]model.Node) *model.Layout {
+	if base == nil {
+		return own
+	}
+	out := &model.Layout{}
+	if own != nil {
+		out.Direction = own.Direction
+		out.Nodes = maps.Clone(own.Nodes)
+		out.Edges = maps.Clone(own.Edges)
+	}
+	if out.Direction == "" {
+		out.Direction = base.Direction
+	}
+	present := func(key string) bool {
+		_, ok := nodes[strings.SplitN(key, "/", 2)[0]]
+		return ok
+	}
+	for key, pos := range base.Nodes {
+		if _, set := out.Nodes[key]; !set && present(key) {
+			if out.Nodes == nil {
+				out.Nodes = map[string]model.LayoutNode{}
+			}
+			out.Nodes[key] = pos
+		}
+	}
+	for from, edges := range base.Edges {
+		if _, set := out.Edges[from]; !set && present(from) {
+			if out.Edges == nil {
+				out.Edges = map[string]map[string]model.LayoutEdge{}
+			}
+			out.Edges[from] = edges
+		}
+	}
+	if out.Direction == "" && len(out.Nodes) == 0 && len(out.Edges) == 0 {
+		return nil
+	}
+	return out
 }

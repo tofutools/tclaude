@@ -116,6 +116,8 @@ func TestProcessAmend_SaveBackToTheTemplate(t *testing.T) {
 	tmpl := chainTemplate("amendme", []string{"work", "ship"}, map[string]model.Node{
 		"work": dev("Build it."), "ship": dev("Ship it."),
 	})
+	// Where the operator drew the steps survives a save-back.
+	tmpl.Layout = &model.Layout{Direction: "right", Nodes: map[string]model.LayoutNode{"work": {X: 120, Y: 40}, "ship": {X: 320, Y: 40}}}
 	putProcessRuntimeTemplate(t, root, tmpl)
 	created := processRuntimeRequest(t, f, http.MethodPost, "/v1/process/runs", map[string]any{
 		"id": "run_sb1", "templateId": "amendme", "group": "crew", "authorizeProgramProfiles": []string{},
@@ -141,6 +143,12 @@ func TestProcessAmend_SaveBackToTheTemplate(t *testing.T) {
 
 	denied := agentReq(t, f, leadConv, http.MethodPost, path, map[string]any{})
 	require.Equal(t, http.StatusForbidden, denied.Code, "the overseer alone does not edit the template")
+	// The operator's lock on the template holds against an agent with templates.manage.
+	require.NoError(t, db.GrantAgentPermission(leadConv, agentd.PermProcessTemplatesManage, "human"))
+	require.NoError(t, db.SetGroupResourceLocked(db.GroupResourceProcess, "amendme", true))
+	locked := agentReq(t, f, leadConv, http.MethodPost, path, map[string]any{})
+	require.Equal(t, http.StatusForbidden, locked.Code, locked.Body.String())
+	require.NoError(t, db.SetGroupResourceLocked(db.GroupResourceProcess, "amendme", false))
 	saved := processRuntimeRequest(t, f, http.MethodPost, path, map[string]any{})
 	require.Equal(t, http.StatusOK, saved.Code, saved.Body.String())
 	again := processRuntimeRequest(t, f, http.MethodPost, path, map[string]any{})
@@ -156,6 +164,15 @@ func TestProcessAmend_SaveBackToTheTemplate(t *testing.T) {
 	}
 	testharness.DecodeJSON(t, processRuntimeRequest(t, f, http.MethodGet, "/v1/process/runs/run_sb2/template", nil), &printed)
 	require.Contains(t, printed.YAML, "Ship it behind a flag.")
+	var stored struct {
+		Layout struct {
+			Direction string                      `json:"direction"`
+			Nodes     map[string]model.LayoutNode `json:"nodes"`
+		} `json:"layout"`
+	}
+	testharness.DecodeJSON(t, processRuntimeRequest(t, f, http.MethodGet, "/v1/process/templates/amendme", nil), &stored)
+	require.Equal(t, "right", stored.Layout.Direction, "the template's layout survives the save-back")
+	require.Equal(t, model.LayoutNode{X: 320, Y: 40}, stored.Layout.Nodes["ship"])
 	view.Amendments = nil
 	testharness.DecodeJSON(t, processRuntimeRequest(t, f, http.MethodGet, "/v1/process/runs/run_sb1", nil), &view)
 	require.False(t, view.Amendments[0].Saveable)
@@ -209,8 +226,9 @@ func TestProcessAmend_GraphEditorModelRoundTrips(t *testing.T) {
 			Edges    []map[string]any `json:"edges"`
 			Layout   any              `json:"layout"`
 		} `json:"editView"`
-		Reached    []string `json:"reached"`
-		Reroutable []string `json:"reroutable"`
+		Reached      []string `json:"reached"`
+		Reroutable   []string `json:"reroutable"`
+		StateVersion int64    `json:"stateVersion"`
 	}
 	testharness.DecodeJSON(t, processRuntimeRequest(t, f, http.MethodGet, "/v1/process/runs/run_ge1/template", nil), &got)
 	require.Contains(t, got.Reached, "work")
@@ -236,6 +254,10 @@ func TestProcessAmend_GraphEditorModelRoundTrips(t *testing.T) {
 	require.Equal(t, http.StatusOK, checked.Code, checked.Body.String())
 	require.Contains(t, checked.Body.String(), `"added":["security"]`)
 	require.Contains(t, checked.Body.String(), `"rerouted":["work"]`)
-	applied := processRuntimeRequest(t, f, http.MethodPost, "/v1/process/runs/run_ge1/amendments", map[string]any{"edit": got.EditView})
+	applied := processRuntimeRequest(t, f, http.MethodPost, "/v1/process/runs/run_ge1/amendments", map[string]any{"edit": got.EditView, "baseStateVersion": got.StateVersion})
 	require.Equal(t, http.StatusAccepted, applied.Code, applied.Body.String())
+	// An edit begun before that one was applied is refused, not applied over it.
+	late := processRuntimeRequest(t, f, http.MethodPost, "/v1/process/runs/run_ge1/amendments", map[string]any{"edit": got.EditView, "baseStateVersion": got.StateVersion})
+	require.Equal(t, http.StatusConflict, late.Code, late.Body.String())
+	require.Contains(t, late.Body.String(), "moved on since you opened")
 }

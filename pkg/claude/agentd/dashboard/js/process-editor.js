@@ -258,6 +258,7 @@ export class ProcessTemplateEditor {
       mode: options.mode || 'template',
       nodeEditable: options.nodeEditable,
       edgeEditable: options.edgeEditable,
+      layoutEditable: options.layoutEditable,
       canInsert: options.canInsert,
     });
     this.loadedView = structuredClone(view);

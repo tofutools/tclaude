@@ -26,6 +26,7 @@ test('a run copy locks the steps the run reached, marks them, and lets one being
   assert.equal(review.stateOverlay.label, 'reached · can reroute');
   assert.equal(ship.locked, undefined);
   assert.equal(config.runCopy.label, 'Apply to this run');
+  assert.equal(config.layoutEditable('spec'), true, 'where a reached step is drawn is no change to the run');
   assert.equal(runCopyConfig({ runId: 'run_1', direct: false, send: async () => ({}) }).runCopy.label, 'Propose to the operator');
 });
 
@@ -37,7 +38,7 @@ test('Amend run opens the copy in the editor and sends its model as an amendment
   const api = {
     runTemplate: async () => ({
       editView: { template: { id: 'tpl', nodes: {} }, edges: [], layout: null, sourceHash: 'abc' },
-      reached: ['spec'], reroutable: [], canAmendDirectly: false,
+      reached: ['spec'], reroutable: [], canAmendDirectly: false, stateVersion: 7,
     }),
     amendRun: async (runId, body) => { calls.push([runId, body]); return { amendment: { state: 'proposed' } }; },
   };
@@ -58,9 +59,26 @@ test('Amend run opens the copy in the editor and sends its model as an amendment
     await tick();
   });
   const result = await opened.config.saveAction({ template: { id: 'tpl' }, edges: [], layout: null, sourceHash: '' });
-  assert.deepEqual(calls, [['run_1', { edit: { template: { id: 'tpl' }, edges: [], layout: null }, note: 'PCI asked for it' }]]);
+  assert.deepEqual(calls, [['run_1', { edit: { template: { id: 'tpl' }, edges: [], layout: null }, note: 'PCI asked for it', baseStateVersion: 7 }]]);
   assert.equal(result.status, 'Proposed to the operator.');
   opened.config.onSaved(result);
   assert.equal(changed, 1);
   assert.equal(closed, 1);
+});
+
+test('a run copy may tidy and move reached steps, but not edit them', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { ProcessEditModel } = await harness.importDashboardModule('js/process-edit-model.js');
+  const { runCopyConfig } = await harness.importDashboardModule('js/process-run-copy.js');
+  const view = {
+    template: { id: 'tpl', nodes: { start: { type: 'start' }, spec: { type: 'task', name: 'Spec' }, ship: { type: 'task', name: 'Ship' }, done: { type: 'end' } } },
+    edges: [{ from: '', outcome: 'start', to: 'start' }, { from: 'start', outcome: 'default', to: 'spec' },
+      { from: 'spec', outcome: 'default', to: 'ship' }, { from: 'ship', outcome: 'default', to: 'done' }],
+    layout: { nodes: { spec: { x: 10, y: 10 } } },
+  };
+  const config = runCopyConfig({ runId: 'r', reached: ['start', 'spec'], send: async () => ({}) });
+  const model = new ProcessEditModel(view, config);
+  assert.equal(model.moveNodes([{ id: 'spec', x: 40, y: 50 }]), true);
+  assert.equal(model.autoLayout(), true, 'tidying the whole graph is allowed');
+  assert.throws(() => model.renameNode('spec', 'spec2'), /read-only/);
 });
