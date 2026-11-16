@@ -75,6 +75,12 @@
   text-transform: inherit; text-align: left; cursor: pointer;
 }
 :root[data-layout="phone"] .phone-section-chev { color: var(--ui-focus); font-size: 16px; }
+/* A folding head with a control of its own (Shells' ＋ Shell): the fold takes
+   the row, the control sits after it with its own tap height. */
+:root[data-layout="phone"] .phone-section-head-more { align-items: center; gap: 12px; }
+:root[data-layout="phone"] .phone-section-head-more .phone-section-fold { flex: 1; min-width: 0; }
+:root[data-layout="phone"] .phone-section-head-more > .phone-link { flex: none; min-height: var(--phone-tap); margin: -6px 0; letter-spacing: normal; text-transform: none; }
+:root[data-layout="phone"] .phone-shell-menu .phone-menu { margin-top: 6px; }
 /* Show all / Only the recent ones, under Now's rows of agents. */
 :root[data-layout="phone"] .phone-now-all {
   display: flex; justify-content: center; align-items: center; gap: 6px; width: 100%; min-height: var(--phone-tap); margin-top: 6px;

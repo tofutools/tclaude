@@ -170,6 +170,9 @@ type tmuxSession struct {
 	// remain-on-exit corpse — the dying screen real tmux keeps readable, and
 	// the only thing a startup-failure capture has to work with.
 	deadOutput string
+	// created and activity are the session's times (unix seconds) as
+	// list-sessions reports them; zero unless SetSessionTimes set them.
+	created, activity int64
 }
 
 // fakePaneBasePID keeps the sim's fake pane pids away from real, meaningful
@@ -934,7 +937,8 @@ func (t *TmuxSim) KillBySignalForTest(name string) {
 }
 
 // renderSessionFormat expands the list-sessions format variables the sim
-// models. Clients come from AttachClient; times are a fixed zero.
+// models. Clients come from AttachClient; times are zero unless
+// SetSessionTimes set them.
 func (t *TmuxSim) renderSessionFormat(format, name string) string {
 	t.mu.Lock()
 	attached := 0
@@ -944,8 +948,10 @@ func (t *TmuxSim) renderSessionFormat(format, name string) string {
 		}
 	}
 	cwd := ""
+	var created, activity int64
 	if s := t.sessions[name]; s != nil {
 		cwd = s.cwd
+		created, activity = s.created, s.activity
 	}
 	paneDead := "0"
 	if !t.sessionPaneAlive(t.sessions[name]) {
@@ -956,10 +962,24 @@ func (t *TmuxSim) renderSessionFormat(format, name string) string {
 		"#{session_name}", name,
 		"#{session_attached}", strconv.Itoa(attached),
 		"#{pane_current_path}", cwd,
-		"#{session_activity}", "0",
-		"#{session_created}", "0",
+		"#{session_activity}", strconv.FormatInt(activity, 10),
+		"#{session_created}", strconv.FormatInt(created, 10),
 		"#{pane_dead}", paneDead,
 	).Replace(format)
+}
+
+// SetSessionTimes sets when a session was created and last active (unix
+// seconds), as list-sessions reports them. It reports whether the session
+// exists.
+func (t *TmuxSim) SetSessionTimes(name string, created, activity int64) bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	s := t.sessions[name]
+	if s == nil {
+		return false
+	}
+	s.created, s.activity = created, activity
+	return true
 }
 
 // AttachClient registers a simulated tmux client tty on sessionName.

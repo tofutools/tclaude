@@ -18,16 +18,20 @@ import { Avatar, Card, IconButton, Section, StatePill } from './phone-ui.js';
 const html = htm.bind(h);
 
 // openSessions is collabItems' sections with only the open sessions: each
-// kept section with its terminals in the panel's order, and no empty section.
+// kept section with its terminals and running shells (a group's or an
+// agent's shell is a resource of its group, not a terminal item) in the
+// panel's order, and no empty section.
+const isSession = (item) => item.kind === 'terminal' || item.kind === 'shell';
 export function openSessions(sections) {
   return (sections || [])
-    .map((section) => ({ ...section, items: section.items.filter((item) => item.kind === 'terminal' && (item.bucket || bucketOf(item.view)) !== 'closed') }))
+    .map((section) => ({ ...section, items: section.items.filter((item) => isSession(item) && (item.bucket || bucketOf(item.view)) !== 'closed') }))
     .filter((section) => section.items.length > 0);
 }
 
 // sessionKind is what a row says it is, and its avatar glyph ('' draws the
 // name's initial).
 export function sessionKind(item) {
+  if (item.kind === 'shell') return { glyph: '›', word: 'shell' };
   const kind = item.row?.kind;
   if (kind === 'shell' || kind === 'group_shell') return { glyph: '›', word: 'shell' };
   if (kind === 'session') return { glyph: '', word: 'session' };

@@ -69,6 +69,10 @@ func seedCollabFleet(t *testing.T, f *testharness.Flow, quiet bool) {
 			break
 		}
 		f.World.Tmux.Register(docGroupShellSession(name), docHome+"/git/"+name, docShellPane{})
+		// When each started and was last used, for the rows that say so.
+		now := time.Now().Unix()
+		times := map[string][2]int64{"tclaude": {now - 3*3600, now - 2*60}, "home-lab": {now - 4*86400, now - 2*86400}}[name]
+		f.World.Tmux.SetSessionTimes(docGroupShellSession(name), times[0], times[1])
 	}
 	for _, a := range collabFleetAgents {
 		if quiet {

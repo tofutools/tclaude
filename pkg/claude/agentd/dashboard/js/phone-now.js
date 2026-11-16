@@ -8,7 +8,8 @@
 // cards (access requests, decisions, process gates, agents asking), the
 // online agents in one card of rows (every one when there are few, else the
 // ones at work or in error, with Show all), and the operator's open PRs
-// behind a collapsed header. The shell (phone-shell-island.js) shows it as
+// behind a collapsed header, then the shells running (phone-now-shells.js),
+// folded too. The shell (phone-shell-island.js) shows it as
 // its home view.
 
 import { h } from 'preact';
@@ -27,6 +28,7 @@ import { useHold } from './phone-hold.js';
 import { relTime } from './helpers.js';
 import { processContext } from './process-context.js';
 import { GateCard, gateItems, useProcessRuns } from './phone-process-runs.js';
+import { NowShells } from './phone-now-shells.js';
 
 const html = htm.bind(h);
 
@@ -289,7 +291,8 @@ export function NowView({ state, actions, fetchImpl = globalThis.fetch, processS
         onClick=${() => setShowAll(!showAll)}>${showAll ? 'Only the recent ones' : `Show all ${list.total} online`}
         <span aria-hidden="true">${showAll ? '⌄' : '›'}</span></button>`}
     <//>
-    <${OpenPRs} snapshot=${snapshot} />`;
+    <${OpenPRs} snapshot=${snapshot} />
+    <${NowShells} snapshot=${state.snapshot} notify=${actions.notify} />`;
   }
   return html`<div class="phone-now">
     <${ChipRow} label="Show on Now" class="phone-now-chips" items=${chips} value=${chip} onSelect=${pick} />

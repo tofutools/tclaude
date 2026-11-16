@@ -168,9 +168,14 @@ func TestFederation_MoveReceiverConfirmsReservedRunningIdentity(t *testing.T) {
 	require.Equal(t, d.SHA256, c.SHA256)
 	require.NotEqual(t, d.Move.SourceAgent, c.TargetAgent)
 	require.NotEqual(t, moveSourceConv, c.TargetConv)
+	// The confirmation is queued before the move turns running (the state
+	// changes once every send has gone out), so the peer can hold it first.
+	fedEventually(t, "move turns running", func() bool {
+		m, err := db.GetFederationAgentMove("in", fh.peer.id.ID(), d.ID)
+		return err == nil && m != nil && m.State == "running"
+	})
 	m, err := db.GetFederationAgentMove("in", fh.peer.id.ID(), d.ID)
 	require.NoError(t, err)
-	require.Equal(t, "running", m.State)
 	require.NotNil(t, m.MovedFrom)
 	require.Equal(t, fh.peer.id.ID(), m.MovedFrom.Instance)
 	a, err := db.GetAgent(c.TargetAgent)

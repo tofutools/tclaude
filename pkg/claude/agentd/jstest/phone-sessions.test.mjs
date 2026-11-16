@@ -37,6 +37,15 @@ test('openSessions keeps the sessions running, in order, and drops empty groups'
   assert.equal(mod.sessionKind(SECTIONS[2].items[0]).word, 'shell');
 });
 
+test('a running group or agent shell (a resource of its group) lists as a shell; a closed one does not', async (t) => {
+  const { mod } = await setup(t, []);
+  const shell = { key: 'shell:webshop', kind: 'shell', title: 'webshop shell', view: 'background', bucket: 'background', resource: { kind: 'shell', id: 'webshop' } };
+  const closed = { ...shell, key: 'shell:old', bucket: 'closed', view: 'closed' };
+  const kept = mod.openSessions([{ id: 'g', name: 'webshop', items: [shell, closed] }]);
+  assert.deepEqual(kept.map((s) => s.items.map((i) => i.key)), [['shell:webshop']]);
+  assert.deepEqual(mod.sessionKind(shell), { glyph: '›', word: 'shell' });
+});
+
 test('a group per section with its open sessions; a tap opens one', async (t) => {
   const { harness, opened, c } = await setup(t, SECTIONS);
   const groups = [...c.querySelectorAll('[role="group"]')].map((g) => g.getAttribute('aria-label'));
