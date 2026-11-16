@@ -20,6 +20,7 @@
 // so Select has what is on screen (a swiped-back view included), not the
 // session's whole history.
 
+import { useBackLayer } from './back-layers.js';
 import { h } from 'preact';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
@@ -232,6 +233,7 @@ function selectIn(lineEl, [start, end]) {
 // copy(text, what) copies; onClose leaves.
 export function TerminalText({ lines, picked = null, onLink, copy, onClose }) {
   const body = useRef(null);
+  useBackLayer(true, () => onClose?.());
   const [selected, setSelected] = useState('');
   const doc = () => body.current?.ownerDocument;
   const selectionHere = () => {

@@ -1,3 +1,4 @@
+import { registerBackLayer } from './back-layers.js';
 import { h } from 'preact';
 import { useCallback, useLayoutEffect, useRef } from 'preact/hooks';
 import htm from 'htm';
@@ -147,6 +148,9 @@ export function ManagementOverlay({
     dialog.addEventListener('keydown', handleKeyDown);
     return () => dialog.removeEventListener('keydown', handleKeyDown);
   }, [blocked, onSubmitEnter, onSubmitHotkey, onSubmitShiftHotkey]);
+  // Back closes the topmost overlay, through this same guarded close
+  // (back-layers.js).
+  useLayoutEffect(() => registerBackLayer({ close }), [close]);
   useLayoutEffect(() => {
     const cleanup = registerClose?.(close);
     return () => {

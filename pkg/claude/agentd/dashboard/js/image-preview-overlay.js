@@ -1,4 +1,5 @@
 import { Fragment, h } from 'preact';
+import { useBackLayer } from './back-layers.js';
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { useDialogFocus } from './dialog-focus.js';
@@ -130,6 +131,7 @@ export function MediaViewer({ source, attachment: launcherAttachment, siblings =
   const onCloseRef = useRef(onClose);
   onCloseRef.current = onClose;
   const close = useCallback(() => { onCloseRef.current?.(); }, []);
+  useBackLayer(true, close);
   const { dialogRef } = useDialogFocus({
     open,
     initialFocusRef: closeRef,

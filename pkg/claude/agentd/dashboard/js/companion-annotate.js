@@ -6,6 +6,7 @@
 // an arrow, a mark, a drawing) and which control or text it lands on, read from
 // the page under the stroke.
 
+import { useBackLayer } from './back-layers.js';
 import { h } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
@@ -256,6 +257,8 @@ export function AnnotateOverlay({ agentName, onSend, onCancel, win = globalThis.
   const [color, setColor] = useState(ANNOTATE_COLORS[0]);
   const [note, setNote] = useState('');
   const [sending, setSending] = useState(false);
+  // Back is Cancel, as Escape is; a send in flight stays.
+  useBackLayer(true, () => { if (sending) return false; onCancel(); return true; });
   const drawing = useRef(null);
   const rootRef = useRef(null);
   const noteRef = useRef(null);

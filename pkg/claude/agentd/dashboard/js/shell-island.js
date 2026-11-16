@@ -1,4 +1,5 @@
 import { Fragment, h, render } from 'preact';
+import { useBackLayer } from './back-layers.js';
 import { SpendLimitBanner } from './spend-limits.js';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
@@ -388,6 +389,7 @@ function IgnorePRDialog({ pr, onCancel, onConfirm, kind = 'pr' }) {
   const [duration, setDuration] = useState('7d');
   const okRef = useRef(null);
   useLayoutEffect(() => { okRef.current?.focus(); }, []);
+  useBackLayer(true, onCancel);
   const chosen = OPEN_PR_IGNORE_DURATIONS.find((d) => d.id === duration) || OPEN_PR_IGNORE_DURATIONS[0];
   return html`
     <div class="open-prs-confirm-backdrop" onClick=${(event) => { if (event.currentTarget === event.target) onCancel(); }}>
@@ -957,6 +959,12 @@ function Confirm({ feedback }) {
   // — the same busy vocabulary the transaction dialogs already use.
   const busy = !!model?.busy;
   const okRef = useRef(null);
+  // Back is Cancel; a confirmed action in flight stays up.
+  useBackLayer(!!model, () => {
+    if (feedback.confirmation.peek?.()?.busy ?? feedback.confirmation.value?.busy) return false;
+    feedback.resolveConfirmation(false);
+    return true;
+  });
   useLayoutEffect(() => {
     if (!model || busy) return;
     okRef.current?.focus();

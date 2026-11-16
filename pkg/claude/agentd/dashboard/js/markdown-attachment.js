@@ -15,6 +15,7 @@
 // out a mode the viewer already switches between, and the card — a filename, a
 // media type, a size, a download link — has no width to spare for it.
 
+import { useBackLayer } from './back-layers.js';
 import { Fragment, h } from 'preact';
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
@@ -136,6 +137,7 @@ export function MarkdownViewer({ files, attachment, siblings, surface = 'attachm
   const onCloseRef = useRef(onClose);
   onCloseRef.current = onClose;
   const close = useCallback(() => onCloseRef.current?.(), []);
+  useBackLayer(true, close);
   const { dialogRef } = useDialogFocus({
     open: viewerOpen,
     initialFocusRef: closeRef,
