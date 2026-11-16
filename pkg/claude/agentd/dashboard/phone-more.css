@@ -24,3 +24,28 @@
 :root[data-layout="phone"] .phone-session-item { display: flex; align-items: center; gap: 2px; }
 :root[data-layout="phone"] .phone-session-more { flex: none; color: var(--ui-muted-text); }
 :root[data-layout="phone"] .phone-sessions-empty p + p { margin-top: 4px; color: var(--ui-muted-text); font-size: 13px; }
+
+/* Update tclaude (js/phone-update.js): the version facts, the confirm, a
+   run's phase with a spinner, then the result and the job's own view. */
+:root[data-layout="phone"] .phone-update { display: flex; flex-direction: column; gap: 10px; }
+:root[data-layout="phone"] .phone-update-title { margin: 4px 0 0; font-size: 17px; color: var(--ui-text-strong); }
+:root[data-layout="phone"] .phone-update-facts { display: grid; grid-template-columns: auto 1fr; gap: 6px 14px; margin: 0; font-size: 14px; }
+:root[data-layout="phone"] .phone-update-facts dt { color: var(--ui-muted-text); }
+:root[data-layout="phone"] .phone-update-facts dd { margin: 0; color: var(--ui-text-strong); overflow-wrap: anywhere; }
+:root[data-layout="phone"] .phone-update-new { color: var(--phone-warn); font-weight: 600; }
+:root[data-layout="phone"] .phone-update-note,
+:root[data-layout="phone"] .phone-update-body { margin: 0; color: var(--ui-muted-text); font-size: 14px; line-height: 1.45; }
+:root[data-layout="phone"] .phone-update-body { color: var(--ui-text); }
+:root[data-layout="phone"] .phone-update-warn { margin: 0; color: var(--phone-warn); font-size: 13px; }
+:root[data-layout="phone"] .phone-update-state { display: flex; align-items: center; gap: 10px; margin: 0; font-size: 15px; color: var(--ui-text-strong); }
+:root[data-layout="phone"] .phone-update-phase { color: var(--ui-muted-text); }
+:root[data-layout="phone"] .phone-update-spin {
+  flex: none; width: 16px; height: 16px; border-radius: 50%; border: 2px solid var(--phone-line); border-top-color: var(--phone-accent);
+  animation: phone-update-spin .8s linear infinite;
+}
+@keyframes phone-update-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { :root[data-layout="phone"] .phone-update-spin { animation: none; } }
+:root[data-layout="phone"] .phone-update-ok { margin: 0; color: var(--phone-ok); font-size: 15px; font-weight: 600; }
+:root[data-layout="phone"] .phone-update-fail { margin: 0; font-size: 15px; font-weight: 600; }
+:root[data-layout="phone"] .phone-update-job { font-size: 13px; overflow-wrap: anywhere; }
+:root[data-layout="phone"] .phone-update-job pre { max-height: 40vh; overflow: auto; white-space: pre-wrap; font-size: 12px; }

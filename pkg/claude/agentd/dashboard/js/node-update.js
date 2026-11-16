@@ -107,7 +107,7 @@ function hubMayBeRestarting(error) {
   return !error?.status || error.status === 502 || error.status === 503 || error.status === 504;
 }
 
-function accessText(error, node) {
+export function accessText(error, node) {
   if (node.hub && error?.status === 403) return 'This node does not hold the hub capability for updates (hub.update).';
   // A daemon without the route answers 404; an older hub refuses the
   // operation (400 "operation"). Either way the feature is simply absent.
@@ -249,7 +249,7 @@ export function applyConfirm({ node, status, method = '', methodLabel = '', vers
 
 // savedMethod is the node's saved update method from its status read, with
 // a label; fallback names it before the read (or on an older node).
-function savedMethod(status, fallback = '') {
+export function savedMethod(status, fallback = '') {
   const id = status && 'chosen_method' in status ? status.chosen_method || '' : fallback;
   return { id, label: SELF_UPDATE_METHODS.find((m) => m.id === id)?.label || id };
 }
