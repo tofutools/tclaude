@@ -76,7 +76,7 @@ func runBuiltinLs(p *builtinLsParams, stdout, stderr io.Writer) error {
 
 type builtinUseParams struct {
 	ID       string `pos:"true" help:"The built-in's id (see builtin ls)"`
-	Group    string `long:"group" help:"The group to copy it into: it becomes one of the group's saved processes"`
+	Group    string `long:"group" optional:"true" help:"(required) The group to copy it into: it becomes one of the group's saved processes"`
 	Name     string `long:"name" optional:"true" help:"Name the group's copy (default: the built-in's name)"`
 	AskHuman string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (for example 30s). Capped at 300s; timeout means deny."`
 }
@@ -116,6 +116,6 @@ func runBuiltinUse(p *builtinUseParams, stdout, stderr io.Writer) error {
 		agent.DaemonOpts{AskHuman: ask, RetryOutput: stderr}); err != nil {
 		return err
 	}
-	fmt.Fprintf(stdout, "Copied %s into %s as template %s.\nRun it: tclaude process run %s --group %s\n", p.ID, p.Group, response.ID, response.ID, p.Group)
+	fmt.Fprintf(stdout, "Copied %s into %s as template %s.\nRun it: tclaude process run %s --group %s --param task='<what to do>'\n", p.ID, p.Group, response.ID, response.ID, p.Group)
 	return nil
 }

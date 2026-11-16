@@ -51,6 +51,8 @@ nodes:
   done:
     type: end
     result: success
+  # Out of rounds, or escalated by hand: the run fails, so a board task it
+  # runs for is blocked with the reason rather than left as it was.
   escalated:
     type: end
-    result: canceled
+    result: failed

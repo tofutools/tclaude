@@ -35,9 +35,13 @@ tclaude ships four processes in the binary:
 | `bug-fix` | Bug: reproduce → fix → verify | a tester reproduces the bug, a developer fixes it, the same tester verifies the fix, and the lead merges it |
 | `quick-change` | Quick change + one review | a developer makes the change, one other reviewer approves or sends it back, and the developer merges it |
 
-Each takes the `task` it is run for. Steps pick members by role (`lead`,
-`planner`, `ux`, `dev`, `reviewer`, `tester`) and spawn one when the group has
-none. The run's overseer is the group's lead, as for any run (see
+Each takes the `task` it is run for. Steps pick members by role (`planner`,
+`ux`, `dev`, `reviewer`, `tester`) and spawn one when the group has none. The
+lead's steps go to the group's lead (a member with the role `lead`, else an
+agent that owns the group) and wait when it has none. Running out of review
+rounds, or a performer choosing escalate, fails the run, so a board task it
+runs for is blocked with the reason (Plan → vet → build → review → merge keeps
+the operator's example, which cancels it). The run's overseer is the group's lead, as for any run (see
 [Oversight and escalation](#oversight-and-escalation)).
 
 A built-in is never run as it is. A group that uses one gets its own copy:

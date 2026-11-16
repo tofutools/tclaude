@@ -123,6 +123,13 @@ func TestProcessBuiltins_ListedAndCopiedIntoAGroup(t *testing.T) {
 
 	named := processRuntimeRequest(t, f, http.MethodPost, "/v1/process/builtins/bug-fix/use", map[string]any{"group": "crew", "name": "Crew bugs"})
 	require.Equal(t, http.StatusCreated, named.Code, named.Body.String())
+	var namedID struct {
+		ID string `json:"id"`
+	}
+	require.NoError(t, json.Unmarshal(named.Body.Bytes(), &namedID))
+	copied := processRuntimeRequest(t, f, http.MethodGet, "/v1/process/templates/"+namedID.ID, nil)
+	require.Equal(t, http.StatusOK, copied.Code, copied.Body.String())
+	assert.Contains(t, copied.Body.String(), `"name":"Crew bugs"`, "the copy takes the name it was given")
 
 	missing := processRuntimeRequest(t, f, http.MethodPost, "/v1/process/builtins/nope/use", map[string]any{"group": "crew"})
 	assert.Equal(t, http.StatusNotFound, missing.Code)

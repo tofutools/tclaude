@@ -138,6 +138,9 @@ func handleProcessBuiltinUse(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	inner := r.Clone(r.Context())
+	// The create route has no {id}: a built-in id must not read as the
+	// template a pin check is about.
+	inner.SetPathValue("id", "")
 	inner.Body = io.NopCloser(bytes.NewReader(payload))
 	inner.ContentLength = int64(len(payload))
 	inner.Header.Set("Content-Type", "application/json")
