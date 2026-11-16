@@ -97,8 +97,11 @@ test('Running shows each group\'s live runs as graph cards, needs-you first, and
   assert.equal(fe.querySelector('.gp-member.busy').getAttribute('title'), '2 performing a process step — fe-dev-forms, fe-dev-charts');
   assert.equal(fe.querySelector('.gp-member.busy .gp-member-count').textContent, '2');
   assert.equal(fe.querySelector('.gp-member.is-working .gp-member-count'), null, 'a lone member gets no count');
-  // A group with no processes at all offers New process.
-  assert.ok(group('infra-crew').querySelector('[data-process-empty="infra-crew"] [data-process-new="infra-crew"]'), 'an empty group offers New process');
+  // A group with no processes at all points at its ＋ menu, the one way to
+  // make one: no New process button of its own beside it.
+  assert.equal(group('infra-crew').querySelector('[data-process-empty="infra-crew"]').textContent, 'No processes yet. The ＋ menu makes one.');
+  assert.equal(group('infra-crew').querySelector('[data-process-empty] button'), null, 'no second New process');
+  assert.ok(group('infra-crew').querySelector('[data-resource-add="infra-crew"]'), 'the ＋ menu is there');
   assert.equal(group('Ungrouped').querySelector('.gp-empty').textContent, 'No ungrouped agent runs a process.');
   assert.equal(root.querySelector('.gp-toolbar'), null, 'no filter row of its own: the checklist lives on the toolbar icon');
 });
@@ -120,11 +123,11 @@ test('the ticked run kinds pick the matching runs', async (t) => {
     });
   }
   // A group with runs, none of the ticked kinds, says so; a group with no
-  // runs at all offers New process instead.
+  // runs at all points at its ＋ menu instead.
   const onlyRunning = { ...FIXTURE, groups: FIXTURE.groups.map((entry) => (entry.group === 'frontend-squad' ? { ...entry, done: [], planned: [] } : entry)) };
   const { group } = await mountFocus(t, { filter: 'planned,done', sourceOptions: { context: onlyRunning } });
   assert.equal(group('frontend-squad').querySelector('.gp-empty:not([data-process-empty])').textContent, 'No planned or done processes.');
-  assert.ok(group('infra-crew').querySelector('[data-process-new="infra-crew"]'));
+  assert.ok(group('infra-crew').querySelector('[data-process-empty="infra-crew"]'));
 });
 
 test('an agentd without the read model shows the placeholder', async (t) => {
@@ -384,8 +387,9 @@ test('New process stores an untitled draft of the group and opens it in place as
   const { harness, group } = await mountFocus(t, { sourceOptions: { context: empty }, api });
   await settle(harness);
   const infra = () => group('infra-crew');
-  assert.equal(infra().querySelector('[data-process-empty]').textContent.trim(), 'No processes yet ◈ New process', 'a fresh group: one button');
-  await harness.act(async () => { infra().querySelector('[data-process-new]').click(); });
+  assert.equal(infra().querySelector('[data-process-empty]').textContent.trim(), 'No processes yet. The ＋ menu makes one.', 'a fresh group: the ＋ menu, no second button');
+  await harness.act(async () => { infra().querySelector('[data-resource-add]').click(); });
+  await harness.act(async () => { infra().querySelector('[data-resource-new-process]').click(); });
   await waitForCondition(harness, () => infra().querySelector('[data-mini-editor="tpl_1"]'), 'the draft opens in place');
   assert.deepEqual(calls, [['create', 'Untitled process', { listed: false, pinGroup: 'infra-crew' }]], 'stored at once, the group\'s, not the library\'s');
   const editor = infra().querySelector('[data-mini-editor="tpl_1"]');
@@ -412,7 +416,8 @@ test('a new process whose autosave is refused says so, and can be closed without
   const { harness, group } = await mountFocus(t, { sourceOptions: { context: empty }, api });
   await settle(harness);
   const infra = () => group('infra-crew');
-  await harness.act(async () => { infra().querySelector('[data-process-new]').click(); });
+  await harness.act(async () => { infra().querySelector('[data-resource-add]').click(); });
+  await harness.act(async () => { infra().querySelector('[data-resource-new-process]').click(); });
   await waitForCondition(harness, () => infra().querySelector('[data-mini-editor="tpl_1"]'), 'the draft opens in place');
   const title = infra().querySelector('[data-mini-title]');
   await harness.act(async () => { title.value = 'Night shift'; harness.fireEvent(title, 'change'); });

@@ -98,10 +98,17 @@ async function mount(t, { api = fakeApi(), context = EMPTY_CONTEXT, confirm = un
 
 const steps = (root) => [...root.querySelectorAll('[data-step]')];
 
-// newSteps makes a new process the way the operator does (New process, then
-// a built-in when one is named) and shows it as the step list.
+// newProcess makes a new process the way the operator does: the group's ＋
+// menu, then ◈ New process.
+async function newProcess(root, click) {
+  await click(root.querySelector('[data-resource-add]'));
+  await click(root.querySelector('[data-resource-new-process]'));
+}
+
+// newSteps makes a new process (newProcess, then a built-in when one is
+// named) and shows it as the step list.
 async function newSteps(root, click, builtin = '') {
-  await click(root.querySelector('[data-process-new]'));
+  await newProcess(root, click);
   if (builtin) await click(root.querySelector(`[data-mini-builtin="${builtin}"]`));
   await click(root.querySelector('[data-mini-steps]'));
   return root.querySelector('[data-step-editor]');
@@ -109,7 +116,7 @@ async function newSteps(root, click, builtin = '') {
 
 test('a new process offers one Start from row: the built-ins, words, a .pwf and the library', async (t) => {
   const { root, api, click } = await mount(t);
-  await click(root.querySelector('[data-process-new]'));
+  await newProcess(root, click);
   const strip = root.querySelector('[data-mini-start-from]');
   assert.ok(strip, 'the empty draft shows Start from');
   assert.equal(strip.querySelectorAll('.gm-start-row').length, 1, 'one row, not two');
@@ -134,7 +141,7 @@ test('a built-in fills the group\'s own draft and names it', async (t) => {
   const get = api.getBuiltin;
   api.getBuiltin = async (id) => { asked.push(id); return get(id); };
   const { root, click } = await mount(t, { api });
-  await click(root.querySelector('[data-process-new]'));
+  await newProcess(root, click);
   const strip = root.querySelector('[data-mini-start-from]');
   const chip = strip.querySelector('[data-mini-builtin="ask-me-first"]');
   assert.match(chip.title, /Steps: brief → do-it → accept\nBuilt in: this process gets its own copy/);
@@ -152,7 +159,7 @@ test('without built-ins Start from still offers words, a .pwf and the library', 
   const api = fakeApi();
   api.listBuiltins = async () => [];
   const { root, click } = await mount(t, { api });
-  await click(root.querySelector('[data-process-new]'));
+  await newProcess(root, click);
   assert.equal(root.querySelectorAll('[data-mini-builtin]').length, 0);
   assert.ok(root.querySelector('[data-mini-describe]'));
   assert.ok(root.querySelector('[data-mini-library]'));
@@ -197,7 +204,7 @@ function withOrigin(t) {
 }
 
 async function describe(view, text = 'Build it,\n then review   and ship') {
-  await view.click(view.root.querySelector('[data-process-new]'));
+  await newProcess(view.root, view.click);
   await view.click(view.root.querySelector('[data-mini-describe]'));
   const form = view.root.querySelector('[data-mini-describe-form]');
   await view.setValue(form.querySelector('.gq-ask-in'), text);
@@ -558,8 +565,9 @@ test('open in graph editor saves the steps first, then hands the stored template
 });
 
 test('New process is stored once, however often it is clicked', async (t) => {
-  const { root, api, harness, settle } = await mount(t);
-  const button = root.querySelector('[data-process-new]');
+  const { root, api, harness, settle, click } = await mount(t);
+  await click(root.querySelector('[data-resource-add]'));
+  const button = root.querySelector('[data-resource-new-process]');
   // A double click: the second lands while the first is being stored.
   await harness.act(() => { harness.fireEvent(button, 'click'); harness.fireEvent(button, 'click'); });
   await settle();
@@ -1057,7 +1065,7 @@ test('Start from imports a .pwf into the group, through the shared review, and d
   let picked = 0;
   const input = root.querySelector('[data-process-group="webshop"] [data-pwf-file]');
   input.addEventListener('click', () => { picked += 1; });
-  await click(root.querySelector('[data-process-new]'));
+  await newProcess(root, click);
   await click(root.querySelector('[data-mini-import]'));
   assert.equal(picked, 1, 'it opens the group\'s file picker');
   assert.deepEqual(api.calls.remove, ['tmpl_1'], 'the untouched new process is not kept');
