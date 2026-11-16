@@ -329,6 +329,29 @@ func handleProcessTemplateDelete(w http.ResponseWriter, r *http.Request, fs *sto
 	if refuseLockedForAgent(w, r, resourceKindProcess, id, "process template "+id) {
 		return
 	}
+	// ifSourceHash deletes only the version the caller last saw: a draft the
+	// dashboard drops when left must not take with it steps an agent saved
+	// since (process-draft hygiene). Absent, the delete is unconditional.
+	if want := strings.TrimSpace(r.URL.Query().Get("ifSourceHash")); want != "" {
+		head, headErr := fs.GetTemplateHeadGeneration(r.Context(), id)
+		if errors.Is(headErr, store.ErrNotFound) {
+			http.NotFound(w, r)
+			return
+		}
+		if headErr != nil {
+			writeError(w, http.StatusInternalServerError, "process_template_store", headErr.Error())
+			return
+		}
+		if head.SourceHash != want {
+			writeProcessJSON(w, http.StatusConflict, map[string]any{
+				"error":             "template head changed since it was opened; not deleted",
+				"code":              "process_template_conflict",
+				"currentSourceHash": head.SourceHash,
+				"currentRef":        head.Ref,
+			})
+			return
+		}
+	}
 	err := fs.DeleteTemplate(r.Context(), id)
 	if errors.Is(err, store.ErrNotFound) {
 		http.NotFound(w, r)

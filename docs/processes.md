@@ -582,11 +582,14 @@ All of it goes through the same daemon routes and permissions as the CLI.
 **New process** (Groups). The group's **＋** menu › **◈ New process** stores
 an untitled draft pinned to the group at once and opens it in place in the graph editor, with its name field
 focused: type the name and press Enter. There is no name dialog. The draft
-saves itself as you edit (*draft · autosaved to* the group). A draft with no
-steps is not kept: closing it with ✕, or leaving it any other way (another
-page, another tab, closing the browser), deletes it. *Save* keeps a named one,
-and so does handing it on (to the step list, the full editor, a run, or an
-agent asked to help or a scribe drafting it). A name another process of the
+saves itself as you edit (*draft · autosaved to* the group). A new draft left
+with nothing but start and end is not kept: closing it with ✕, or leaving it
+any other way (another page, another tab, closing the browser), deletes it.
+*Save* keeps a named one, and so does handing it on (to the step list, the
+full editor, a run, or an agent asked to help or a scribe drafting it). Only a
+draft made with New process in that editor is ever dropped, never one opened
+from elsewhere or one that has run, and only if nobody saved to it since: steps
+an agent added are never deleted with it. A name another process of the
 group already has gets a warning beside the name field. Until the process
 first runs, a step's id follows its name: renaming *New step* to *Build it*
 makes its id `build-it` (made unique), which is what `tclaude process decide

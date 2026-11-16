@@ -56,7 +56,9 @@ test('a step moves to the id its name makes, with every reference to it', () => 
   assert.equal(rekeyStep(view({ first: agentStep('x'), done: { type: 'end' } }), 'first', 'renamed').template.start, 'renamed');
 });
 
-async function mountEditor(t, { scribes = [], nodes = STEPS, ran = false, otherNames = [], onAbandon = null, onDiscard = null, onClose = () => {}, onSteps = () => {} } = {}) {
+// mountEditor opens a draft as New process does (untouched: made here), or,
+// with untouched false, as one opened from elsewhere (the full editor).
+async function mountEditor(t, { scribes = [], nodes = STEPS, ran = false, untouched = true, otherNames = [], onAbandon = null, onDiscard = null, onClose = () => {}, onSteps = () => {} } = {}) {
   const harness = await createPreactHarness(t);
   const mod = await harness.importDashboardModule('js/groups-mini-editor.js');
   const saves = [];
@@ -65,7 +67,7 @@ async function mountEditor(t, { scribes = [], nodes = STEPS, ran = false, otherN
   };
   const stored = view(nodes);
   const mounted = await harness.mount(harness.html`<${mod.MiniGraphEditor} group=${{ name: 'webshop' }} roster=${[]}
-    process=${{ templateId: 'tpl_1', name: 'Ship it', ran }} view=${stored} stored=${stored} api=${api} draft=${true}
+    process=${{ templateId: 'tpl_1', name: 'Ship it', ran }} view=${stored} stored=${stored} api=${api} draft=${true} untouched=${untouched}
     scribes=${scribes} notify=${() => {}} otherNames=${otherNames} onAbandon=${onAbandon} onDiscard=${onDiscard} onClose=${onClose} onSteps=${onSteps} />`);
   return { harness, root: mounted.container, saves, unmount: mounted.unmount };
 }
@@ -107,12 +109,12 @@ test('a draft with no steps is dropped when the editor is left; one with steps, 
   let abandoned = [];
   let s = await mountEditor(t, { nodes: EMPTY, onAbandon: (id, options) => abandoned.push([id, options]) });
   await s.unmount();
-  assert.deepEqual(abandoned, [['tpl_1', undefined]], 'left with no steps: dropped');
+  assert.deepEqual(abandoned, [['tpl_1', { ifSourceHash: 'h1' }]], 'left with no steps: dropped, if still the version it saw');
 
   abandoned = [];
   s = await mountEditor(t, { nodes: EMPTY, onAbandon: (id, options) => abandoned.push([id, options]) });
   s.harness.window.dispatchEvent(new s.harness.window.Event('pagehide'));
-  assert.deepEqual(abandoned, [['tpl_1', { keepalive: true }]], 'the browser going drops it too, with a request that outlives the page');
+  assert.deepEqual(abandoned, [['tpl_1', { keepalive: true, ifSourceHash: 'h1' }]], 'the browser going drops it too, with a request that outlives the page');
   await s.unmount();
   assert.equal(abandoned.length, 1, 'once');
 
@@ -129,6 +131,27 @@ test('a draft with no steps is dropped when the editor is left; one with steps, 
   s = await mountEditor(t, { nodes: EMPTY, scribes: [{ scope: { id: 'tpl_1' }, online: false }], onAbandon: (id) => abandoned.push(id) });
   await s.unmount();
   assert.deepEqual(abandoned, [], 'a scribe is drafting it: kept');
+
+  s = await mountEditor(t, { nodes: EMPTY, onAbandon: (id) => abandoned.push(id) });
+  const persisted = new s.harness.window.Event('pagehide');
+  persisted.persisted = true;
+  s.harness.window.dispatchEvent(persisted);
+  assert.deepEqual(abandoned, [], 'into the back/forward cache: it may come back, so kept');
+  await s.unmount();
+  abandoned = [];
+
+  s = await mountEditor(t, { nodes: EMPTY, untouched: false, onAbandon: (id) => abandoned.push(id) });
+  await s.unmount();
+  assert.deepEqual(abandoned, [], 'a draft opened from elsewhere (the full editor) is never dropped');
+
+  s = await mountEditor(t, { nodes: EMPTY, ran: true, onAbandon: (id) => abandoned.push(id) });
+  await s.unmount();
+  assert.deepEqual(abandoned, [], 'one that has run is never dropped');
+
+  const advanced = { start: { type: 'start' }, pause: { type: 'wait', name: 'Wait for CI', wait: { for: 'event' } }, done: { type: 'end', result: 'success' } };
+  s = await mountEditor(t, { nodes: advanced, onAbandon: (id) => abandoned.push(id) });
+  await s.unmount();
+  assert.deepEqual(abandoned, [], 'a node the inline editor does not draw as a step is content too');
 });
 
 test('✕ drops a named draft with no steps; Save keeps it', async (t) => {
@@ -139,6 +162,12 @@ test('✕ drops a named draft with no steps; Save keeps it', async (t) => {
   await s.harness.act(async () => { title.value = 'Nightly'; harness_change(s.harness, title); });
   await s.harness.act(async () => { s.root.querySelector('[data-mini-close]').click(); });
   assert.deepEqual(discarded, ['tpl_1'], '✕: no steps, not kept');
+
+  s = await mountEditor(t, { nodes: EMPTY, untouched: false, onDiscard: (id) => discarded.push(id), onClose: () => { closed += 1; } });
+  await s.harness.act(async () => { s.root.querySelector('[data-mini-close]').click(); });
+  await waitFor(s.harness, () => closed === 1, '✕ closes it');
+  assert.deepEqual(discarded, ['tpl_1'], '✕ on a draft opened from elsewhere keeps it');
+  closed = 0;
 
   s = await mountEditor(t, { nodes: EMPTY, onDiscard: (id) => discarded.push(id), onClose: () => { closed += 1; } });
   const named = s.root.querySelector('[data-mini-title]');

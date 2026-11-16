@@ -550,8 +550,10 @@ function GroupRuns({ group, roster, context, filter, wizard, api, runApi = runDe
   }
   // A draft with no steps that is closed or left (or set aside for an
   // import) is deleted, so a stray click leaves nothing behind.
+  // A refused delete unpins instead, unless it was refused because the
+  // draft has a newer version (409: an agent saved steps to it): that stays.
   const discardDraft = (templateId, options = undefined) => api.deleteTemplate(templateId, options)
-    .catch(() => api.unpinProcess(group.name, templateId).catch(() => {}))
+    .catch((cause) => (cause?.status === 409 ? undefined : api.unpinProcess(group.name, templateId).catch(() => {})))
     .finally(() => void source?.refresh?.());
   const runSaved = (templateId, name = templateId) => {
     setQuick(null);
@@ -610,7 +612,7 @@ function GroupRuns({ group, roster, context, filter, wizard, api, runApi = runDe
         draft=${!!quick.draft} untouched=${!!quick.untouched} scribes=${scribes}
         otherNames=${savedProcesses.filter((saved) => saved.templateId !== quick.process?.templateId).map((saved) => saved.name)}
         notify=${say} onClose=${() => setQuick(null)} onSteps=${toSteps} onRun=${runSaved}
-        onDiscard=${(templateId) => { setQuick(null); void discardDraft(templateId); }}
+        onDiscard=${(templateId, options) => { setQuick(null); void discardDraft(templateId, options); }}
         onAbandon=${(templateId, options) => void discardDraft(templateId, options)}
         onImport=${pickPwf}
         onDescribe=${(text, view) => draftWithScribe(api, { group, text, roster: people, confirm, template: view })

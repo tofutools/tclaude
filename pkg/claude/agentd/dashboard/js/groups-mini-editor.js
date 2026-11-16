@@ -371,6 +371,8 @@ export function MiniGraphEditor({
   const [autosave, setAutosave] = useState('');
   // touched: the operator has changed this draft since it was made.
   const touched = useRef(!untouched);
+  // createdHere is a draft New process just made and opened here.
+  const createdHere = useRef(isDraft && untouched);
   const inflight = useRef(null);
   const failedAt = useRef(null);
   // base is the saved version the draft rests on: the merge base when an
@@ -618,6 +620,16 @@ export function MiniGraphEditor({
     if (next !== draft.template.name) apply({ view: { ...draft, template: { ...draft.template, name: next } } });
   };
   const empty = !Object.values(draft.template.nodes || {}).some(isStep);
+  // droppable is a draft that leaving may delete: one made by New process
+  // in this editor, never run, with nothing but start and end (an advanced
+  // node is content too), that no agent is helping with or scribe drafting.
+  // A draft opened any other way (from the full editor, the step list, the
+  // group's list) is never dropped. The delete names the version this editor
+  // last saw, so steps an agent saved since are not taken with it.
+  const scribing = scribes.some((session) => session.scope?.id === process.templateId);
+  const droppable = isDraft && createdHere.current && !process.ran && !helper && !scribing
+    && Object.values(draft.template.nodes || {}).every((node) => node?.type === 'start' || node?.type === 'end');
+  const dropOptions = (options = {}) => (model.current.sourceHash ? { ...options, ifSourceHash: model.current.sourceHash } : options);
   // startFrom fills an empty draft with a starter's or a library process's
   // graph, under this draft's id, named after it while still untitled.
   const startFrom = (from, label) => {
@@ -627,10 +639,10 @@ export function MiniGraphEditor({
     setTitle(next);
     apply({ view: { template: { ...from.template, id: draft.template.id, name: next }, edges: from.edges || [], layout: from.layout || {} } });
   };
-  // Closing a draft keeps it (saved first). ✕ drops one with no steps, named
+  // Closing a draft keeps it (saved first). ✕ drops a droppable one, named
   // or not; Save keeps a named one, as asked.
   const closeDraft = async ({ keep = false } = {}) => {
-    if (empty && (!keep || !touched.current) && onDiscard) { leaving.current = true; onDiscard(process.templateId); return; }
+    if (droppable && (!keep || !touched.current) && onDiscard) { leaving.current = true; onDiscard(process.templateId, dropOptions()); return; }
     if (dirty && !(await saveFirst())) return;
     leaving.current = true;
     onClose();
@@ -648,7 +660,7 @@ export function MiniGraphEditor({
   const importPwf = () => {
     onImport?.();
     leaving.current = true;
-    if (empty && onDiscard) onDiscard(process.templateId);
+    if (droppable && onDiscard) onDiscard(process.templateId, dropOptions());
     else onClose();
   };
   // A draft left with no steps any other way (the page or the tab changes
@@ -659,14 +671,14 @@ export function MiniGraphEditor({
   const leaving = useRef(false);
   const abandon = useRef(null);
   abandon.current = (options) => {
-    const scribing = scribes.some((session) => session.scope?.id === process.templateId);
-    if (!isDraft || leaving.current || !empty || helper || scribing || !onAbandon) return;
+    if (leaving.current || !droppable || !onAbandon) return;
     leaving.current = true;
-    onAbandon(process.templateId, options);
+    onAbandon(process.templateId, dropOptions(options));
   };
   useEffect(() => {
     const win = cardRef.current?.ownerDocument?.defaultView || globalThis;
-    const gone = () => abandon.current?.({ keepalive: true });
+    // A page going into the back/forward cache may come back: keep it.
+    const gone = (event) => { if (!event?.persisted) abandon.current?.({ keepalive: true }); };
     win.addEventListener?.('pagehide', gone);
     return () => { win.removeEventListener?.('pagehide', gone); abandon.current?.(); };
   }, []);
@@ -782,7 +794,7 @@ export function MiniGraphEditor({
         onClick=${() => void closeDraft({ keep: true })}>Save<//>
       ${onRun && html`<${Button} size="sm" data-mini-run disabled=${(!!busy && busy !== 'auto') || empty} title=${empty ? 'Add a step first' : `Save it, then pick how to run it in ${group.name}`}
         onClick=${() => void runDraft()}>▶ Run…<//>`}
-      <${Button} size="sm" icon=${true} variant="ghost" data-mini-close aria-label="Close" title=${empty ? 'Close: a process with no steps is not kept' : 'Close: it stays saved in the group'}
+      <${Button} size="sm" icon=${true} variant="ghost" data-mini-close aria-label="Close" title=${droppable ? 'Close: a process with no steps is not kept' : 'Close: it stays saved in the group'}
         onClick=${() => void closeDraft()}>✕<//>
       ${autosave === 'failed' && html`<${Button} size="sm" variant="link" class="gq-link" data-mini-drop title="Close it; the changes since the last save are lost"
         onClick=${() => { leaving.current = true; onClose(); }}>close without saving<//>`}`
