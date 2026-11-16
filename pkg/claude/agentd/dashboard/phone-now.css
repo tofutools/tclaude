@@ -106,3 +106,4 @@
 /* An agent's context meter (context-meter.js, the desktop's gauge) by its
    state pill on a row, and by its name on a card: the row's gap spaces it. */
 :root[data-layout="phone"] :is(.phone-row, .phone-who) > .ctx-meter { flex: none; align-self: center; margin-right: 0; }
+:root[data-layout="phone"] .phone-shell-menu .phone-shell-dir { margin: -4px 4px 8px; overflow-wrap: anywhere; font-family: var(--ui-mono, monospace); }

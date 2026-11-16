@@ -13,6 +13,7 @@ import htm from 'htm';
 import { bucketOf, needsYou } from './collab-rail-model.js';
 import { collabItems, openRailItem, railAgent } from './collab-rail-actions.js';
 import { agentMenuOpener, useHold } from './phone-hold.js';
+import { openShellMenu } from './phone-now-shells.js';
 import { Avatar, Card, IconButton, Section, StatePill } from './phone-ui.js';
 
 const html = htm.bind(h);
@@ -39,11 +40,13 @@ export function sessionKind(item) {
 }
 
 // SessionRow is one open session; a local agent's row opens its menu
-// (phone-agent-menu.js) on a hold, or its ⋯.
-function SessionRow({ item, onOpen, onMenu }) {
+// (phone-agent-menu.js) on a hold, or its ⋯, and a shell's its own
+// (phone-now-shells.js ShellMenu), as Now's Shells do.
+function SessionRow({ item, onOpen, onMenu, onShellMenu }) {
   const kind = sessionKind(item);
   const agent = onMenu ? railAgent(item) : null;
-  const menu = agent?.agent_id ? () => onMenu({ agentId: agent.agent_id, name: item.title }) : null;
+  const menu = kind.word === 'shell' ? (onShellMenu ? () => onShellMenu(item) : null)
+    : agent?.agent_id ? () => onMenu({ agentId: agent.agent_id, name: item.title }) : null;
   const { holding, handlers } = useHold(menu);
   const waiting = needsYou(item);
   const state = item.status?.label || '';
@@ -64,9 +67,11 @@ function SessionRow({ item, onOpen, onMenu }) {
 // PhoneSessions is the list. ctx (actions, snapshot, notify) is what
 // openRailItem takes; listed and open are injectable for tests.
 const panelSections = (panes, snapshot) => collabItems(panes, snapshot).sections;
-export function PhoneSessions({ panes = [], actions, snapshot, notify = () => {}, listed = panelSections, open = openRailItem, onMenu = agentMenuOpener() }) {
+export function PhoneSessions({ panes = [], actions, snapshot, notify = () => {}, listed = panelSections, open = openRailItem, onMenu = agentMenuOpener(),
+  shellMenu = openShellMenu }) {
   const sections = openSessions(listed(panes, snapshot));
   const onOpen = (item) => open(item, { actions, snapshot, notify });
+  const onShellMenu = (item) => shellMenu(item, { open: onOpen, notify });
   if (!sections.length) {
     return html`<div class="phone-sessions">
       <${Card} class="phone-sessions-empty"><p>Nothing is open.</p><p>An agent's session shows here while it runs.</p><//>
@@ -74,7 +79,7 @@ export function PhoneSessions({ panes = [], actions, snapshot, notify = () => {}
   }
   return html`<div class="phone-sessions">
     ${sections.map((section) => html`<${Section} key=${section.id} title=${section.name || 'Other'} count=${section.items.length}>
-      <ul class="phone-list">${section.items.map((item) => html`<${SessionRow} key=${item.key} item=${item} onOpen=${onOpen} onMenu=${onMenu} />`)}</ul>
+      <ul class="phone-list">${section.items.map((item) => html`<${SessionRow} key=${item.key} item=${item} onOpen=${onOpen} onMenu=${onMenu} onShellMenu=${onShellMenu} />`)}</ul>
     <//>`)}
   </div>`;
 }

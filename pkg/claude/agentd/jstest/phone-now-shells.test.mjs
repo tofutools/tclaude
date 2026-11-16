@@ -90,16 +90,17 @@ test('＋ Shell asks which group when there are more, live ones by name', async 
   assert.deepEqual(phoneSheet.value.props.groups, ['docs', 'webshop']);
 });
 
-test('a row\'s ⋯ menu: Attach, copy the attach command, Kill session… last', async (t) => {
+test('a row\'s ⋯ menu: Attach, copy its name and attach command, Kill session… last', async (t) => {
   const { harness, mod } = await setup(t);
   const copied = [];
   const ran = [];
   const ctx = { open: (item) => ran.push(['open', item.key]), confirm: async () => false, notify: () => {} };
   const m = await harness.mount(harness.html`<${mod.ShellMenu} item=${groupShell} ctx=${ctx} copy=${async (text) => { copied.push(text); return true; }} close=${() => {}} />`);
   const actions = [...m.container.querySelectorAll('[data-shell-action]')].map((b) => b.getAttribute('data-shell-action'));
-  assert.deepEqual(actions, ['open', 'copy-attach', 'kill']);
+  assert.deepEqual(actions, ['open', 'copy-name', 'copy-attach', 'kill']);
+  await harness.act(() => m.container.querySelector('[data-shell-action="copy-name"]').click());
   await harness.act(() => m.container.querySelector('[data-shell-action="copy-attach"]').click());
-  assert.deepEqual(copied, ["tmux -L tclaude attach -t 'tclaude-groupterm-webshop'"]);
+  assert.deepEqual(copied, ['webshop shell', "tmux -L tclaude attach -t 'tclaude-groupterm-webshop'"]);
   await harness.act(() => m.container.querySelector('[data-shell-action="open"]').click());
   assert.deepEqual(ran, [['open', 'shell:webshop']]);
 });
@@ -122,4 +123,68 @@ test('a shell already open as a pane is brought forward; an unattachable one ope
   await harness.act(() => rows[1].click());
   assert.equal(calls.length, 1, 'no attach for a session without a key');
   assert.equal(phoneSheet.value?.props?.item?.key, 'bg::locked', 'its menu opens instead');
+});
+
+// hold presses a row down for HOLD_MS (phone-hold.js), as a finger does.
+async function hold(t, harness, el) {
+  const { HOLD_MS } = await harness.importDashboardModule('js/phone-hold.js');
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  await harness.act(() => {
+    const event = new harness.window.Event('pointerdown', { bubbles: true, cancelable: true });
+    Object.assign(event, { button: 0, pointerId: 1, clientX: 5, clientY: 5 });
+    el.dispatchEvent(event);
+  });
+  await harness.act(() => t.mock.timers.tick(HOLD_MS));
+  t.mock.timers.reset();
+}
+
+test('a touch and hold on a shell row opens its menu, as an agent row\'s does; Back closes it', async (t) => {
+  const harness = await createPreactHarness(t);
+  const mod = await harness.importDashboardModule('js/phone-now-shells.js');
+  const sheet = await harness.importDashboardModule('js/phone-sheet.js');
+  const opened = [];
+  const m = await harness.mount(harness.html`<div><${sheet.PhoneSheetHost} /><${mod.NowShells} snapshot=${{ value: { groups: [] } }} panes=${[]}
+    storage=${memoryStorage({ 'tclaude.phone.now.shells.open': '1' })} listed=${() => SECTIONS} open=${(item) => opened.push(item.key)} /></div>`);
+  const row = m.container.querySelector('[data-shell-row="shell:agt_a:current"] .phone-row');
+  assert.ok(row.classList.contains('phone-holdable'), 'drawn as holdable, like an agent row');
+  await hold(t, harness, row);
+  assert.equal(sheet.phoneSheet.value?.Body, mod.ShellMenu);
+  assert.equal(sheet.phoneSheet.value?.props?.item?.key, 'shell:agt_a:current');
+  assert.deepEqual(opened, [], 'the hold did not also open the shell');
+  await harness.act(() => sheet.requestClosePhoneSheet());
+  assert.equal(sheet.phoneSheet.value, null, 'Back closes it');
+});
+
+test('the menu\'s entries reach what the desktop\'s do: Attach opens it, Kill session… asks, then the kill route', async (t) => {
+  const harness = await createPreactHarness(t);
+  const mod = await harness.importDashboardModule('js/phone-now-shells.js');
+  const { killBackgroundTerminal } = await harness.importDashboardModule('js/background-terminals.js');
+  const posts = [];
+  t.mock.method(globalThis, 'fetch', async (url, init = {}) => {
+    if (init.method === 'POST') posts.push([url, JSON.parse(init.body)]);
+    return { ok: true, status: 200, json: async () => ({}) };
+  });
+  const asked = [];
+  const notes = [];
+  const ran = [];
+  const ctx = { open: (item) => ran.push(item.key), kill: killBackgroundTerminal, notify: (text) => notes.push(text),
+    confirm: async (opts) => { asked.push(opts.title); await opts.action(); return true; } };
+  const m = await harness.mount(harness.html`<${mod.ShellMenu} item=${groupShell} ctx=${ctx} close=${() => {}} />`);
+  await harness.act(() => m.container.querySelector('[data-shell-action="open"]').click());
+  assert.deepEqual(ran, ['shell:webshop']);
+  await harness.act(async () => { m.container.querySelector('[data-shell-action="kill"]').click(); for (let i = 0; i < 5; i += 1) await Promise.resolve(); });
+  assert.deepEqual(asked, ['Kill this shell?']);
+  assert.deepEqual(posts, [['/api/background-terminals/kill', { tmux_session: 'tclaude-groupterm-webshop' }]]);
+  assert.deepEqual(notes, ['Killed webshop shell']);
+});
+
+test('an agent\'s shell offers its directory to copy, and shows it', async (t) => {
+  const harness = await createPreactHarness(t);
+  const mod = await harness.importDashboardModule('js/phone-now-shells.js');
+  const item = { ...agentShell, resource: { ...agentShell.resource, detail: '/home/op/webshop' } };
+  const copied = [];
+  const m = await harness.mount(harness.html`<${mod.ShellMenu} item=${item} ctx=${{ open: () => {} }} copy=${async (text) => { copied.push(text); return true; }} close=${() => {}} />`);
+  assert.equal(m.container.querySelector('.phone-shell-dir').textContent, '/home/op/webshop');
+  await harness.act(() => m.container.querySelector('[data-shell-action="copy-dir"]').click());
+  assert.deepEqual(copied, ['/home/op/webshop']);
 });
