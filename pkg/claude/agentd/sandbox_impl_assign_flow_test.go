@@ -309,7 +309,7 @@ func TestSandboxImplAssign_DashboardRouteReadsAndAssigns(t *testing.T) {
 		"the launch boundary must receive the assigned implementation")
 	resumedRow := latestLaunchRow(t, spawn.ConvID)
 	assert.Equal(t, string(sandboxpolicy.ImplementationOff), resumedRow.SandboxImplementation,
-		"and the row the next relaunch reads must record it")
+		"and the relaunched row must record it")
 }
 
 // A posture-changing route must not answer to a method it never validated.
