@@ -464,10 +464,10 @@ func LaunchResumedTmuxSession(sessionID, tmuxSession, cwd, command, harnessName 
 	state.Subagents, state.BgShells, state.Monitors = nil, nil, nil
 	state.ID, state.ConvID, state.TmuxSession, state.Cwd = sessionID, sessionID, tmuxSession, cwd
 	state.PID, state.Status = 0, StatusIdle
-	if state.Created.IsZero() {
-		state.Created = time.Now()
-	}
-	state.Updated = time.Now()
+	// This is a launch: it starts now, whatever row it was seeded from, so
+	// it is the conv's current launch (db.currentLaunchOrder) from here.
+	state.Created = time.Now()
+	state.Updated = state.Created
 	state.Harness = harnessName
 	generation := newExitLaunchGeneration(sessionID, tmuxSession)
 	guard, err := newExitLaunchGuard(sessionID, tmuxSession, generation)

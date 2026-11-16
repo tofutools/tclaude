@@ -640,8 +640,8 @@ func writeContextInfo(w http.ResponseWriter, r *http.Request, convID, caller str
 
 // pickWithLiveness returns the session row whose tmux pane is alive
 // (per the injected liveness predicate), or — falling back — the row
-// that comes first in the list (which FindSessionsByConvID orders by
-// updated_at DESC). nil when the list is empty. The predicate is
+// that comes first in the list (which FindSessionsByConvID orders current
+// launch first). nil when the list is empty. The predicate is
 // injected so callers can supply a pre-fetched alive set (a single tmux
 // ls for a whole listing) and unit tests can stub it without reaching
 // for tmux on the host.
