@@ -98,7 +98,8 @@ export function UpdateSheet({ close, navigate, actions = defaultActions(), timer
       : (install.phase || install.state || '').replaceAll('_', ' ');
     return html`<div class="phone-update" data-update=${!done ? 'running' : failed ? 'failed' : 'done'} aria-live="polite">
       ${head}
-      ${!done && html`<p class="phone-update-state"><span class="phone-update-spin" aria-hidden="true"></span>Updating… <span class="phone-update-phase">${phase}</span></p>
+      ${!done && html`<p class="phone-update-state"><span class="phone-update-spin" aria-hidden="true"></span>Updating…</p>
+        <p class="phone-update-phase">${phase}</p>
         <p class="phone-update-note">Agents keep running. Closing waits until agentd is back.</p>`}
       ${done && !failed && html`<p class="phone-update-ok">✓ Updated${install.version ? ` to ${install.version}` : ''}. agentd is back.</p>`}
       ${done && failed && html`<p class="ui-error phone-update-fail" role="alert">✗ The update failed${install.rolled_back || install.state === 'rolled_back' ? ' and was rolled back' : ''}.</p>`}
@@ -120,7 +121,7 @@ export function UpdateSheet({ close, navigate, actions = defaultActions(), timer
   if (confirming) {
     return html`<div class="phone-update" data-update="confirm">
       <h2 class="phone-update-title">Update and restart agentd?</h2>
-      <p class="phone-update-body">${plan.body}</p>
+      <p class="phone-update-body">${plan.body.charAt(0).toUpperCase() + plan.body.slice(1)}</p>
       <div class="phone-btns">
         <${Button} class="phone-btn phone-btn-grow" onClick=${() => setConfirming(false)}>Cancel<//>
         <${Button} class="phone-btn phone-btn-pri phone-btn-grow" data-sheet-focus disabled=${running}

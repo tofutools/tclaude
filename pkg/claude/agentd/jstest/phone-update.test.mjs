@@ -70,7 +70,7 @@ test('ready: the version, the saved method and what is available; Update asks fi
   await tap(button('Update…'));
   assert.equal(view(), 'confirm');
   assert.equal(c.querySelector('.phone-update-title').textContent, 'Update and restart agentd?');
-  assert.match(c.querySelector('.phone-update-body').textContent, /downloads and verifies the official tclaude v1\.5\.0 release/, 'what the method does, from the desktop\'s own confirm');
+  assert.match(c.querySelector('.phone-update-body').textContent, /^This node downloads and verifies the official tclaude v1\.5\.0 release/, 'what the method does, from the desktop\'s own confirm');
   await tap(button('Cancel'));
   assert.equal(view(), 'ready');
   assert.deepEqual(daemon.calls, [], 'nothing ran');

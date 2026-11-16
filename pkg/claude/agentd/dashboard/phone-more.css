@@ -38,7 +38,7 @@
 :root[data-layout="phone"] .phone-update-body { color: var(--ui-text); }
 :root[data-layout="phone"] .phone-update-warn { margin: 0; color: var(--phone-warn); font-size: 13px; }
 :root[data-layout="phone"] .phone-update-state { display: flex; align-items: center; gap: 10px; margin: 0; font-size: 15px; color: var(--ui-text-strong); }
-:root[data-layout="phone"] .phone-update-phase { color: var(--ui-muted-text); }
+:root[data-layout="phone"] .phone-update-phase { margin: -4px 0 0 26px; color: var(--ui-muted-text); font-size: 14px; }
 :root[data-layout="phone"] .phone-update-spin {
   flex: none; width: 16px; height: 16px; border-radius: 50%; border: 2px solid var(--phone-line); border-top-color: var(--phone-accent);
   animation: phone-update-spin .8s linear infinite;
