@@ -98,7 +98,7 @@ func TestInjectBootPreload_EmitsLinksAndTotal(t *testing.T) {
 	layoutBoot := strings.Index(out, `js/layout-boot.js"></script>`)
 	script := strings.Index(out, m[0])
 	counter := strings.Index(out, "var MODULE_BAND")
-	if layoutBoot < 0 || counter < 0 || !(layoutBoot < script && script < counter) {
+	if layoutBoot < 0 || counter < 0 || layoutBoot >= script || script >= counter {
 		t.Errorf("the layout preload script (at %d) must follow layout-boot.js (%d) and precede the progress counter (%d)", script, layoutBoot, counter)
 	}
 	total, _ := strconv.Atoi(m[3])
