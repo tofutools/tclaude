@@ -140,8 +140,10 @@ test('Active | All groups: the pick is remembered, each with its count', async (
   assert.equal(seg('Active').getAttribute('aria-pressed'), 'true');
   assert.equal(seg('Active').textContent.replace(/\s+/g, ' ').trim(), 'Active · 5', 'online agents');
   assert.equal(seg('All groups').textContent.replace(/\s+/g, ' ').trim(), 'All groups · 6', 'groups, not counting the archived one');
-  assert.deepEqual(shownGroups(), [], 'Active is today\'s view');
-  assert.ok(c.querySelector('.phone-agents > .phone-section[aria-label="webshop"]'));
+  // One layout (AgentGroupsList): Active's groups are the same sections as
+  // All groups', only flat.
+  assert.ok(c.querySelector('.phone-agents > .phone-section.phone-agents-node[aria-label="webshop"]'));
+  assert.equal(c.querySelector('.phone-agents-sub'), null, 'Active nests nothing');
   await tap(seg('All groups'));
   assert.equal(prefs.getItem('tclaude.dash.phone.agents.view'), 'all');
   assert.equal(seg('All groups').getAttribute('aria-pressed'), 'true');
