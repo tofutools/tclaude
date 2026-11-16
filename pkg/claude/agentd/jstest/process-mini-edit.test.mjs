@@ -303,10 +303,10 @@ test('a used-up gate loop never goes on through what all must choose: it gives u
 
 test('when rounds run out: pick another way, fail the run, or (a plain decision) ask again', () => {
   const options = m.exhaustionOptions(ship, 'approve', 'changes');
-  assert.deepEqual(options.map((o) => o.value), ['', 'ship', 'hold', m.GIVE_UP]);
+  assert.deepEqual(options.map((o) => o.value), ['', 'ship', 'hold', m.FAIL_RUN]);
   let { view } = m.setExhaustion(ship, 'approve', 'changes', 'hold');
   assert.equal(view.template.nodes.approve.loops.changes.onExhausted, 'hold');
-  ({ view } = m.setExhaustion(view, 'approve', 'changes', m.GIVE_UP));
+  ({ view } = m.setExhaustion(view, 'approve', 'changes', m.FAIL_RUN));
   assert.equal(view.template.nodes.approve.loops.changes.onExhausted, m.GIVE_UP);
   assert.ok(view.template.nodes.approve.performer.choices.includes(m.GIVE_UP), 'a person can answer it too');
   ({ view } = m.setExhaustion(view, 'approve', 'changes', ''));
@@ -337,4 +337,50 @@ test('an agent deciding a decision keeps it a decision: outcomes and loop stay',
   const { view: back } = m.setDecisionWho(view, 'approve', { mode: 'you' });
   assert.deepEqual(back.template.nodes.approve.performer.choices, ['ship', 'changes', 'hold']);
   assert.throws(() => m.setDecisionWho(ship, 'approve', { mode: 'command' }));
+});
+
+test('a "give-up" outcome that no longer fails is not mistaken for failing the run', () => {
+  let { view } = m.setExhaustion(ship, 'approve', 'changes', m.FAIL_RUN);
+  ({ view } = m.setOutcomeTarget(view, 'approve', m.GIVE_UP, 'merge'));
+  const options = m.exhaustionOptions(view, 'approve', 'changes');
+  assert.equal(new Set(options.map((o) => o.value)).size, options.length, 'no duplicate option values');
+  ({ view } = m.setExhaustion(view, 'approve', 'changes', m.FAIL_RUN));
+  const way = view.template.nodes.approve.loops.changes.onExhausted;
+  assert.equal(view.template.nodes[edge(view, 'approve', way)].result, 'failed', 'fail the run goes to a failed end');
+});
+
+test('an agent decision the operator did not touch keeps its behaviour through other edits', () => {
+  const agent = structuredClone(m.setDecisionWho(ship, 'approve', { mode: 'anyone' }).view);
+  delete agent.template.nodes.approve.loops.changes.onExhausted; // as a stored template may have it
+  const { view } = m.updateStep(agent, 'implement', (step) => setStepText(step, 'Do it differently.'));
+  assert.equal(view.template.nodes.approve.loops.changes.onExhausted, undefined);
+  assert.equal(edge(view, 'approve', m.GIVE_UP), undefined, 'no give-up appears');
+});
+
+test('inside a parallel branch no end is added: the server refuses an end there', () => {
+  // A decision on one branch of review ⫴ new step, looping back to review.
+  let { view } = m.runAlongside(ship, 'review', 'agent');
+  const branch = Object.keys(view.template.nodes).find((id) => !ship.template.nodes[id] && view.template.nodes[id].type !== 'parallel');
+  ({ view } = m.changeKind(view, branch, 'you'));
+  assert.ok(m.inParallelBranch(view, branch));
+  assert.ok(!m.inParallelBranch(view, 'implement'));
+  assert.ok(!m.exhaustionOptions(view, branch, 'continue').some((o) => o.value === m.FAIL_RUN));
+});
+
+test('a gate inside a parallel branch keeps its way out on the branch', () => {
+  const fan = steps['plan-fan-out-merge'];
+  const part = Object.keys(fan.template.nodes).find((id) => /part/.test(id));
+  let { view, id } = m.insertAfter(fan, part, 'you');
+  ({ view } = m.addOutcome(view, id, edge(view, id, 'continue')));
+  const redo = m.outcomesOf(view, id).map((o) => o.outcome).find((o) => o !== 'continue');
+  ({ view } = m.setOutcomeTarget(view, id, redo, part));
+  assert.ok(m.inParallelBranch(view, id), 'the fixture: a decision on a branch');
+  const ends = (v) => Object.values(v.template.nodes).filter((n) => n.type === 'end').length;
+  const before = ends(view);
+  ({ view } = m.addDecider(view, id, { mode: 'anyone' }));
+  assert.equal(ends(view), before, 'no end added inside the fork');
+  const way = view.template.nodes[id].loops[redo].onExhausted;
+  assert.ok(m.outcomesOf(view, id).some((o) => o.outcome === way), 'it goes along an existing outcome');
+  ({ view } = m.setDecisionWho(m.removeDecider(view, id, 0).view, id, { mode: 'anyone' }));
+  assert.equal(ends(view), before);
 });

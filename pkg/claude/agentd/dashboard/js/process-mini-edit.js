@@ -179,18 +179,24 @@ export function syncLoops(view) {
       }
     }
     if (node.deciders?.length) syncGate(view, id, node, outcomes);
-    else if (node.performer?.kind === 'agent') syncAgentDecider(view, id, node, outcomes);
   }
   return view;
 }
 
-// syncAgentDecider gives an agent decision's loops a way out as a gate's get
-// one: past the last round its send-back is refused, and an agent asked again
-// can only pass the work on, so it goes somewhere safe instead.
-function syncAgentDecider(view, id, node, outcomes) {
+// defaultAgentExhaustion gives an agent decision's loops a way out as a
+// gate's get one: past the last round its send-back is refused, and an agent
+// asked again can only pass the work on. Applied only where that decision is
+// edited (its Who, a new loop on it), never as a side effect of another edit,
+// so a saved template the operator did not touch keeps its behaviour.
+function defaultAgentExhaustion(view, id) {
+  const node = view.template.nodes[id];
+  if (node?.type !== 'decision' || node.deciders?.length || node.performer?.kind !== 'agent') return;
+  const outcomes = outgoing(view, id).map((edge) => edge.outcome);
   for (const outcome of Object.keys(node.loops || {})) {
     const bound = loopBound(node, outcome);
-    if (!bound.onExhausted) setLoopBound(node, outcome, { ...bound, onExhausted: safeExhaustion(view, id, node, outcomes, outcome) });
+    if (bound.onExhausted) continue;
+    const way = safeExhaustion(view, id, node, outcomes, outcome, { refuse: true });
+    if (way) setLoopBound(node, outcome, { ...bound, onExhausted: way });
   }
 }
 
@@ -210,7 +216,10 @@ function decidedAlone(node) {
 // never goes back, and every loop has its way out up front, since nobody is
 // there to pick one when the rounds run out.
 function syncGate(view, id, node, outcomes) {
-  if (!outcomes.includes(node.agree) || loopBound(node, node.agree)) node.agree = agreeChoice(view, id, node);
+  if (!outcomes.includes(node.agree) || loopBound(node, node.agree)) {
+    node.agree = agreeChoice(view, id, node);
+    rehomeFromAgree(view, id, node);
+  }
   for (const outcome of Object.keys(node.loops || {})) {
     const bound = loopBound(node, outcome);
     if (bound.onExhausted) continue;
@@ -223,20 +232,64 @@ function syncGate(view, id, node, outcomes) {
 // deciders kept sending back must not go on as if they had approved it.
 export const GIVE_UP = 'give-up';
 
+// FAIL_RUN is the picker's value for "fail the run" when no outcome goes to a
+// failed end yet: not a possible outcome name, so it never collides with one.
+export const FAIL_RUN = '\u0000fail';
+
 // safeExhaustion is where a gate's used-up loop goes by default: another of
 // its outcomes that neither loops nor is the agree outcome, else a give-up
 // outcome to a failed end (added here, on the view being built).
-function safeExhaustion(view, id, node, outcomes, outcome) {
+// Inside a parallel branch a new end would leave the open fork, which the
+// server refuses: there a gate keeps its old default (the first other way,
+// which validation warns about when it is agree), and a refusable decision
+// gets none (refuse: true).
+function safeExhaustion(view, id, node, outcomes, outcome, { refuse = false } = {}) {
   const passing = passOutcome(view, id, node);
-  const way = exhaustionChoices(node, outcomes, outcome).find((o) => o !== passing && !APPROVING.test(o));
-  return way || addGiveUp(view, id);
+  const ways = exhaustionChoices(node, outcomes, outcome);
+  const way = ways.find((o) => o !== passing && !APPROVING.test(o));
+  if (way) return way;
+  const failing = failingOutcome(view, id);
+  if (failing) return failing;
+  if (!inParallelBranch(view, id)) return addGiveUp(view, id);
+  return refuse ? '' : (ways.find((o) => o !== node.agree) || ways[0] || '');
+}
+
+// failingOutcome is an outcome of id that goes to a failed end, or ''.
+function failingOutcome(view, id) {
+  return outgoing(view, id).find((edge) => isFailedEnd(view.template.nodes[edge.to]))?.outcome || '';
+}
+
+// inParallelBranch says whether id sits between a parallel fork and its join:
+// walking back along forward edges, a fork met before its join opens a scope.
+export function inParallelBranch(view, id) {
+  const { nodes } = view.template;
+  const forward = view.edges.filter((edge) => edge.from !== '' && !loopBound(nodes[edge.from], edge.outcome));
+  const seen = new Set();
+  const stack = [[id, 0]];
+  while (stack.length) {
+    const [at, depth] = stack.pop();
+    const key = `${at}:${depth}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    for (const edge of forward.filter((e) => e.to === at)) {
+      const from = nodes[edge.from];
+      let d = depth;
+      if (from?.type === 'parallel') {
+        if (d === 0) return true;
+        d -= 1;
+      }
+      if (from?.join) d += 1;
+      stack.push([edge.from, d]);
+    }
+  }
+  return false;
 }
 
 // addGiveUp gives decision id an outcome to a failed end (the draft's own
 // failed end when it has one) and returns its name.
 function addGiveUp(view, id) {
-  const existing = outgoing(view, id).find((edge) => isFailedEnd(view.template.nodes[edge.to]));
-  if (existing) return existing.outcome;
+  const existing = failingOutcome(view, id);
+  if (existing) return existing;
   let end = Object.keys(view.template.nodes).find((nodeID) => isFailedEnd(view.template.nodes[nodeID]));
   if (!end) end = addNode(view, { type: 'end', name: 'Gave up', result: 'failed' }, 'gave-up');
   const outcome = uniqueOutcome(view, id, GIVE_UP);
@@ -252,9 +305,10 @@ function isFailedEnd(node) {
 
 // exhaustionOptions are where a used-up loop on outcome may go: every other
 // outcome that does not loop, the agree outcome last and only when it is
-// already chosen (it skips the review), and GIVE_UP when no failed end is
-// reachable yet. A plain decision may also refuse ('': its decider picks
-// again); a gate may not, since nobody picks.
+// already chosen (it skips the review), and FAIL_RUN ("fail the run") when no
+// outcome goes to a failed end yet and one can be added (not inside a
+// parallel branch). A person deciding may also refuse ('': asked again); a
+// gate or a lone agent may not.
 export function exhaustionOptions(view, id, outcome) {
   const node = view.template.nodes[id];
   const outcomes = outgoing(view, id).map((edge) => edge.outcome);
@@ -269,13 +323,13 @@ export function exhaustionOptions(view, id, outcome) {
     const failed = isFailedEnd(view.template.nodes[to]);
     options.push({ value: way, label: failed ? 'fail the run' : way, skipsReview: gate && passes(way) });
   }
-  if (!options.some((o) => o.label === 'fail the run')) options.push({ value: GIVE_UP, label: 'fail the run', adds: true });
+  if (!options.some((o) => o.label === 'fail the run') && !inParallelBranch(view, id)) options.push({ value: FAIL_RUN, label: 'fail the run', adds: true });
   return options;
 }
 
 // setExhaustion sets where outcome's used-up loop goes: an outcome, '' to
-// refuse (plain decisions only), or GIVE_UP for a failed end (added if the
-// decision has no outcome to one yet).
+// refuse (a person deciding only), or FAIL_RUN for a failed end (an outcome
+// to one is added if the decision has none yet).
 export function setExhaustion(view, id, outcome, value) {
   const next = copyView(view);
   const node = next.template.nodes[id];
@@ -283,7 +337,8 @@ export function setExhaustion(view, id, outcome, value) {
   if (!bound) throw new Error(`${outcome} does not go back`);
   const outcomes = outgoing(next, id).map((edge) => edge.outcome);
   let way = value;
-  if (way === GIVE_UP && !outcomes.includes(GIVE_UP)) way = addGiveUp(next, id);
+  if (way === FAIL_RUN) way = addGiveUp(next, id);
+  else if (way && !outcomes.includes(way)) throw new Error(`${way} is not an outcome of this step`);
   if (!way && decidedAlone(node)) throw new Error('nobody but its deciders decides here: it needs somewhere to go once its rounds run out');
   setLoopBound(node, outcome, way ? { ...bound, onExhausted: way } : { maxIterations: bound.maxIterations });
   return { view: next, id };
@@ -305,7 +360,9 @@ export function setDecisionWho(view, id, who) {
   }
   const next = copyView(view);
   next.template.nodes[id] = changed;
-  return { view: syncLoops(next), id };
+  syncLoops(next);
+  defaultAgentExhaustion(next, id);
+  return { view: next, id };
 }
 
 // insertAfter puts a new step on `id`'s main path, before what came next.
@@ -533,7 +590,10 @@ export function setOutcomeTarget(view, id, outcome, to) {
   if (!edge) throw new Error(`no outcome ${outcome}`);
   edge.to = to;
   dropStaleJoins(next);
-  return { view: syncLoops(next), id };
+  syncLoops(next);
+  // A loop just made on an agent decision gets its safe way out.
+  defaultAgentExhaustion(next, id);
+  return { view: next, id };
 }
 
 // addOutcome gives a decision one more outcome, leading to `to`.
@@ -574,7 +634,10 @@ export function removeOutcome(view, id, outcome) {
   const decision = next.template.nodes[id];
   next.edges = next.edges.filter((edge) => !(edge.from === id && edge.outcome === outcome));
   if (decision.performer?.kind === 'human') decision.performer.choices = (decision.performer.choices || []).filter((c) => c !== outcome);
-  if (decision.agree === outcome) decision.agree = agreeChoice(next, id, decision);
+  if (decision.agree === outcome) {
+    decision.agree = agreeChoice(next, id, decision);
+    rehomeFromAgree(next, id, decision);
+  }
   dropStaleJoins(next);
   return { view: syncLoops(next), id };
 }
@@ -845,10 +908,15 @@ export function setAgree(view, id, outcome) {
   const next = copyView(view);
   const node = next.template.nodes[id];
   node.agree = outcome;
-  // A used-up loop that went this way now goes somewhere safe instead.
-  const outcomes = outgoing(next, id).map((edge) => edge.outcome);
-  for (const [looped, bound] of Object.entries(node.loops || {})) {
-    if (bound.onExhausted === outcome) setLoopBound(node, looped, { ...bound, onExhausted: safeExhaustion(next, id, node, outcomes, looped) });
-  }
+  rehomeFromAgree(next, id, node);
   return { view: next, id };
+}
+
+// rehomeFromAgree moves a used-up loop off a gate's agree outcome after agree
+// changed: it would pass work the deciders kept sending back.
+function rehomeFromAgree(view, id, node) {
+  const outcomes = outgoing(view, id).map((edge) => edge.outcome);
+  for (const [looped, bound] of Object.entries(node.loops || {})) {
+    if (bound.onExhausted === node.agree) setLoopBound(node, looped, { ...bound, onExhausted: safeExhaustion(view, id, node, outcomes, looped) });
+  }
 }
