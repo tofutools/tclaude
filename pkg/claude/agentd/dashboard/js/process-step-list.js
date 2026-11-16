@@ -15,7 +15,7 @@
 // deciders, its agree rule and its outcomes stay on the node
 // (tk_bd629fb5; process-step-gate.js edits them).
 
-import { LOOP_DEFAULT_ROUNDS, loopBound, setLoopBound } from './process-loops.js';
+import { LOOP_DEFAULT_ROUNDS, exhaustionChoices, loopBound, setLoopBound } from './process-loops.js';
 
 export const STEP_LIST_START_OUTCOME = 'start';
 export const STEP_CONTINUE_OUTCOME = 'next';
@@ -554,16 +554,13 @@ export function setStepChoices(step, choices, following) {
     for (const outcome of Object.keys(node.loops || {})) {
       if (!answers.includes(outcome)) setLoopBound(node, outcome, null);
     }
-    if (isGate(step) && !answers.includes(node.agree)) node.agree = gateAgreeChoice(node, answers);
     for (const [outcome, bound] of Object.entries(node.loops || {})) {
       if (bound.onExhausted && !answers.includes(bound.onExhausted)) {
-        // Nobody is there to ask again when a gate's rounds run out.
-        const others = answers.filter((answer) => answer !== outcome);
-        const way = isGate(step) ? others.find((answer) => answer !== node.agree) || others[0] || '' : '';
-        setLoopBound(node, outcome, { maxIterations: bound.maxIterations, onExhausted: way });
+        setLoopBound(node, outcome, { maxIterations: bound.maxIterations, onExhausted: '' });
       }
     }
-    return { ...step, node, cont, links: [...kept, ...added].filter((link) => link.to) };
+    // A gate's agree and its loops' ways on follow its outcomes.
+    return syncGateStep({ ...step, node, cont, links: [...kept, ...added].filter((link) => link.to) });
   }
   node.type = 'task';
   delete node.loops;
@@ -687,6 +684,26 @@ export function backTargetLabel(list, id) {
 export function setStepLoop(step, outcome, bound) {
   const node = clone(step.node);
   setLoopBound(node, outcome, bound);
+  return syncGateStep({ ...step, node });
+}
+
+// syncGateStep keeps a gate valid after its outcomes or their loops change,
+// as the graph inspector's syncGate does: what all must choose never goes
+// back, and every loop has a way on once its rounds run out (an outcome that
+// does not loop, another than agree if there is one), since nobody is there
+// to pick one. A step that is no gate is returned as it is.
+export function syncGateStep(step) {
+  if (!isGate(step)) return step;
+  const node = clone(step.node);
+  const answers = stepAnswers({ ...step, node });
+  if (!answers.includes(node.agree) || loopBound(node, node.agree)) node.agree = gateAgreeChoice(node, answers);
+  for (const outcome of Object.keys(node.loops || {})) {
+    const bound = loopBound(node, outcome);
+    const ways = exhaustionChoices(node, answers, outcome);
+    if (bound.onExhausted && ways.includes(bound.onExhausted)) continue;
+    const way = ways.find((other) => other !== node.agree) || ways[0];
+    if (way) setLoopBound(node, outcome, { ...bound, onExhausted: way });
+  }
   return { ...step, node };
 }
 

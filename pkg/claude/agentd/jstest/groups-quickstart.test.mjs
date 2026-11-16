@@ -796,6 +796,13 @@ test('a process with an agreement gate opens in the step list, and the gate edit
   // The plain decision (vet) offers to become a gate.
   assert.ok(root.querySelector('[data-step="vet"] [data-step-add-decider]'));
 
+  // Fewer than two outcomes is refused, and says why.
+  const outcomes = review().querySelector('.gq-answers-in input');
+  await setValue(outcomes, 'approve', 'input');
+  await setValue(outcomes, 'approve', 'blur');
+  assert.match(review().querySelector('[data-answers-refused]').textContent, /at least two outcomes/);
+  assert.equal(review().querySelector('.gq-answers-in input').value, 'approve, changes, escalate');
+
   await click(review().querySelector('[data-step-add-decider]'));
   assert.equal(review().querySelectorAll('[data-step-decider]').length, 3);
   await setValue(ownTexts()[1], 'Check the tests for {{task}}.', 'change');

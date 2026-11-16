@@ -201,12 +201,20 @@ function Answers({ list, step, onChange }) {
   const agent = step.node.performer?.kind !== 'human';
   const answers = stepAnswers(step);
   const [draft, setDraft] = useState(answers.join(', '));
+  // Why the last edit of the outcomes was not taken ('' when it was).
+  const [refused, setRefused] = useState('');
   useEffect(() => { setDraft(answers.join(', ')); }, [answers.join('\u0000')]);
   const index = list.steps.findIndex((s) => s.id === step.id);
   const following = list.steps[index + 1]?.id || list.mainEnd;
   const targets = forwardTargets(list, step.id);
   const commit = () => {
     const next = draft.split(',').map((answer) => answer.trim()).filter(Boolean);
+    if (gate && new Set(next).size < 2) {
+      setDraft(answers.join(', '));
+      setRefused('A gate needs at least two outcomes: one all must choose, and one to ask for changes.');
+      return;
+    }
+    setRefused('');
     onChange(setStepChoices(step, next.length || agent ? next : [YOU_CONTINUE], following));
   };
   const back = backTargets(list, step.id);
@@ -241,6 +249,7 @@ function Answers({ list, step, onChange }) {
       aria-label=${gate ? 'Outcomes the deciders vote between, comma separated (at least two)' : agent ? 'Verdicts the agent picks from, comma separated' : 'Answers you can give, comma separated'}
       onInput=${(event) => setDraft(event.currentTarget.value)} onBlur=${commit}
       onKeyDown=${(event) => { if (event.key === 'Enter') { event.preventDefault(); commit(); } }} /></label>
+    ${refused && html`<div class="gq-problem" role="note" data-answers-refused>${refused}</div>`}
     <div class="gq-then">${answers.map((answer) => {
       const to = linkFor(answer);
       const options = [...new Set([...(to ? [to] : []), ...targets, ...back])];
