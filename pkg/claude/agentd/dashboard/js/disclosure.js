@@ -12,7 +12,9 @@ import htm from 'htm';
 
 const html = htm.bind(h);
 
-const CONTROL = 'button, a[href], input, select, textarea, label, [role="menu"], [role="menuitem"]';
+// A focusable element (the 🔒 lock reason) is a control too: tapping it shows
+// why, and must not fold the section under it.
+const CONTROL = 'button, a[href], input, select, textarea, label, [role="menu"], [role="menuitem"], [tabindex]:not([tabindex="-1"])';
 
 // DisclosureToggle is the header's fold button: keyboard Enter / Space and
 // the screen reader's expanded state come from it.
