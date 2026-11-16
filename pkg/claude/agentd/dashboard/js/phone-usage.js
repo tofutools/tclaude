@@ -6,18 +6,20 @@
 //
 //   Quota: one card per window: % used with a bar, the reset countdown, a
 //          sparkline and the prediction line.
-//   Costs: the span chips, the total, the totals per provider and per model,
-//          and the top agents.
+//   Costs: the span chips, the total, the daily spend bars stacked by
+//          provider (the Overview's, tap a day for its breakdown), the
+//          totals per provider and per model, and the top agents.
 //
 // Both read the same states the desktop views do (usage-history-state.js,
 // costs-state.js), so the figures match the desktop's.
 
 import { h } from 'preact';
+import { useState } from 'preact/hooks';
 import htm from 'htm';
-import { COST_SPANS, costModelLabel, costProviderLabel, fmtUSD } from './costs-model.js';
+import { COST_SPANS, costModelLabel, costProviderLabel, fmtExactUSD, fmtUSD, providerSegmentClass } from './costs-model.js';
 import { shortAgentId } from './helpers.js';
 import { formatUsageTime, usageProviderLabel, usageWindowScopeLabel } from './usage-history-model.js';
-import { Sparkline, topCostAgents } from './usage-overview-charts.js';
+import { Sparkline, spendDays, topCostAgents } from './usage-overview-charts.js';
 import { Card, ChipRow, Section } from './phone-ui.js';
 
 const html = htm.bind(h);
@@ -86,6 +88,42 @@ export function spanChips(costs) {
   return chips;
 }
 
+// spendBars are the Costs span's daily bars as the phone draws them: the
+// Overview's days stacked by provider (spendDays), the providers that spent in
+// the span in palette order (the legend, and every day's breakdown rows), and
+// the tallest day, which sets the scale. Empty when the span has no spend.
+export function spendBars(costs) {
+  const days = spendDays(costs);
+  const spent = new Set(days.flatMap((day) => day.segments.map((segment) => segment.provider)));
+  const order = costs.providers || [];
+  const providers = [...spent].sort((a, b) => order.indexOf(a) - order.indexOf(b) || a.localeCompare(b))
+    .map((provider) => ({ provider, className: providerSegmentClass(provider, order) }));
+  const top = Math.max(0, ...days.map((day) => day.cost));
+  return { days: top > 0 ? days : [], providers, top };
+}
+
+// dayBreakdown is the area under the chart: the picked day (the latest when
+// none is, or when the picked one left the span), its total, and one row per
+// provider of the span, $0 where it spent nothing that day.
+export function dayBreakdown(bars, pickedDay) {
+  const picked = bars.days.find((day) => day.day === pickedDay);
+  const day = picked || bars.days[bars.days.length - 1];
+  if (!day) return null;
+  const costOf = new Map(day.segments.map((segment) => [segment.provider, segment.cost]));
+  return {
+    day: day.day, picked: Boolean(picked), cost: day.cost, whatIf: day.whatIf,
+    rows: bars.providers.map((entry) => ({ ...entry, cost: costOf.get(entry.provider) || 0 })),
+  };
+}
+
+// dayLabel is a day key as the chart names it: "Nov 10"; dayOfMonth is the
+// axis tick under its bar.
+export function dayLabel(key) {
+  const date = new Date(key + 'T12:00:00');
+  return Number.isNaN(date.getTime()) ? key : date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+}
+const dayOfMonth = (key) => String(Number(key.slice(8, 10)) || '');
+
 // ---- Views -----------------------------------------------------------------
 
 const SUBVIEW_LABELS = { overview: ['Overview', 'Overview'], quota: ['Quota', 'Reserves'], costs: ['Costs', 'Coffers'] };
@@ -147,6 +185,54 @@ function CostRow({ name, sub, cost, share, whatIf }) {
   </li>`;
 }
 
+// PhoneSpendChart is the Overview's daily spend bars at the phone's width.
+// A phone has no hover, so each day is a button: tapping it picks that day
+// (outlined) and the breakdown under the chart shows it; tapping it again, or
+// nothing tapped, shows the latest day.
+export function PhoneSpendChart({ costs, wizard }) {
+  const w = (plain, wizardly) => (wizard ? wizardly : plain);
+  const [pickedDay, setPickedDay] = useState(null);
+  const bars = spendBars(costs);
+  const title = w('Daily spend', 'Daily tithes');
+  if (!bars.days.length) {
+    return html`<${Card} class="phone-spend" role="group" aria-label=${title}>
+      <div class="phone-spend-head"><strong>${title}</strong></div>
+      <div class="phone-empty">${w('No spend in this span.', 'The coffers are untouched.')}</div>
+    <//>`;
+  }
+  const shown = dayBreakdown(bars, pickedDay);
+  // A tick under every bar up to two weeks, else about seven along the span.
+  const tickEvery = Math.max(1, Math.ceil(bars.days.length / 7));
+  const tick = (index) => (bars.days.length - 1 - index) % tickEvery === 0;
+  return html`<${Card} class="phone-spend" role="group" aria-label=${title}>
+    <div class="phone-spend-head"><strong>${title}</strong><span>${w('by provider', 'by house')}</span></div>
+    <div class="phone-spend-plot" style=${`--phone-spend-days:${bars.days.length}`}>
+      ${bars.days.map((day, index) => {
+        const picked = shown.picked && shown.day === day.day;
+        return html`<button key=${day.day} type="button" data-ui-exempt data-day=${day.day}
+          class=${`phone-spend-day${picked ? ' picked' : ''}${day.whatIf ? ' what-if' : ''}`}
+          aria-pressed=${picked ? 'true' : 'false'} aria-label=${`${dayLabel(day.day)}, ${fmtExactUSD(day.cost)}`}
+          onClick=${() => setPickedDay(picked ? null : day.day)}>
+          <span class="phone-spend-stack" style=${`height:${(day.cost / bars.top) * 100}%`}>
+            ${day.segments.map((segment) => html`<i key=${segment.provider} class=${segment.className}
+              style=${`flex-grow:${segment.cost}`}></i>`)}
+          </span>
+          <span class="phone-spend-tick" aria-hidden="true">${tick(index) ? dayOfMonth(day.day) : ''}</span>
+        </button>`;
+      })}
+    </div>
+    <div class="phone-spend-legend">
+      ${bars.providers.map((entry) => html`<span key=${entry.provider}><i class=${entry.className}></i>${entry.provider}</span>`)}
+    </div>
+    <div class="phone-spend-detail" role="status" aria-live="polite">
+      <div class="phone-spend-detail-head"><strong>${dayLabel(shown.day)}${shown.picked ? '' : html` <span class="phone-spend-latest">· latest</span>`}</strong>
+        <span>${shown.whatIf ? '≈' : ''}${fmtExactUSD(shown.cost)}</span></div>
+      ${shown.rows.map((row) => html`<div key=${row.provider} class="phone-spend-row">
+        <span><i class=${row.className}></i>${row.provider}</span><span>${fmtExactUSD(row.cost)}</span></div>`)}
+    </div>
+  <//>`;
+}
+
 // PhoneCosts is the Costs summary. pickSpan(key) changes the span the way
 // the desktop's span buttons do.
 export function PhoneCosts({ costs, wizard, pickSpan, spanLabel }) {
@@ -171,6 +257,7 @@ export function PhoneCosts({ costs, wizard, pickSpan, spanLabel }) {
       ].filter(Boolean).join(' · ') || `${costs.narrowed.from || ''}`}</span>
       ${costs.hasWhatIf && html`<span class="phone-cost-caveat">≈ WHAT-IF is the pay-per-token equivalent of subscription use, not a real charge.</span>`}
     <//>
+    <${PhoneSpendChart} costs=${costs} wizard=${wizard} />
     <${Section} title=${w('By provider', 'By house')} count=${t.providers.length}>
       ${t.providers.length
         ? html`<ul class="phone-cost-list">${t.providers.map((entry) => html`<${CostRow} key=${entry.key} name=${entry.key}
@@ -189,6 +276,6 @@ export function PhoneCosts({ costs, wizard, pickSpan, spanLabel }) {
           sub=${shortAgentId(agent.agentID, agent.convID)} cost=${agent.cost} whatIf=${agent.whatIf} />`)}</ul>`
         : html`<div class="phone-empty">${w('No spend in this span.', 'The coffers are untouched.')}</div>`}
     <//>
-    <p class="phone-usage-foot">${w('Charts, months, filters and multipliers are on the desktop.', 'The full ledger is kept at the desktop.')}</p>
+    <p class="phone-usage-foot">${w('Running totals, months, filters and multipliers are on the desktop.', 'The full ledger is kept at the desktop.')}</p>
   </div>`;
 }
