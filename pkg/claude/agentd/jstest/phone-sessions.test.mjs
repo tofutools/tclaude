@@ -108,10 +108,12 @@ test('a shell\'s row opens the shell menu (Now\'s Shells\') on a hold or its ⋯
   const opened = [];
   const m = await harness.mount(harness.html`<${mod.PhoneSessions} snapshot=${{ value: {} }} actions=${{}}
     listed=${() => [{ id: 'g', name: 'webshop', items: [shell] }]} open=${(item) => opened.push(item.key)} onMenu=${() => {}}
-    shellMenu=${(item, { open }) => menus.push([item.key, typeof open])} />`);
+    shellMenu=${(item, { open }) => { menus.push(item.key); open(item); }} />`);
   const c = m.container;
   await harness.act(() => c.querySelector('.phone-session-more').click());
-  assert.deepEqual(menus, [['bg:3', 'function']]);
+  assert.deepEqual(menus, ['bg:3']);
+  assert.deepEqual(opened, ['bg:3'], 'the menu\'s Attach opens it the way a tap does');
+  opened.length = 0;
   const { HOLD_MS } = await harness.importDashboardModule('js/phone-hold.js');
   t.mock.timers.enable({ apis: ['setTimeout'] });
   await harness.act(() => {
