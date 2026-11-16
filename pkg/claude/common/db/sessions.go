@@ -528,17 +528,26 @@ func FindLatestSessionsByTmux(names []string) (map[string]*SessionRow, error) {
 	return out, nil
 }
 
-// FindSessionByConvID finds a session by conversation ID using the index.
-// When multiple rows exist for the same conv_id (e.g. auto-register
-// created a new row alongside an old one with a different short id), we
-// return the most recently updated one.
+// currentLaunchOrder orders a conversation's session rows newest launch
+// first. A conv has a row per launch (a resume writes a new one, or reuses
+// its row, restamping created_at): the current launch is the one that started
+// last. Not updated_at: the stop path and the reaper mark a predecessor's row
+// exited after its successor is written, so the most recently updated row can
+// be the dead launch's, and posture read from it would be the old launch's
+// (a sandbox tightened while the agent was offline would read as the looser
+// one it replaced). rowid breaks a tie.
+const currentLaunchOrder = `created_at DESC, rowid DESC`
+
+// FindSessionByConvID finds a conversation's current launch: when several
+// rows exist for the conv_id (a resume, or auto-register alongside an old
+// row), the one that started last (currentLaunchOrder).
 func FindSessionByConvID(convID string) (*SessionRow, error) {
 	db, err := Open()
 	if err != nil {
 		return nil, err
 	}
 	row := db.QueryRow(`SELECT `+sessionColumns+` FROM sessions WHERE conv_id = ?
-		ORDER BY updated_at DESC LIMIT 1`, convID)
+		ORDER BY `+currentLaunchOrder+` LIMIT 1`, convID)
 	s, err := scanSession(row)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -721,7 +730,7 @@ func SessionLaunchProfileForConv(convID string) (SessionLaunchProfile, error) {
 	var p SessionLaunchProfile
 	err = d.QueryRow(
 		`SELECT harness, model_id, effort_level, sandbox_mode, sandbox_implementation, approval_policy, approval_auto_review FROM sessions
-		 WHERE conv_id = ? ORDER BY updated_at DESC LIMIT 1`, convID).
+		 WHERE conv_id = ? ORDER BY `+currentLaunchOrder+` LIMIT 1`, convID).
 		Scan(&p.Harness, &p.ModelID, &p.Effort, &p.HarnessBuiltinMode, &p.SandboxImplementation, &p.ApprovalPolicy, &p.ApprovalAutoReview)
 	if errors.Is(err, sql.ErrNoRows) {
 		return SessionLaunchProfile{}, nil
@@ -732,16 +741,17 @@ func SessionLaunchProfileForConv(convID string) (SessionLaunchProfile, error) {
 	return p, nil
 }
 
-// FindSessionsByConvID returns every row for the given conv_id, most
-// recently updated first. Used by the agent daemon to find a row whose
-// tmux session is actually alive when several stale rows coexist.
+// FindSessionsByConvID returns every row for the given conv_id, newest
+// launch first (currentLaunchOrder), so rows[0] is the current launch, as
+// FindSessionByConvID's. Used by the agent daemon to find a row whose tmux
+// session is actually alive when several stale rows coexist.
 func FindSessionsByConvID(convID string) ([]*SessionRow, error) {
 	db, err := Open()
 	if err != nil {
 		return nil, err
 	}
 	rows, err := db.Query(`SELECT `+sessionColumns+` FROM sessions WHERE conv_id = ?
-		ORDER BY updated_at DESC`, convID)
+		ORDER BY `+currentLaunchOrder, convID)
 	if err != nil {
 		return nil, err
 	}
