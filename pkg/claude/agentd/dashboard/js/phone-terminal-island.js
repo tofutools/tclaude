@@ -35,6 +35,7 @@ import { writeClipboard } from './insecure-origin.js';
 import { shellToast } from './shell-state.js';
 import { openTypeSheet } from './phone-terminal-type.js';
 import { isAgentTerminalPath } from './terminal-interactions.js';
+import { NavToggle, terminalDock } from './phone-nav-toggle.js';
 
 const html = htm.bind(h);
 
@@ -328,6 +329,15 @@ export function PhoneTerminal({ seed, deps, onClose }) {
     return () => { delete root.dataset.phoneTerminal; };
   }, []);
 
+  // The phone shell shows the bottom nav under the terminal (or not, by the
+  // ▾/▴ toggle's choice), and a view picked there closes the terminal.
+  const closeRef = useRef(onClose);
+  closeRef.current = onClose;
+  useEffect(() => {
+    terminalDock.value = { keyboard, close: () => closeRef.current?.() };
+  }, [keyboard]);
+  useEffect(() => () => { terminalDock.value = null; }, []);
+
   const toggleKeyboard = () => {
     const next = !keyboard;
     setKeyboard(next);
@@ -413,6 +423,7 @@ export function PhoneTerminal({ seed, deps, onClose }) {
         onMouseDown=${keepFocus} onClick=${() => openSelect()}>Copy</button>
     </div>
     <div class="phone-term-input">
+      ${!keyboard && html`<${NavToggle} kind="terminal" prefs=${deps.prefs} onMouseDown=${keepFocus} />`}
       ${message && !keyboard && html`<button data-ui-exempt type="button" class="phone-term-compose" onClick=${message}>✉ Message ${name}…</button>`}
       ${type && !keyboard && html`<button data-ui-exempt type="button" class="phone-term-compose phone-term-type" onClick=${type}>› Type into ${typeInto}…</button>`}
       <button data-ui-exempt type="button" class=${`phone-term-kbd${keyboard ? ' on' : ''}`} aria-pressed=${keyboard ? 'true' : 'false'}

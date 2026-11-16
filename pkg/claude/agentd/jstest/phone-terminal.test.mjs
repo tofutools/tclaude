@@ -103,7 +103,17 @@ test('an agent terminal opens docked, live, with the key strip and its message s
   await tap(host.querySelector('.phone-term-compose'));
   assert.deepEqual(composed, [{ agent: AGENT, label: 'checkout-ui' }]);
 
+  // The ▾/▴ toggle for the bottom nav sits left of ✉ Message, and the
+  // terminal tells the shell it is docked (js/phone-nav-toggle.js).
+  const toggles = await harness.importDashboardModule('js/phone-nav-toggle.js');
+  const input = host.querySelector('.phone-term-input');
+  assert.equal(input.firstElementChild.className, 'phone-nav-toggle');
+  assert.equal(input.firstElementChild.getAttribute('aria-label'), 'Hide page selector');
+  assert.equal(toggles.terminalDock.value?.keyboard, false);
+
   await tap(button('Keyboard'));
+  assert.equal(toggles.terminalDock.value?.keyboard, true, 'the shell keeps the nav off the raised keyboard');
+  assert.equal(host.querySelector('.phone-nav-toggle'), null, 'no toggle while typing raw');
   assert.deepEqual(widget.calls.at(-1), ['keyboard', true]);
   assert.equal(button('Keyboard').getAttribute('aria-pressed'), 'true');
   assert.equal(host.querySelector('.phone-term-compose'), null, 'raw typing takes the message button\'s place');
@@ -113,6 +123,7 @@ test('an agent terminal opens docked, live, with the key strip and its message s
   assert.equal(widget.disposed, true, 'closing drops the socket');
   assert.deepEqual(overlays.at(-1), { closed: true, replace: false }, 'closing steps back');
   assert.equal(harness.document.documentElement.dataset.phoneTerminal, undefined);
+  assert.equal(toggles.terminalDock.value, null, 'closed, no terminal is docked');
 });
 
 // A shell's input: the shell key strip, and a sheet that types into it with

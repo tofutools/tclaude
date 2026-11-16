@@ -509,3 +509,22 @@
   color: var(--ui-muted-text); font-size: 13px; white-space: nowrap;
 }
 :root[data-layout="phone"] .phone-pull.ready { color: var(--ui-text-strong); border-color: var(--phone-accent-bg); }
+
+/* The ▾/▴ toggle (js/phone-nav-toggle.js): left of a terminal's or the mail
+   reader's field, it hides or shows the bottom nav. Shown, it is a quiet
+   key; hidden, it is tinted so the nav's absence reads, and carries the
+   count the nav's badges would. */
+:root[data-layout="phone"] .phone-nav-toggle {
+  position: relative; flex: none; width: 40px; height: 40px; padding: 0; border-radius: 10px;
+  background: var(--ui-field-bg); border: 1px solid var(--ui-line);
+  color: var(--ui-text-strong); font: inherit; font-size: 16px; line-height: 1; cursor: pointer;
+}
+:root[data-layout="phone"] .phone-nav-toggle.off {
+  background: color-mix(in srgb, var(--phone-accent-bg) 22%, var(--ui-card-bg));
+  border-color: var(--phone-accent-bg); color: var(--phone-accent);
+}
+:root[data-layout="phone"] .phone-nav-toggle-badge {
+  position: absolute; top: -7px; right: -8px;
+  min-width: 17px; height: 17px; padding: 0 4px; border-radius: 9px; font-size: 10px; line-height: 17px;
+  box-shadow: 0 0 0 2px var(--ui-card-bg);
+}
