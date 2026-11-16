@@ -99,7 +99,7 @@ function memPrefs(init = {}) {
   return { getItem: (k) => (map.has(k) ? map.get(k) : null), setItem: (k, v) => map.set(k, String(v)), removeItem: (k) => map.delete(k), map };
 }
 
-async function setup(t, { prefs = memPrefs({ 'tclaude.dash.phone.agents.view': 'all' }) } = {}) {
+async function setup(t, { prefs = memPrefs() } = {}) {
   const harness = await createPreactHarness(t);
   const [{ createDashboardState }, island, sheet, page, board] = await Promise.all([
     harness.importDashboardModule('js/snapshot-store.js'),
@@ -131,32 +131,69 @@ async function setup(t, { prefs = memPrefs({ 'tclaude.dash.phone.agents.view': '
   const button = (label) => [...c.querySelectorAll('button')].find((b) => b.textContent.trim() === label);
   const titles = () => [...c.querySelectorAll('.phone-agent-title')].map((n) => n.textContent);
   const shownGroups = () => [...c.querySelectorAll('.phone-agents-node')].map((n) => n.getAttribute('aria-label'));
-  return { harness, c, tap, node, caret, nameButton, seg, button, titles, shownGroups, calls, prefs, page, board, model };
+  // The View sheet, opened from the sliders in the top bar, and its controls.
+  const viewAction = () => page.phoneBar.value.actions.find((act) => act.key === 'view');
+  const openView = async () => { await harness.act(() => viewAction().onClick()); return c.querySelector('.phone-sheet [data-agents-view]'); };
+  const sw = (key) => c.querySelector(`[data-agents-view] input[name="agents-view-${key}"]`);
+  const orderBy = (key) => c.querySelector(`[data-agents-view] input[name="agents-view-order"][value="${key}"]`);
+  const layout = (label) => [...c.querySelectorAll('[data-agents-view] .phone-agents-seg-btn')].find((b) => b.textContent.trim() === label);
+  const reset = () => c.querySelector('[data-agents-view] .phone-agents-view-reset');
+  // The test DOM does not toggle an input on a click: set it, then change.
+  const on = (box) => box.checked ?? box.hasAttribute('checked');
+  const flip = (box) => harness.act(() => { box.checked = !on(box); harness.fireEvent(box, 'change'); });
+  const pick = (radio) => harness.act(() => { radio.checked = true; harness.fireEvent(radio, 'change'); });
+  return { harness, c, tap, node, caret, nameButton, button, titles, shownGroups, calls, prefs, page, board, model, viewAction, openView, sw, orderBy, layout, reset, on, flip, pick };
 }
 
-test('Active | All groups: the pick is remembered, each with its count', async (t) => {
+test('one view: the sliders open View; Layout, Show, Order and Reset apply at once, are remembered, and dot the sliders off the defaults', async (t) => {
   const prefs = memPrefs();
-  const { c, tap, seg, shownGroups, titles } = await setup(t, { prefs });
-  assert.equal(seg('Active').getAttribute('aria-pressed'), 'true');
-  assert.equal(seg('Active').textContent.replace(/\s+/g, ' ').trim(), 'Active · 5', 'online agents');
-  assert.equal(seg('All groups').textContent.replace(/\s+/g, ' ').trim(), 'All groups · 6', 'groups, not counting the archived one');
-  // One layout (AgentGroupsList): Active's groups are the same sections as
-  // All groups', only flat.
-  assert.ok(c.querySelector('.phone-agents > .phone-section.phone-agents-node[aria-label="webshop"]'));
-  assert.equal(c.querySelector('.phone-agents-sub'), null, 'Active nests nothing');
-  await tap(seg('All groups'));
-  assert.equal(prefs.getItem('tclaude.dash.phone.agents.view'), 'all');
-  assert.equal(seg('All groups').getAttribute('aria-pressed'), 'true');
-  assert.deepEqual(shownGroups(), ['webshop', 'checkout', 'payments', 'infra', 'hotfix', 'Ungrouped', 'research']);
-  const counts = () => [seg('Active'), seg('All groups')].map((b) => b.textContent.replace(/\s+/g, ' ').trim());
-  assert.deepEqual(counts(), ['Active · 5', 'All groups · 6'], 'the same counts in either mode');
-  assert.ok(!titles().includes('pay-lead'), 'payments is folded: nothing in it is online');
-  await tap(seg('Active'));
-  assert.equal(prefs.getItem('tclaude.dash.phone.agents.view'), null);
+  const { c, tap, shownGroups, titles, viewAction, openView, sw, orderBy, layout, reset, on, flip, pick } = await setup(t, { prefs });
+  assert.equal(c.querySelector('.phone-agents-seg'), null, 'no Active | All groups toggle on the page');
+  assert.equal(viewAction().dot, false, 'at the defaults: no dot');
+  // The defaults: the tree, offline shown, no empty or archived groups, the
+  // operator's group order (the agents in no group last).
+  assert.deepEqual(shownGroups(), ['webshop', 'checkout', 'payments', 'infra', 'hotfix', 'Ungrouped']);
+  assert.ok(c.querySelector('.phone-agents-sub > .phone-agents-node[aria-label="checkout"]'), 'subgroups nest');
+  const sheet = await openView();
+  assert.ok(sheet, 'the View sheet');
+  assert.equal(reset().disabled, true, 'Reset is off at the defaults');
+  assert.equal(layout('Tree').getAttribute('aria-pressed'), 'true');
+  assert.deepEqual([on(sw('offline')), on(sw('empty')), on(sw('archived')), on(orderBy('yours'))], [true, false, false, true]);
+
+  // List: one level, every subgroup its own section, every worker its own row.
+  await tap(layout('List'));
+  assert.equal(prefs.getItem('tclaude.dash.phone.agents.layout'), 'list');
+  assert.equal(c.querySelector('.phone-agents-sub'), null, 'nothing nests');
+  assert.deepEqual(shownGroups(), ['webshop', 'checkout', 'payments', 'infra', 'hotfix', 'Ungrouped']);
+  assert.equal(viewAction().dot, true, 'off the defaults: the sliders carry a dot');
+  assert.equal(reset().disabled, false);
+  await flip(sw('empty'));
+  assert.equal(prefs.getItem('tclaude.dash.phone.agents.empty'), '1');
+  assert.ok(shownGroups().includes('research'), 'an empty group shows');
+  await flip(sw('archived'));
+  assert.equal(shownGroups().at(-1), 'release', 'archived ones last');
+  await pick(orderBy('name'));
+  assert.equal(prefs.getItem('tclaude.dash.phone.agents.order'), 'name');
+  assert.deepEqual(shownGroups(), ['checkout', 'hotfix', 'infra', 'payments', 'research', 'webshop', 'Ungrouped', 'release']);
+  // Needs you first: an error or a question first, then who is online.
+  await pick(orderBy('needs'));
+  assert.deepEqual(shownGroups(), ['webshop', 'infra', 'checkout', 'hotfix', 'payments', 'Ungrouped', 'research', 'release']);
+  await pick(orderBy('active'));
+  assert.deepEqual(shownGroups().slice(0, 4).sort(), ['checkout', 'hotfix', 'infra', 'webshop'], 'someone online first');
+  await flip(sw('offline'));
+  assert.equal(prefs.getItem('tclaude.dash.phone.agents.offline'), '0');
+  assert.ok(!titles().includes('pay-lead'));
+
+  // Reset: every setting back, forgotten, and the dot gone.
+  await tap(reset());
+  assert.deepEqual([...prefs.map.keys()].filter((key) => key.startsWith('tclaude.dash.phone.agents.')), []);
+  assert.equal(viewAction().dot, false);
+  assert.equal(reset().disabled, true);
+  assert.deepEqual(shownGroups(), ['webshop', 'checkout', 'payments', 'infra', 'hotfix', 'Ungrouped']);
 });
 
-test('All groups: subgroups nest, nothing-online groups dim and fold, folds remembered', async (t) => {
-  const { c, tap, node, caret, titles, prefs } = await setup(t);
+test('the tree: subgroups nest, nothing-online groups dim and fold, folds remembered', async (t) => {
+  const { c, tap, node, caret, titles, prefs } = await setup(t, { prefs: memPrefs({ 'tclaude.dash.phone.agents.empty': '1' }) });
   assert.ok(node('webshop').querySelector('.phone-agents-sub > .phone-agents-node[aria-label="checkout"]'), 'checkout under webshop');
   assert.ok(node('payments').classList.contains('phone-agents-dim'));
   assert.equal(caret('payments').getAttribute('aria-expanded'), 'false');
@@ -168,7 +205,7 @@ test('All groups: subgroups nest, nothing-online groups dim and fold, folds reme
   await tap(caret('webshop'));
   assert.equal(prefs.getItem('tclaude.dash.phone.tree.fold.webshop'), '1');
   assert.equal(node('checkout'), null, 'a folded group hides its subgroups');
-  // An empty group says so, and has nothing to fold.
+  // An empty group (Show empty groups) says so, and has nothing to fold.
   assert.equal(node('research').querySelector('.phone-agents-tag').textContent, 'empty');
   assert.equal(node('research').querySelector('button.phone-agents-caret-btn'), null);
   // Ungrouped has no page: its name folds it.
@@ -179,18 +216,19 @@ test('All groups: subgroups nest, nothing-online groups dim and fold, folds reme
   assert.equal(c.querySelector('.phone-group-page'), null);
 });
 
-test('All groups: archived groups behind Show archived, last; the chips filter here too', async (t) => {
-  const { tap, button, node, shownGroups, prefs, c, model } = await setup(t);
+test('archived groups behind Show archived, last; the chips filter', async (t) => {
+  const { tap, node, shownGroups, prefs, c, model, openView, sw, flip } = await setup(t, { prefs: memPrefs({ 'tclaude.dash.phone.agents.empty': '1' }) });
   assert.equal(node('release'), null);
-  await tap(button('Show archived · 1'));
+  await openView();
+  await flip(sw('archived'));
   assert.equal(prefs.getItem('tclaude.dash.phone.agents.archived'), '1');
   assert.deepEqual(shownGroups().slice(-2), ['release', 'hotfix'], 'last, its subgroup under it');
   assert.equal(node('release').querySelector('.phone-agents-tag').textContent, 'archived');
   assert.equal(node('release').querySelector(':scope > h2 .phone-agents-board'), null, 'no board for an archived group');
-  await tap(button('Hide archived'));
+  await flip(sw('archived'));
   assert.equal(node('release'), null);
   const chip = (label) => [...c.querySelectorAll('.phone-agents-chips button')].find((b) => b.firstChild.textContent.trim() === label);
-  assert.ok(chip('research'), 'an empty group has its chip here');
+  assert.ok(chip('research'), 'an empty group shown has its chip');
   await tap(chip('webshop'));
   assert.deepEqual(shownGroups(), ['webshop', 'checkout', 'payments']);
   assert.deepEqual(model.agentsFilter.value, [model.groupKey('webshop')]);
@@ -235,11 +273,11 @@ test('a group\'s name opens its page: crumbs, its actions through the desktop\'s
   await harness.act(() => page.phonePage.value.onBack());
   assert.equal(view(), null);
   assert.equal(page.phonePage.value, null);
-  assert.ok(c.querySelector('.phone-agents-seg'));
+  assert.ok(c.querySelector('.phone-agents-chips'));
 });
 
 test('an archived group\'s page offers only its mail', async (t) => {
-  const prefs = memPrefs({ 'tclaude.dash.phone.agents.view': 'all', 'tclaude.dash.phone.agents.archived': '1' });
+  const prefs = memPrefs({ 'tclaude.dash.phone.agents.archived': '1' });
   const { c, tap, nameButton, button } = await setup(t, { prefs });
   await tap(nameButton('release'));
   const view = c.querySelector('.phone-group-page');
@@ -270,31 +308,27 @@ test('the model without offline: offline agents and nobody-online groups left ou
     [['webshop', 2], ['checkout', 1], ['infra', 1], ['hotfix', 1]]);
 });
 
-test('Show offline: off hides offline agents and nobody-online groups in both modes, remembered; counts follow', async (t) => {
+test('Show offline: off hides offline agents and nobody-online groups, remembered; the chips count what shows', async (t) => {
   const prefs = memPrefs();
-  const { c, tap, seg, shownGroups, titles } = await setup(t, { prefs });
-  const toggle = () => c.querySelector('.phone-agents-offline');
-  assert.equal(toggle().getAttribute('aria-pressed'), 'true', 'on by default: as before');
-  assert.equal(toggle().getAttribute('aria-label'), 'Show offline');
-  assert.ok(titles().includes('pay-lead'));
-  await tap(toggle());
+  const { c, shownGroups, titles, openView, sw, on, flip } = await setup(t, { prefs });
+  await openView();
+  assert.ok(on(sw('offline')), 'on by default: as before');
+  assert.equal(sw('offline').closest('label').textContent.trim().startsWith('Offline agents'), true);
+  await flip(sw('offline'));
   assert.equal(prefs.getItem('tclaude.dash.phone.agents.offline'), '0');
-  assert.equal(toggle().getAttribute('aria-pressed'), 'false');
-  assert.ok(!titles().includes('pay-lead') && !titles().includes('loner'), 'Active: no offline agents');
+  assert.ok(!titles().includes('pay-lead') && !titles().includes('loner'), 'no offline agents');
   const chips = () => [...c.querySelectorAll('.phone-agents-chips button')].map((b) => b.textContent.replace(/\s+/g, ' ').trim());
   assert.deepEqual(chips(), ['All 5', 'webshop 2', 'checkout 1', 'infra 1', 'hotfix 1'], 'the chips count what shows');
-  assert.equal(seg('All groups').textContent.replace(/\s+/g, ' ').trim(), 'All groups · 4');
-  await tap(seg('All groups'));
   assert.deepEqual(shownGroups(), ['webshop', 'checkout', 'infra', 'hotfix']);
-  await tap(toggle());
+  await flip(sw('offline'));
   assert.equal(prefs.getItem('tclaude.dash.phone.agents.offline'), null, 'on again: forgotten');
-  assert.deepEqual(shownGroups(), ['webshop', 'checkout', 'payments', 'infra', 'hotfix', 'Ungrouped', 'research']);
+  assert.deepEqual(shownGroups(), ['webshop', 'checkout', 'payments', 'infra', 'hotfix', 'Ungrouped']);
 });
 
-// A link to an agent in All groups unfolds every group above it through the
-// tree's own fold (TREE_FOLD), and shows the archived groups when it is in one.
-test('All groups: a link to an agent unfolds its group and every one above it, archived too', async (t) => {
-  const prefs = memPrefs({ 'tclaude.dash.phone.agents.view': 'all', 'tclaude.dash.phone.agents.offline': '0', 'tclaude.dash.phone.tree.fold.webshop': '1' });
+// A link to an agent unfolds every group above it through the tree's fold
+// (TREE_FOLD), and shows the archived groups when it is in one.
+test('a link to an agent unfolds its group and every one above it, archived too', async (t) => {
+  const prefs = memPrefs({ 'tclaude.dash.phone.agents.offline': '0', 'tclaude.dash.phone.tree.fold.webshop': '1' });
   const { harness, c, titles } = await setup(t, { prefs });
   const routes = await harness.importDashboardModule('js/overlay-routes.js');
   assert.ok(!titles().includes('stripe-adapter'), 'folded, offline hidden');

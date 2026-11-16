@@ -8,17 +8,17 @@
 // from a short sheet (group, profile, prompt), and a group's "Board ›" opens
 // its board. A link to an agent (/groups?agent=<id>, agent-route.js) opens
 // its group up, scrolls to its row and makes it glow a moment (FOUND_MS).
-// A tap on a group's header folds it (remembered, phone-agents-
-// model.js FOLD_PREF); under the header, folded too, a line counts its agents
-// by state. A worker sits indented under the agent that spawned it.
-//
-// Above them, Active | All groups: Active is the above, All groups every
-// group as the desktop's tree nests them (phone-agents-model.js groupsTree),
-// subgroups indented on a guide line, a group with nothing online dimmed and
-// folded until unfolded, archived ones last behind Show archived. There a tap
-// on a group's caret folds it and one on its name opens its page
-// (GroupPage): its group actions, its subgroups and its members. No drag
-// and drop, no columns, no side panel: those stay on the desktop.
+// Every group as the desktop's tree nests them (phone-agents-model.js
+// agentsLayout): subgroups indented on a guide line, a worker under the
+// agent that spawned it, a group with nothing online dimmed and folded until
+// unfolded. A tap on a group's caret folds it (remembered, TREE_FOLD) and
+// one on its name opens its page (GroupPage): its group actions, its
+// subgroups and its members. Under a header, folded too, a line counts its
+// agents by state. The sliders in the top bar open the View sheet
+// (ViewSheet): Tree or List, Show offline / empty / archived, the order of
+// the groups, and Reset; the sliders carry a dot when any is off its
+// default. No drag and drop, no columns, no side panel: those stay on the
+// desktop.
 //
 // Every action goes through the desktop's own entry points (the row action
 // handler, the message dialog, the spawn dialog, the member editor), so the
@@ -29,9 +29,8 @@ import { h, render } from 'preact';
 import { useEffect, useReducer, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import {
-  ACTIVE_FOLD, ALL, ALL_GROUPS, ARCHIVED_PREF, OFFLINE_PREF, VIEW_PREF, showOffline, agentsFilter, agentGroups, agentsView, findAgent, groupPage, groupSummaryLine,
-  groupTabs, groupsTree, metaParts, shownGroups, shownTree, spawnBody, spawnChoices, toggleFilter, TREE_FOLD,
-  treeTabs,
+  ALL, LAYOUTS, ORDERS, VIEW_DEFAULTS, TREE_FOLD, agentsFilter, agentsLayout, atDefaults, findAgent, groupPage, groupSummaryLine,
+  metaParts, saveViewSettings, shownTree, spawnBody, spawnChoices, toggleFilter, treeTabs, viewSettings,
 } from './phone-agents-model.js';
 import { openPhoneSheet } from './phone-sheet.js';
 import { AgentMenu } from './phone-agent-menu.js';
@@ -41,7 +40,7 @@ import { Avatar, ButtonRow, Card, IconButton, Section, StatePill } from './phone
 import { ContextMeter } from './context-meter.js';
 import { dashPrefs } from './prefs.js';
 import { openBoardGroup } from './phone-board.js';
-import { Button } from './ui-components.js';
+import { Button, Check, Switch } from './ui-components.js';
 import { shellToast } from './shell-state.js';
 import { agentFocus, doneAgentFocus } from './agent-route.js';
 import { groupShellOffer, openGroupShell } from './phone-open-shell.js';
@@ -191,21 +190,51 @@ function AgentList({ g, isSteward, onTap, onMore, found = null }) {
       steward=${isSteward(kid)} onTap=${onTap} onMore=${onMore} found=${kid.key === found} />`)}`)}</ul>`;
 }
 
-// OfflineToggle is Show offline, beside Active | All groups: a pressed
-// button, on (pressed) showing offline agents and nobody-online groups.
-function OfflineToggle({ on, onFlip }) {
-  return html`<button data-ui-exempt type="button" class=${`phone-agents-offline${on ? ' on' : ''}`} aria-pressed=${on ? 'true' : 'false'}
-    aria-label="Show offline" title=${on ? 'Offline agents shown: tap to hide them' : 'Offline agents hidden: tap to show them'} onClick=${onFlip}>
-    <span class="phone-agents-offline-box" aria-hidden="true">${on ? '✓' : ''}</span>Offline</button>`;
-}
+// ViewIcon is the header's sliders: it opens the View sheet.
+const ViewIcon = html`<svg class="phone-agents-view-icon" viewBox="0 0 24 24" width="22" height="22" aria-hidden="true" fill="none"
+  stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12" />
+  <circle cx="16" cy="6" r="2" /><circle cx="10" cy="12" r="2" /><circle cx="18" cy="18" r="2" /></svg>`;
 
-// ViewToggle is Active | All groups: two pressed buttons in a group, each
-// with its count (online agents; groups).
-function ViewToggle({ view, active, all, onPick }) {
-  const seg = (key, label, count) => html`<button data-ui-exempt type="button" class=${`phone-agents-seg-btn${view === key ? ' on' : ''}`}
-    aria-pressed=${view === key ? 'true' : 'false'} onClick=${() => onPick(key)}>${label} <span class="phone-chip-count">· ${count}</span></button>`;
-  return html`<div class="phone-agents-seg" role="group" aria-label="Show">
-    ${seg('active', 'Active', active)}${seg(ALL_GROUPS, 'All groups', all)}
+const LAYOUT_LABELS = Object.freeze({ tree: 'Tree', list: 'List' });
+const ORDER_LABELS = Object.freeze({
+  yours: ['Your group order', 'as on the desktop'],
+  needs: ['Needs you first', 'errors, approvals, questions'],
+  active: ['Most active', 'working first'],
+  name: ['Name', 'A–Z'],
+});
+
+// ViewSheet is the Agents view's settings (phone-agents-model.js
+// viewSettings): Layout, what to Show, how to Order groups, and Reset (off
+// at the defaults). Each change applies at once and is kept per viewer.
+export function ViewSheet({ prefs, onChange }) {
+  const [settings, setSettings] = useState(() => viewSettings(prefs));
+  const set = (patch) => {
+    const next = { ...settings, ...patch };
+    saveViewSettings(prefs, next);
+    setSettings(next);
+    onChange?.();
+  };
+  const show = (key, label, hint = '') => html`<label class="phone-agents-view-switch">
+    <span class="phone-agents-view-text">${label}${hint && html`<small>${hint}</small>`}</span>
+    <${Switch} name=${`agents-view-${key}`} checked=${settings[key]} onChange=${(event) => set({ [key]: event.currentTarget.checked })} />
+  </label>`;
+  return html`<div class="phone-agents-view" data-agents-view>
+    <div class="phone-agents-view-head"><h2 class="phone-agents-sheet-title">View</h2>
+      <button data-ui-exempt type="button" class="phone-link phone-agents-view-reset" disabled=${atDefaults(settings)}
+        onClick=${() => set({ ...VIEW_DEFAULTS })}>Reset</button></div>
+    <p class="phone-section-head ui-eyebrow">Layout</p>
+    <div class="phone-agents-seg" role="group" aria-label="Layout">${LAYOUTS.map((key) => html`<button data-ui-exempt key=${key} type="button"
+      class=${`phone-agents-seg-btn${settings.layout === key ? ' on' : ''}`} aria-pressed=${settings.layout === key ? 'true' : 'false'}
+      onClick=${() => set({ layout: key })}>${LAYOUT_LABELS[key]}</button>`)}</div>
+    <p class="ui-hint phone-agents-view-hint">Tree nests subgroups and puts workers under their lead. List is one level.</p>
+    <p class="phone-section-head ui-eyebrow">Show</p>
+    ${show('offline', 'Offline agents', 'and groups with nobody online')}
+    ${show('empty', 'Empty groups')}
+    ${show('archived', 'Archived groups')}
+    <p class="phone-section-head ui-eyebrow">Order groups by</p>
+    <div role="radiogroup" aria-label="Order groups by">${ORDERS.map((key) => html`<${Check} key=${key} type="radio" name="agents-view-order"
+      labelClass="phone-agents-view-order" value=${key} checked=${settings.order === key} onChange=${() => set({ order: key })}>
+      ${ORDER_LABELS[key][0]} <small>${ORDER_LABELS[key][1]}</small><//>`)}</div>
   </div>`;
 }
 
@@ -216,7 +245,7 @@ const Tag = ({ children }) => html`<span class="phone-agents-tag">${children}</s
 const Chevron = () => html`<svg class="phone-agents-chev-icon" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
   <path d="M6 3.5 10.5 8 6 12.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" /></svg>`;
 
-// GroupHead is a group's header, in Active and All groups alike: the caret,
+// GroupHead is a group's header: the caret,
 // a 44px zone left of the name, folds it; the name opens its page (the
 // agents in no group have no page: their name folds them too). A group with
 // nothing to fold has no caret. Under it, folded too, its state summary.
@@ -240,15 +269,12 @@ function GroupHead({ node, folded, onFold, onOpen }) {
   <${Summary} g=${node} />`;
 }
 
-// AgentGroupsList is the one layout of groups and their agents, Active and
-// All groups alike: each group a section (GroupHead, then, unfolded, its
-// agents as the lead/worker tree, then its subgroups indented on a guide
-// line), one look and one spacing. The tabs differ only in what they hand
-// it: the groups (a flat list, or the tree with its subgroups, empty and
-// archived groups), and the fold (fold, below). list is the row actions
-// and the found row (PhoneAgents).
-//
-// fold is the view's fold (phone-agents-model.js ACTIVE_FOLD, TREE_FOLD).
+// AgentGroupsList is the one layout of groups and their agents: each group
+// a section (GroupHead, then, unfolded, its agents as AgentList has them,
+// then its subgroups indented on a guide line), one look and one spacing.
+// nodes is what agentsLayout made of the View settings (the tree, or one
+// level); fold is TREE_FOLD; list is the row actions and the found row
+// (PhoneAgents).
 export function AgentGroupsList({ nodes, fold, prefs, refold, list }) {
   return nodes.map((node) => html`<${GroupSection} key=${node.key} node=${node} fold=${fold} prefs=${prefs} refold=${refold} list=${list} />`);
 }
@@ -337,13 +363,9 @@ export function PhoneAgents({ state, order, actions, fetchImpl = globalThis.fetc
   const active = !activeTab || activeTab.value === 'groups';
   useEffect(() => { if (!active) setOpened([]); }, [active]);
   const snapshot = state.snapshot.value;
-  const view = agentsView(prefs);
-  const showArchived = prefs.getItem(ARCHIVED_PREF) === '1';
-  const offline = showOffline(prefs);
-  const groups = snapshot ? agentGroups(snapshot, order, { offline }) : [];
-  const tree = snapshot ? groupsTree(snapshot, order, { showArchived, offline }) : { nodes: [], archived: 0, count: 0 };
-  const allMode = view === ALL_GROUPS;
-  const tabs = allMode ? treeTabs(tree.nodes) : groupTabs(groups);
+  const settings = viewSettings(prefs);
+  const nodes = snapshot ? agentsLayout(snapshot, order, settings) : [];
+  const tabs = treeTabs(nodes);
   const picked = (agentsFilter.value || []).filter((key) => tabs.some((t) => t.key === key && key !== ALL));
   const onToggle = (key) => { agentsFilter.value = toggleFilter(picked, key); };
   const only = picked.length === 1 ? tabs.find((t) => t.key === picked[0] && t.key.startsWith('g:')) : null;
@@ -353,10 +375,15 @@ export function PhoneAgents({ state, order, actions, fetchImpl = globalThis.fetc
     label: 'New agent', Body: SpawnSheet,
     props: { state, group, fetchImpl, openFull: (g, typed) => actions.spawn(g, typed) },
   }));
+  const changed = !atDefaults(settings);
+  const openView = () => openPhoneSheet({ label: 'View', Body: ViewSheet, props: { prefs, onChange: refold } });
   const page = snapshot && opened.length ? groupPage(snapshot, opened.at(-1), order) : null;
   const open = (name) => { globalThis.scrollTo?.(0, 0); setOpened((stack) => [...stack, name]); };
   usePhonePage(page ? { title: page.name, onBack: () => setOpened((stack) => stack.slice(0, -1)), actions: [] } : null, active);
-  usePhoneBar({ tab: 'groups', actions: snapshot ? [{ key: 'spawn', icon: '＋', label: 'New agent', onClick: () => spawn(only?.label || '') }] : [] }, !page);
+  usePhoneBar({ tab: 'groups', actions: snapshot ? [
+    { key: 'spawn', icon: '＋', label: 'New agent', onClick: () => spawn(only?.label || '') },
+    { key: 'view', icon: ViewIcon, label: changed ? 'View: changed from the defaults' : 'View', dot: changed, onClick: openView },
+  ] : [] }, !page);
   // A link to an agent (agent-route.js): open up what would hide it (a group
   // page over the list, the chips, its group's fold and every one above it,
   // Show offline, Show archived), then glow its row once it is drawn.
@@ -364,18 +391,18 @@ export function PhoneAgents({ state, order, actions, fetchImpl = globalThis.fetc
   const ask = agentFocus.value;
   useEffect(() => {
     if (!active || !ask || !snapshot) return;
-    const spot = findAgent(snapshot, ask.id, view, order);
+    const spot = findAgent(snapshot, ask.id, order);
     doneAgentFocus();
     if (!spot) {
       shellToast(`No agent ${ask.id} here: it was retired or deleted`, true);
       return;
     }
     setOpened([]);
-    if (!spot.row.online) prefs.removeItem(OFFLINE_PREF);
+    // What would hide it: Show offline, Show archived, an empty group never.
+    const shown = { ...settings, offline: settings.offline || !spot.row.online, archived: settings.archived || spot.archived };
+    if (shown.offline !== settings.offline || shown.archived !== settings.archived) saveViewSettings(prefs, shown);
     if (picked.length && !picked.some((key) => spot.path.includes(key))) agentsFilter.value = [];
-    const fold = view === ALL_GROUPS ? TREE_FOLD : ACTIVE_FOLD;
-    for (const key of spot.path) fold.remember(prefs, { group: key.startsWith('g:'), name: key.slice(2) }, false);
-    if (view === ALL_GROUPS && spot.archived) prefs.setItem(ARCHIVED_PREF, '1');
+    for (const key of spot.path) TREE_FOLD.remember(prefs, { group: key.startsWith('g:'), name: key.slice(2) }, false);
     setFound({ key: spot.row.key, group: spot.groupKey, n: ask.n });
     refold();
   }, [active, ask, snapshot]);
@@ -401,31 +428,12 @@ export function PhoneAgents({ state, order, actions, fetchImpl = globalThis.fetc
   };
   const list = { isSteward, tap, more, open, found };
   if (page) return html`<${GroupPage} key=${page.name} page=${page} actions=${actions} list=${list} onOpen=${open} spawn=${spawn} snapshot=${snapshot} />`;
-  const pick = (key) => {
-    if (key === ALL_GROUPS) prefs.setItem(VIEW_PREF, ALL_GROUPS); else prefs.removeItem(VIEW_PREF);
-    refold();
-  };
-  const flipOffline = () => { if (offline) prefs.setItem(OFFLINE_PREF, '0'); else prefs.removeItem(OFFLINE_PREF); refold(); };
-  const toggle = html`<div class="phone-agents-top">
-    <${ViewToggle} view=${view} active=${groups.reduce((n, g) => n + g.live, 0)} all=${tree.count} onPick=${pick} />
-    <${OfflineToggle} on=${offline} onFlip=${flipOffline} />
-  </div>`;
-  if (!allMode && !groups.length) return html`<div class="phone-agents">${toggle}<p class="ui-empty phone-empty">${offline ? 'No agents yet.' : 'No agents online.'}</p></div>`;
-  if (allMode) {
-    const flipArchived = () => { if (showArchived) prefs.removeItem(ARCHIVED_PREF); else prefs.setItem(ARCHIVED_PREF, '1'); refold(); };
-    return html`<div class="phone-agents">
-      ${toggle}
-      ${tabs.length > 1 && html`<${GroupChips} tabs=${tabs} picked=${picked} onToggle=${onToggle} />`}
-      ${!tree.nodes.length && html`<p class="ui-empty phone-empty">${offline ? 'No groups yet. Make one on the desktop.' : 'No group has anyone online.'}</p>`}
-      <${AgentGroupsList} nodes=${shownTree(tree.nodes, picked)} fold=${TREE_FOLD} prefs=${prefs} refold=${refold} list=${list} />
-      ${tree.archived > 0 && !picked.length && html`<button data-ui-exempt type="button" class="phone-link phone-agents-archived" aria-pressed=${showArchived ? 'true' : 'false'}
-        onClick=${flipArchived}>${showArchived ? 'Hide archived' : `Show archived · ${tree.archived}`}</button>`}
-    </div>`;
-  }
+  const none = !(snapshot.groups || []).length && !(snapshot.ungrouped || []).length;
+  const empty = none ? 'No groups yet. Make one on the desktop.' : 'Nothing to show here. View (the sliders above) shows more.';
   return html`<div class="phone-agents">
-    ${toggle}
-    <${GroupChips} tabs=${tabs} picked=${picked} onToggle=${onToggle} />
-    <${AgentGroupsList} nodes=${shownGroups(groups, picked)} fold=${ACTIVE_FOLD} prefs=${prefs} refold=${refold} list=${list} />
+    ${tabs.length > 1 && html`<${GroupChips} tabs=${tabs} picked=${picked} onToggle=${onToggle} />`}
+    ${!nodes.length && html`<p class="ui-empty phone-empty">${empty}</p>`}
+    <${AgentGroupsList} nodes=${shownTree(nodes, picked)} fold=${TREE_FOLD} prefs=${prefs} refold=${refold} list=${list} />
   </div>`;
 }
 

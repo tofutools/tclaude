@@ -140,32 +140,35 @@
 :root[data-layout="phone"] .phone-agent-menu-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 :root[data-layout="phone"] .phone-agent-menu-text small { color: var(--ui-muted-text); font-size: 12.5px; }
 :root[data-layout="phone"] .phone-agent-menu-last { margin-top: 12px; }
-/* Active | All groups: a segmented pair the width of the view. */
-:root[data-layout="phone"] .phone-agents-top { display: flex; gap: 8px; margin: 0 0 10px; }
+/* The View sheet (js/phone-agents-island.js ViewSheet): Layout as a
+   segmented pair the width of the sheet, the Show switches, the Order
+   radios, Reset in its head. */
+:root[data-layout="phone"] .phone-agents-view { display: flex; flex-direction: column; }
+:root[data-layout="phone"] .phone-agents-view-head { display: flex; align-items: center; }
+:root[data-layout="phone"] .phone-agents-view-head .phone-agents-sheet-title { flex: 1; margin: 0; font-size: 17px; }
+:root[data-layout="phone"] .phone-agents-view-reset { min-height: var(--phone-tap); font-size: 14px; }
+:root[data-layout="phone"] .phone-agents-view-reset:disabled { color: var(--ui-muted-text); opacity: .5; cursor: default; }
+:root[data-layout="phone"] .phone-agents-view .ui-eyebrow { margin: 14px 0 6px; }
 :root[data-layout="phone"] .phone-agents-seg {
-  flex: 1; min-width: 0; display: flex; gap: 2px; padding: 2px; margin: 0;
+  display: flex; gap: 2px; padding: 2px; margin: 0;
   border-radius: 10px; background: var(--phone-panel); border: 1px solid var(--phone-line);
 }
 :root[data-layout="phone"] .phone-agents-seg-btn {
-  flex: 1; min-height: 36px; border: 0; border-radius: 8px; background: none;
+  flex: 1; min-height: 40px; border: 0; border-radius: 8px; background: none; white-space: nowrap;
   color: var(--ui-muted-text); font: inherit; font-size: 14px; font-weight: 600; cursor: pointer;
 }
-:root[data-layout="phone"] .phone-agents-seg-btn { white-space: nowrap; }
-/* Show offline: a compact pressed button beside Active | All groups. */
-:root[data-layout="phone"] .phone-agents-offline {
-  flex: none; display: inline-flex; align-items: center; gap: 6px; min-height: 42px; padding: 0 10px;
-  border: 1px solid var(--phone-line); border-radius: 10px; background: var(--phone-panel);
-  color: var(--ui-muted-text); font: inherit; font-size: 13px; font-weight: 600; cursor: pointer;
-}
-:root[data-layout="phone"] .phone-agents-offline.on { color: var(--ui-text-strong); }
-:root[data-layout="phone"] .phone-agents-offline-box {
-  display: inline-flex; align-items: center; justify-content: center; width: 15px; height: 15px; box-sizing: border-box;
-  border: 1.5px solid var(--ui-muted-text); border-radius: 4px; font-size: 11px; line-height: 1;
-}
-:root[data-layout="phone"] .phone-agents-offline.on .phone-agents-offline-box { border-color: var(--ui-focus); background: var(--ui-focus); color: #fff; }
 :root[data-layout="phone"] .phone-agents-seg-btn.on { background: var(--ui-pressed-bg); color: var(--ui-text-strong); box-shadow: 0 1px 2px rgba(0, 0, 0, .25); }
+:root[data-layout="phone"] .phone-agents-view-hint { margin: 6px 2px 0; }
+:root[data-layout="phone"] .phone-agents-view-switch {
+  display: flex; align-items: center; gap: 12px; min-height: 48px; border-bottom: 1px solid var(--phone-line);
+  color: var(--ui-text-strong); font-size: 15px;
+}
+:root[data-layout="phone"] .phone-agents-view-text { flex: 1; min-width: 0; }
+:root[data-layout="phone"] .phone-agents-view-text small { display: block; color: var(--ui-muted-text); font-size: 12.5px; }
+:root[data-layout="phone"] .phone-agents-view-order { display: flex; align-items: center; gap: 10px; min-height: 44px; color: var(--ui-text-strong); font-size: 15px; }
+:root[data-layout="phone"] .phone-agents-view-order small { color: var(--ui-muted-text); font-size: 12.5px; }
 
-/* All groups: the caret is its own tap target, the name another (its page).
+/* A group's caret is its own tap target, the name another (its page).
    A subgroup indents on a guide line; a group with nothing online is dimmed. */
 :root[data-layout="phone"] .phone-agents-caret-btn {
   flex: none; align-self: stretch; display: inline-flex; align-items: center; justify-content: center;
@@ -176,7 +179,7 @@
 :root[data-layout="phone"] .phone-agents-caret-btn[aria-expanded="true"] .phone-agents-chev-icon { transform: rotate(90deg); }
 @media (prefers-reduced-motion: reduce) { :root[data-layout="phone"] .phone-agents-chev-icon { transition: none; } }
 :root[data-layout="phone"] .phone-agents-sub { margin-left: 6px; padding-left: 10px; border-left: 1px solid var(--ui-line); }
-/* Every group, in Active and All groups alike (AgentGroupsList), keeps one
+/* Every group (AgentGroupsList), Tree or List, keeps one
    top margin, folded or not, nested or not: folding changes only what is
    under its header, which stays put. */
 :root[data-layout="phone"] .phone-section.phone-agents-node { margin-top: 8px; }
@@ -188,7 +191,6 @@
   flex: none; padding: 1px 6px; border: 1px solid var(--ui-line); border-radius: 6px;
   color: var(--ui-muted-text); font-size: 11px; font-weight: 500; text-transform: none; letter-spacing: 0;
 }
-:root[data-layout="phone"] .phone-agents-archived { display: block; min-height: var(--phone-tap); margin: 8px 4px; font-size: 14px; }
 
 /* A group's page: the crumbs, a card with its actions, its subgroups as
    cards and its members. */

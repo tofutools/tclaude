@@ -41,21 +41,21 @@ test('the model: groups in order, loudest first, offline apart, PR and checks', 
   assert.equal(lead.ctx, 42);
   assert.equal(lead.pr, null);
   assert.equal(lead.branch, 'main');
-  assert.deepEqual(model.groupTabs(groups).map((tab) => `${tab.label} ${tab.online}/${tab.total}`),
+  const nodes = model.agentsLayout(SNAPSHOT);
+  assert.deepEqual(model.treeTabs(nodes).map((tab) => `${tab.label} ${tab.online}/${tab.total}`),
     ['All 3/5', 'webshop 2/3', 'steward 1/1', 'Ungrouped 0/1']);
-  assert.equal(model.shownGroups(groups, [model.groupKey('steward')]).length, 1);
-  assert.deepEqual(model.shownGroups(groups, [model.UNGROUPED, model.groupKey('webshop')]).map((g) => g.name), ['webshop', 'Ungrouped'],
+  assert.deepEqual(model.shownTree(nodes, [model.groupKey('steward')]).map((g) => g.name), ['steward']);
+  assert.deepEqual(model.shownTree(nodes, [model.UNGROUPED, model.groupKey('webshop')]).map((g) => g.name), ['webshop', 'Ungrouped'],
     'several groups, in the groups\' order');
-  assert.equal(model.shownGroups(groups, ['gone']).length, 3, 'a group that went away shows All');
-  assert.deepEqual(model.liveFilter(groups, ['gone', model.UNGROUPED]), [model.UNGROUPED]);
+  assert.equal(model.shownTree(nodes, ['gone']).length, 3, 'a group that went away shows All');
   assert.deepEqual(model.toggleFilter([], 'g:a'), ['g:a']);
   assert.deepEqual(model.toggleFilter(['g:a', 'g:b'], 'g:a'), ['g:b']);
   assert.deepEqual(model.toggleFilter(['g:a'], model.ALL), []);
   assert.deepEqual(webshop.summary.map((x) => `${x.count} ${x.text}`), ['1 approval', '1 idle', '1 offline'], 'loudest first');
   assert.deepEqual(webshop.tree.map((n) => [n.row.name, n.kids.length]), [['payments-fix', 0], ['lead', 0], ['old-worker', 0]],
     'no spawn parents: every agent at the top level');
-  assert.equal(model.foldPref(webshop), 'tclaude.dash.phone.fold.webshop');
-  assert.equal(model.foldPref(groups[2]), 'tclaude.dash.phone.fold.-ungrouped');
+  assert.equal(model.treeFoldPref(webshop), 'tclaude.dash.phone.tree.fold.webshop');
+  assert.equal(model.treeFoldPref(groups[2]), 'tclaude.dash.phone.tree.fold.-ungrouped');
   assert.equal(model.findRow(groups, id(5)).group.key, model.UNGROUPED);
   assert.equal(model.ciState({ passed: 2, pending: 1 }), 'running');
   assert.equal(model.ciState({ passed: 2 }), 'passing');
@@ -95,7 +95,8 @@ test('the model: crashed agents stay in view, group names never collide, an agen
   assert.deepEqual(all.shown.map((r) => r.name), ['shared', 'dead'], 'crashed is not folded away');
   assert.deepEqual({ live: all.live, total: all.total }, { live: 1, total: 2 });
   assert.equal(new Set(groups.map((g) => g.key)).size, 3);
-  assert.deepEqual(model.shownGroups(groups, [all.key]), [all], 'a group named all is its own chip');
+  assert.deepEqual(model.treeTabs(model.agentsLayout({ groups: [{ name: 'all', members: [both] }] })).map((tab) => tab.key), [model.ALL, all.key],
+    'a group named all is its own chip');
   assert.equal(model.findRow(groups, id(6), named.key).group, named);
   assert.equal(model.findRow(groups, id(6)).group, all);
 });
@@ -201,16 +202,16 @@ test('the chips filter by any number of groups; All shows every one', async (t) 
 });
 
 test('a group\'s caret folds it, remembered in the prefs; its state summary shows folded too; its name opens its page', async (t) => {
-  const prefs = memPrefs({ 'tclaude.dash.phone.fold.steward': '1' });
+  const prefs = memPrefs({ 'tclaude.dash.phone.tree.fold.steward': '1' });
   const { c, tap, titles, prefs: kept, calls, page } = await setup(t, { prefs });
   const head = (name) => c.querySelector(`[aria-label="${name}"] .phone-agents-caret-btn`);
   const nameOf = (name) => c.querySelector(`[aria-label="${name}"] .phone-agents-fold`);
-  assert.deepEqual(titles(), ['payments-fix', 'lead', 'old-worker', 'loner'], 'steward starts folded');
+  assert.deepEqual(titles(), ['payments-fix', 'lead', 'old-worker'], 'steward folded, and Ungrouped (nobody online) starts folded');
   assert.equal(head('steward').getAttribute('aria-expanded'), 'false');
   assert.equal(head('webshop').getAttribute('aria-expanded'), 'true');
   await tap(head('webshop'));
-  assert.deepEqual(titles(), ['loner']);
-  assert.equal(kept.getItem('tclaude.dash.phone.fold.webshop'), '1');
+  assert.deepEqual(titles(), []);
+  assert.equal(kept.getItem('tclaude.dash.phone.tree.fold.webshop'), '1');
   const summary = (name) => [...c.querySelectorAll(`[aria-label="${name}"] .phone-agents-sum`)].map((n) => n.textContent.trim());
   assert.deepEqual(summary('webshop'), ['1 approval', '1 idle', '1 offline'], 'the approval still shows');
   assert.ok(c.querySelector('[aria-label="webshop"] .phone-agents-sum.tone-key'), 'in the approval pill\'s colour');
@@ -220,20 +221,20 @@ test('a group\'s caret folds it, remembered in the prefs; its state summary show
   // Board › stays its own button beside the header.
   assert.ok(c.querySelector('[aria-label="webshop\'s board"]'));
   await tap(head('steward'));
-  assert.deepEqual(titles(), ['steward', 'loner']);
-  assert.equal(kept.getItem('tclaude.dash.phone.fold.steward'), null, 'unfolding forgets it');
+  assert.deepEqual(titles(), ['steward']);
+  assert.equal(kept.getItem('tclaude.dash.phone.tree.fold.steward'), '0', 'unfolding is remembered too');
   assert.deepEqual(summary('steward'), ['1 working']);
   assert.equal(calls.length, 0, 'folding opens nothing');
-  // The name opens the group's page, as in All groups.
+  // The name opens the group's page.
   await tap(nameOf('steward'));
   assert.equal(page.phonePage.value.title, 'steward');
   assert.ok(c.querySelector('.phone-group-page'));
   await tap(c.querySelector('.phone-group-page') && { click: () => page.phonePage.value.onBack() });
   assert.equal(c.querySelector('.phone-group-page'), null);
   // The agents in no group have no page: their name folds them.
-  assert.equal(nameOf('Ungrouped').getAttribute('aria-expanded'), 'true');
+  assert.equal(nameOf('Ungrouped').getAttribute('aria-expanded'), 'false');
   await tap(nameOf('Ungrouped'));
-  assert.ok(!titles().includes('loner'));
+  assert.ok(titles().includes('loner'));
 });
 
 test('a tap opens an online agent\'s terminal and wakes an offline one; ⋯ opens its menu', async (t) => {
@@ -277,7 +278,8 @@ test('a tap opens an online agent\'s terminal and wakes an offline one; ⋯ open
   assert.deepEqual(calls.at(-1), ['grant', 'lead']);
 
   // An offline agent: Power on where Terminal was, no Session group (a line
-  // says why); Escape closes.
+  // says why); Escape closes. Its group, nobody online in it, starts folded.
+  await tap(c.querySelector('[aria-label="Ungrouped"] .phone-agents-fold'));
   await tap(more('loner'));
   assert.deepEqual(tiles(), ['Power on', 'Message', 'Interrupt (off)', 'Copy id']);
   assert.deepEqual(entries(), ['Grant sudo…', 'Copy name', 'Retire…'], 'no rename outside a group');
@@ -313,7 +315,8 @@ test('＋ in the top bar spawns from a short sheet: group, profile, prompt', asy
   const { harness, calls, c, tap, page } = await setup(t, { fetchImpl });
   const bar = page.phoneBar.value;
   assert.equal(bar.tab, 'groups');
-  assert.deepEqual(bar.actions.map((a) => a.icon), ['＋']);
+  assert.deepEqual(bar.actions.map((a) => a.key), ['spawn', 'view']);
+  assert.equal(bar.actions[0].icon, '＋');
   // With one group picked the sheet starts on that group.
   await tap([...c.querySelectorAll('.phone-agents-chips button')][2]);
   await harness.act(() => page.phoneBar.value.actions[0].onClick());
@@ -550,12 +553,12 @@ test('findAgent: where an agent sits, by agent or conversation id, offline and n
   assert.equal(model.findAgent(SNAPSHOT, 'c5').groupKey, model.UNGROUPED, 'a conversation id, an agent in no group');
   assert.equal(model.findAgent(SNAPSHOT, 'agt_gone'), null);
   const nested = { groups: [{ name: 'top', members: [] }, { name: 'sub', parent: 'top', archived: true, members: [{ agent_id: id(9), conv_id: 'c9', title: 'deep', online: false, state: {} }] }] };
-  assert.deepEqual(model.findAgent(nested, id(9), model.ALL_GROUPS).path, ['g:top', 'g:sub']);
-  assert.equal(model.findAgent(nested, id(9), model.ALL_GROUPS).archived, true);
+  assert.deepEqual(model.findAgent(nested, id(9)).path, ['g:top', 'g:sub']);
+  assert.equal(model.findAgent(nested, id(9)).archived, true);
 });
 
 test('a link to an agent opens what hides it, glows its row a while, then lets go of the link', async (t) => {
-  const prefs = memPrefs({ 'tclaude.dash.phone.agents.offline': '0', 'tclaude.dash.phone.fold.webshop': '1' });
+  const prefs = memPrefs({ 'tclaude.dash.phone.agents.offline': '0', 'tclaude.dash.phone.tree.fold.webshop': '1' });
   const { harness, c, item, titles, chip, tap, model } = await setup(t, { prefs });
   const [routes, route, { FOUND_MS }] = await Promise.all([
     harness.importDashboardModule('js/overlay-routes.js'),
@@ -573,7 +576,7 @@ test('a link to an agent opens what hides it, glows its row a while, then lets g
   await harness.act(() => {});
   assert.ok(item('old-worker').classList.contains('phone-agent-found'), 'its row glows');
   assert.equal(prefs.getItem('tclaude.dash.phone.agents.offline'), null, 'Show offline on');
-  assert.equal(prefs.getItem('tclaude.dash.phone.fold.webshop'), null, 'its group unfolded');
+  assert.equal(prefs.getItem('tclaude.dash.phone.tree.fold.webshop'), '0', 'its group unfolded');
   assert.deepEqual(model.agentsFilter.value, [], 'the chips that hid it cleared');
   assert.equal(route.agentFocus.value, null, 'the link is let go of');
   assert.deepEqual(events.at(-1), { closed: false, replace: true }, 'in place: Back goes to where it was tapped');

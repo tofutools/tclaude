@@ -86,7 +86,9 @@ export function usePhonePage(page, active = true) {
 //              that tab is the one on screen
 //     menu:    { sub, label, onClick } | null, a ▾ after the title: sub is the
 //              small text beside it, label what it does for a screen reader
-//     actions: [{ key, icon, label, onClick, disabled?, danger?, badge? }];
+//     actions: [{ key, icon, label, onClick, disabled?, danger?, badge?, dot? }];
+//              icon is a glyph, or markup (an svg) keyed by its key; dot
+//              marks the action as not at its defaults (a view's settings)
 //              an action with text (the mock's "+ Grant") is a pill with
 //              that text in place of a round icon
 //   } | null
@@ -94,7 +96,7 @@ export const phoneBar = signal(null);
 
 function barKey(bar) {
   if (!bar) return '';
-  const acts = (bar.actions || []).map((act) => [act.key || act.label, act.icon || '', act.text || '', act.label, !!act.disabled, !!act.danger, Number(act.badge) || 0]);
+  const acts = (bar.actions || []).map((act) => [act.key || act.label, typeof act.icon === 'string' ? act.icon : '', act.text || '', act.label, !!act.disabled, !!act.danger, Number(act.badge) || 0, !!act.dot]);
   return JSON.stringify([bar.tab || '', bar.menu ? [bar.menu.sub || '', bar.menu.label || ''] : null, acts]);
 }
 
