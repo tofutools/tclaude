@@ -268,17 +268,20 @@ function FailureRow({ id, failure, staged = false, onChange }) {
 // FAILURE_RETRIES_DEFAULT is the retries "retry, then hold it for me" starts at.
 const FAILURE_RETRIES_DEFAULT = 2;
 
-function Inspector({ view, id, roster, roles, fallbackInfo, onApply, onRename, onKind, onClose, onFullEditor, onAnswerStep, fresh = 0 }) {
+function Inspector({ view, id, roster, roles, fallbackInfo, onApply, onRename, onKind, onClose, onFullEditor, onAnswerStep, fresh = '', onFreshUsed }) {
   const node = view.template.nodes[id];
   // A step just added opens with its name ready to type: naming it is part
   // of adding it, and Tab goes on to what it does.
   const box = useRef(null);
+  // fresh is the id of the step just added; once focused it is used up, so
+  // reopening the inspector on any step later never takes focus.
   useEffect(() => {
-    if (!fresh) return;
+    if (!fresh || fresh !== id) return;
     const input = box.current?.querySelector?.('[data-mini-name]');
     input?.focus?.();
     input?.select?.();
-  }, [fresh]);
+    onFreshUsed?.();
+  }, [fresh, id]);
   // The gate's Asks as last shown, per gate: a tie keeps it, so giving one
   // decider its own ask never swaps which text is the shared one.
   const shownAsk = useRef({});
@@ -602,8 +605,8 @@ export function MiniGraphEditor({
     const result = idsFollowNames ? followName(named.view, id) : named;
     apply(result, result.id);
   };
-  // fresh counts steps just added: their inspector opens on the name.
-  const [fresh, setFresh] = useState(0);
+  // fresh is the step just added: its inspector opens on the name.
+  const [fresh, setFresh] = useState('');
   const run = (op) => {
     setMenu(null);
     setPicker(null);
@@ -611,7 +614,7 @@ export function MiniGraphEditor({
       const result = op();
       if (result.view === draft) return;
       apply(result, result.id && result.view.template.nodes[result.id] ? result.id : '');
-      if (result.id && !draft.template.nodes[result.id] && isStep(result.view.template.nodes[result.id])) setFresh((n) => n + 1);
+      if (result.id && !draft.template.nodes[result.id] && isStep(result.view.template.nodes[result.id])) setFresh(result.id);
     } catch (cause) {
       setError(cause.message);
     }
@@ -1022,7 +1025,7 @@ export function MiniGraphEditor({
       onView=${startFrom} onDescribe=${onDescribe ? (text) => void describe(text) : null} onImport=${onImport ? importPwf : null} />`}
     ${selected && html`<${Inspector} view=${draft} id=${selected} roster=${roster} roles=${roles} fallbackInfo=${fallbackInfo}
       onApply=${(result) => apply(result)} onRename=${(value) => renameStep(selected, value)} onClose=${() => setSelected('')} onFullEditor=${fullEditor}
-      fresh=${fresh} onAnswerStep=${(outcome, event) => {
+      fresh=${fresh} onFreshUsed=${() => setFresh('')} onAnswerStep=${(outcome, event) => {
         const box = event.currentTarget?.getBoundingClientRect?.() || { left: 0, bottom: 0 };
         setMenu(null);
         setPicker({ op: 'answer', id: selected, outcome, cx: box.left, cy: box.bottom + 4 });

@@ -183,6 +183,10 @@ test('the simple reference process clicks together inline into what its recipe b
   await page.keyboard.press('Escape');
   await expect(page.locator('[data-mini-picker]')).toHaveCount(0);
   await inspector.getByRole('button', { name: 'done' }).click();
+  // Only a step just added opens on its name: reopening one does not.
+  await select(discuss);
+  await expect(inspector.locator('[data-mini-name]')).not.toBeFocused();
+  await inspector.getByRole('button', { name: 'done' }).click();
 
   // It saves itself, as the recipe builds it, with no problems.
   await expect(editor.locator('[data-mini-autosave]')).toHaveText(`draft · autosaved to ${GROUP}`, { timeout: 15_000 });

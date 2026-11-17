@@ -67,13 +67,20 @@ export class FullEditor {
 
   label(from, outcome, next) { this.op(`label ${from}.${outcome}`, () => this.model.setEdgeOutcome(from, outcome, next)); }
 
+  // connect draws a connector between two nodes, which gets the next free
+  // label, then types the one it needs over it: two edits.
   connect(from, outcome, to) {
-    // A connector drawn between two nodes gets the next free label; the
-    // operator types the one it needs straight into it.
-    this.op(`connect ${from} → ${to}`, () => this.model.addEdge(from, outcome, to));
+    const free = this.model.freeOutcome(from, 'pass');
+    this.op(`connect ${from} → ${to}`, () => this.model.addEdge(from, free, to));
+    if (free !== outcome) this.label(from, free, outcome);
   }
 
-  loop(from, outcome, bound) { this.op(`loop ${from}.${outcome}`, () => this.model.setEdgeLoop(from, outcome, bound)); }
+  // loop bounds a connector that goes back (its rounds), then picks where a
+  // used-up loop goes, when it names one: one inspector commit each.
+  loop(from, outcome, bound) {
+    this.op(`loop ${from}.${outcome}`, () => this.model.setEdgeLoop(from, outcome, { maxIterations: bound.maxIterations }));
+    if (bound.onExhausted) this.op(`exhausted ${from}.${outcome}`, () => this.model.setEdgeLoop(from, outcome, bound));
+  }
 
   params(params) { this.op('params', () => this.model.setParams(params)); }
 
@@ -216,6 +223,7 @@ export function canonical(view) {
   const { nodes } = view.template;
   const ids = {};
   for (const [id, node] of Object.entries(nodes)) ids[id] = node.name ? stepSlug(node.name) : node.type;
+  if (new Set(Object.values(ids)).size !== Object.keys(ids).length) throw new Error(`two nodes share a name: ${JSON.stringify(ids)}`);
   const PASS = new Set(['pass', 'next', 'done', 'success', 'continue']);
   const performer = (p) => {
     if (!p) return undefined;

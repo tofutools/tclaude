@@ -23,7 +23,7 @@ const FIXTURE = new URL('./process-reference-recipes.json', import.meta.url);
 const BUDGET = { simple: 36, advanced: 68 };
 // FULL_BUDGET is the same for the full editor (process-reference-full.mjs),
 // which names a node apart from adding it and has no Who picker.
-const FULL_BUDGET = { simple: 59, advanced: 107 };
+const FULL_BUDGET = { simple: 63, advanced: 115 };
 
 const built = { simple: simple(), advanced: advanced() };
 const full = { simple: fullSimple(), advanced: fullAdvanced() };
