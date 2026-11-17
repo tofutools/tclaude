@@ -110,9 +110,11 @@ test('the simple reference process clicks together inline into what its recipe b
     // A draft's step ids follow their names (process-step-ids.js stepSlug).
     const slug = name.toLowerCase().replace(/[^a-z0-9._-]+/g, '-').replace(/^[^a-z0-9]+/, '').replace(/-+$/, '');
     await expect(inspector).toHaveAttribute('data-mini-inspector', slug);
-    await expect(inspector.locator('[data-mini-text]')).toBeFocused();
-    await page.keyboard.type(text);
-    await inspector.locator('[data-mini-text]').blur();
+    if (text) {
+      await expect(inspector.locator('[data-mini-text]')).toBeFocused();
+      await page.keyboard.type(text);
+      await inspector.locator('[data-mini-text]').blur();
+    }
     if (who) await choose(inspector.locator('.gq-who-select'), who);
     return selected();
   };
@@ -123,6 +125,8 @@ test('the simple reference process clicks together inline into what its recipe b
   };
   const aim = async (name, to) => outcome(name).locator('select').selectOption(to);
   const select = async (id) => {
+    // Clicking the step that is open closes it.
+    if (await inspector.isVisible() && (await selected()) === id) return;
     await editor.locator(`[data-process-node="${id}"]`).click();
     await expect(inspector).toHaveAttribute('data-mini-inspector', id);
   };
@@ -151,31 +155,44 @@ test('the simple reference process clicks together inline into what its recipe b
   await rename('yes', 'move-on');
   await rename('no', 'iterate');
   await aim('iterate', build);
-  // PR ready and notify, then merge if the run allows it.
-  await handle(decide, 'after', 'agent');
-  const ready = await fill({ name: 'Ready the PR', text: 'Mark the PR ready for review and notify the operator with a short summary.', who: ['lead'] });
-  await handle(ready, 'after', 'decide');
-  const merge = await fill({ name: 'Merge', text: 'Auto-merge is {{auto_merge}}. Answer merge only if it is true and CI on the PR passed; otherwise leave it for the operator.', who: ['lead'] });
-  await rename('yes', 'merge');
-  await rename('no', 'leave');
-  await handle(merge, 'after', 'agent');
-  await fill({ name: 'Merge the PR', text: 'Merge the PR now that CI passed.', who: ['lead'] });
-  // The params the steps use are declared already; Params sets the rest.
-  await expect(editor.locator('[data-mini-params]')).toHaveAttribute('data-mini-params', 'idea,auto_merge');
+  // The params: idea is declared by the step that uses it; auto_merge,
+  // which the Merge rule reads, is added in the dialog.
+  await expect(editor.locator('[data-mini-params]')).toHaveAttribute('data-mini-params', 'idea');
   await editor.locator('[data-mini-params-edit]').click();
   const dialog = page.locator('.process-param-dialog');
   await expect(dialog).toBeVisible();
   const idea = dialog.locator('[data-process-param="idea"]');
   await idea.locator('.process-param-description').fill('The idea to build');
+  await dialog.getByRole('button', { name: '+ add param' }).click();
+  await dialog.locator('[data-process-param="param"] .process-param-name').fill('auto_merge');
   const autoMerge = dialog.locator('[data-process-param="auto_merge"]');
   await autoMerge.locator('.process-param-type').fill('boolean');
   await autoMerge.locator('.process-param-description').fill('Merge on green CI without asking');
-  await autoMerge.locator('.process-param-required').uncheck();
   await autoMerge.locator('.process-param-default-enabled').check();
   await autoMerge.locator('.process-param-default').fill('false');
   await dialog.getByRole('button', { name: 'Apply' }).click();
   await expect(dialog).toHaveCount(0);
   await expect(editor.locator('[data-mini-param="auto_merge"]')).toHaveText('auto_merge: boolean = false');
+  // PR ready and notify; CI runs and may fail; a rule merges if allowed.
+  await select(decide);
+  await handle(decide, 'after', 'agent');
+  const ready = await fill({ name: 'Ready the PR', text: 'Mark the PR ready for review and notify the operator with a short summary.', who: ['lead'] });
+  await handle(ready, 'after', 'command');
+  const ci = await fill({ name: 'CI', text: 'gh pr checks --watch' });
+  await inspector.locator(`[data-mini-failure="${ci}"] select`).selectOption('go-on');
+  await handle(ci, 'after', 'decide');
+  const merge = await fill({ name: 'Merge' });
+  await rename('yes', 'merge');
+  await rename('no', 'leave');
+  await inspector.locator('.gq-who-select').selectOption('rule');
+  const rule = inspector.locator(`[data-mini-rule="${merge}"]`);
+  await expect(rule).toBeVisible();
+  await rule.locator('[data-mini-rule-row="0.0"] select').first().selectOption(`steps.${ci}.result`);
+  await rule.locator('[data-mini-rule-and="0"]').click();
+  await rule.locator('[data-mini-rule-row="0.1"] select').first().selectOption('params.auto_merge');
+  await expect(rule.locator('[data-mini-rule-words]')).toContainText('auto_merge');
+  await handle(merge, 'after', 'agent');
+  await fill({ name: 'Merge the PR', text: 'Merge the PR now that CI passed.', who: ['lead'] });
   await select(merge);
   // ⑂ on an answer's row offers a step on that answer (not used here).
   await inspector.locator('[data-mini-answer-step="leave"]').click();
@@ -217,12 +234,18 @@ test('the simple reference process clicks together inline into what its recipe b
     expect([200, 201]).toContain(await saveView(page, templateId, recipes.advanced, saved.sourceHash));
     await expect(editor.locator('[data-process-node="review"]')).toBeVisible({ timeout: 20_000 });
     await graphShot('advanced-recipe.png');
+    // And its reviewer-tracks variant: each reviewer loops on its own fix.
+    const advanced = await getTemplate(page, templateId);
+    expect([200, 201]).toContain(await saveView(page, templateId, recipes['advanced-tracks'], advanced.sourceHash));
+    await expect(editor.locator('[data-process-node="security-review"]')).toBeVisible({ timeout: 20_000 });
+    await graphShot('advanced-tracks-recipe.png');
     const data = (name) => `data:image/png;base64,${readFileSync(path.join(process.env.SHOTS, name)).toString('base64')}`;
     const composite = await page.context().newPage();
     await composite.setViewportSize({ width: 3400, height: 800 });
     await composite.setContent(`<body style="margin:0;background:#0d1117;color:#c9d1d9;font:14px sans-serif">
       <div style="padding:12px 16px">Example 2, simple: clicked together inline</div><img src="${data('simple-clicked.png')}" style="display:block;max-width:100%">
       <div style="padding:12px 16px">Example 1, advanced: built by its inline recipe</div><img src="${data('advanced-recipe.png')}" style="display:block;max-width:100%">
+      <div style="padding:12px 16px">Example 1 with reviewer tracks: built by its inline recipe</div><img src="${data('advanced-tracks-recipe.png')}" style="display:block;max-width:100%">
     </body>`);
     await composite.screenshot({ path: path.join(process.env.SHOTS, 'reference-processes.png'), fullPage: true });
     await composite.close();

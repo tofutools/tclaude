@@ -233,6 +233,8 @@ export function toAgentDecision(view, id) {
   const main = mainEdge(next, id);
   const previous = before(next, id)[0];
   node.type = 'decision';
+  // Only a task may fail and go on: the review decides instead.
+  delete node.mayFail;
   let after = main?.to;
   next.edges = next.edges.filter((edge) => edge.from !== id);
   if (!after) {
@@ -853,6 +855,8 @@ export function changeKind(view, id, kind) {
   // A retry runs only on agent and command tasks, and only an agent can be
   // handed its own failure back: what the new kind cannot run goes.
   if (changed.type !== 'task') delete changed.retry;
+  // Only a task may fail and go on; a decision with mayFail is refused.
+  if (changed.type !== 'task') delete changed.mayFail;
   else if (kind === 'command' && changed.retry?.onFail && changed.retry.onFail !== 'fresh-attempt') delete changed.retry.onFail;
   let orphans = [];
   if (node.type === 'decision' && kind !== 'you') {

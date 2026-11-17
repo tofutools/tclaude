@@ -197,11 +197,17 @@ warns when placed in inert fields such as profile, timeout, or backoff.
 
 Branching on a param or on an earlier result (a setting the operator gives
 at run time, such as "merge only if auto-merge is on", or "only if CI
-passed") has no rule decision yet: make it a decision whose decider (often
-`lead: true`) is told the value, e.g. `prompt: "Auto-merge is {{
-params.auto_merge }}. Answer merge only if it is true and CI passed; else
-leave."`, with one outcome per way. Keep it its own decision node, so it
-becomes a rule decision in one step when the engine has them.
+passed") is a rule decision: `performer: {kind: rule, cases: [{when:
+<condition>, then: <outcome>}, ...], else: <outcome>}`, decided by the
+engine with nobody asked. A condition reads `params.<name>`,
+`steps.<id>.result` (succeeded, failed, skipped), `steps.<id>.exitCode` (a
+command step) and `outputs.<name>`, compared with `== != < <= > >=` and
+joined by `and`, `or`, `not`; a bare boolean param means it is true. Give
+the step it reads `mayFail: true` when its failing should reach the rule
+instead of failing the run. A rule's loop needs `onExhausted`. Where the
+branch needs judgment ("only if the gap is minor"), let a rule check the
+setting and route to a decision a person or agent takes. See "Rule
+decisions" in `docs/processes.md`.
 
 What the engine executes today (sequences, decisions, parallel joins,
 program and agent tasks, retries, loops) is in `docs/processes.md`, "What
@@ -278,8 +284,8 @@ an `id` and a `performer`. Only `plan` accepts `approval: human|auto` and
 ### Generation example
 
 A runnable review process: the lead agrees the idea with the operator, an
-implementor builds it, two reviewers must both approve, and the lead merges
-it only if the run allows it.
+implementor builds it, two reviewers must both approve, CI runs, and a rule
+merges it only if the run allows it and CI passed.
 
 ```yaml
 apiVersion: tclaude.dev/v1alpha1
@@ -316,15 +322,21 @@ nodes:
     deciders:
       - {kind: agent, role: reviewer, differentFrom: [implement], prompt: Review the PR for correctness.}
       - {kind: agent, role: reviewer, differentFrom: [implement], prompt: Review the PR for security.}
-    next: {approved: merge-gate, changes: implement, give-up: failed}
+    next: {approved: ci, changes: implement, give-up: failed}
     loops:
       changes: {maxIterations: 3, onExhausted: give-up}
+  ci:
+    type: task
+    mayFail: true
+    performer: {kind: program, run: gh, args: [pr, checks, --watch]}
+    next: {next: merge-gate}
   merge-gate:
     type: decision
     performer:
-      kind: agent
-      lead: true
-      prompt: Auto-merge is {{ params.auto_merge }}. Answer merge only if it is true and CI passed; otherwise leave.
+      kind: rule
+      cases:
+        - {when: 'steps.ci.result == succeeded and params.auto_merge', then: merge}
+      else: leave
     next: {merge: merge, leave: done}
   merge:
     type: task
@@ -387,9 +399,7 @@ attached file in full before modelling. Then:
    gap that blocks it, for example: a deadline, a meeting day or "within 4
    hours" (no timers; wait nodes and agent `timeout` do not execute), a step a person performs that is not a decision (no human
    task performers), "notify the on-call" (no notification step; use an agent
-   or program task), or an automatic rule such as "if the change is
-   low-risk, skip approval" (no rule decisions yet: model it as a decision an
-   agent takes, told the value). Leave such parts as an agent or
+   or program task). Leave such parts as an agent or
    decision step named after what it stands for, rather than dropping them
    silently.
 

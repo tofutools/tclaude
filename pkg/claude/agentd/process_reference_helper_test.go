@@ -89,15 +89,24 @@ func performerText(p *model.Performer) string {
 	return p.Prompt + " " + p.Ask
 }
 
-// decisionsQuoting are the decisions, decided by the lead, whose text
-// quotes params.<param>.
-func (s referenceShape) leadDecisionsQuoting(param string) []string {
+// decisionsReading are the decisions that branch on params.<param>: a rule
+// whose cases read it, or a lead's decision whose text quotes it.
+func (s referenceShape) decisionsReading(param string) []string {
 	var ids []string
 	for id, node := range s.tmpl.Nodes {
-		if node.Type != model.NodeTypeDecision || node.Performer == nil || !node.Performer.Lead {
+		if node.Type != model.NodeTypeDecision || node.Performer == nil {
 			continue
 		}
-		if strings.Contains(strings.ReplaceAll(performerText(node.Performer), " ", ""), "params."+param) {
+		text := ""
+		switch {
+		case node.Performer.Kind == model.PerformerRule:
+			for _, c := range node.Performer.Cases {
+				text += c.When + " "
+			}
+		case node.Performer.Lead:
+			text = performerText(node.Performer)
+		}
+		if strings.Contains(strings.ReplaceAll(text, " ", ""), "params."+param) {
 			ids = append(ids, id)
 		}
 	}
@@ -137,7 +146,7 @@ func (s referenceShape) requireCommon(t *testing.T) {
 		}
 	}
 	assert.True(t, human, "the operator decides the high-level idea")
-	assert.GreaterOrEqual(t, lead, 3, "the lead provisions, decides, readies and merges")
+	assert.GreaterOrEqual(t, lead, 2, "the lead drives: provisions, decides, readies")
 	// Merge only when auto-merge is on: a param, quoted by a lead decision
 	// with a way that merges and one that does not.
 	_, ok := s.tmpl.Params["auto_merge"]
@@ -152,14 +161,14 @@ func (s referenceShape) requireCommon(t *testing.T) {
 	merges := 0
 	for name := range s.tmpl.Params {
 		if strings.Contains(name, "merge") {
-			for _, id := range s.leadDecisionsQuoting(name) {
+			for _, id := range s.decisionsReading(name) {
 				if len(s.out(id)) >= 2 {
 					merges++
 				}
 			}
 		}
 	}
-	assert.Positive(t, merges, "a lead decision reads the merge param and branches on it")
+	assert.Positive(t, merges, "a decision (a rule, or the lead's) reads the merge param and branches on it")
 	assert.NotEmpty(t, s.loopsBackTo(), "a decision sends the work back to the implementor")
 }
 
@@ -210,7 +219,7 @@ func (s referenceShape) requireAdvanced(t *testing.T) {
 		}
 	}
 	require.NotEmpty(t, param, "a param says whether the lead may amend the criteria: %v", s.tmpl.Params)
-	assert.NotEmpty(t, s.leadDecisionsQuoting(param), "a lead decision reads %s", param)
+	assert.NotEmpty(t, s.decisionsReading(param), "a decision (a rule, or the lead's) reads %s", param)
 	criteria := false
 	for _, node := range s.tmpl.Nodes {
 		if strings.Contains(strings.ToLower(node.Name+performerText(node.Performer)), "criteria") {

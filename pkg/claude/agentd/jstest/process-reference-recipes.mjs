@@ -7,15 +7,14 @@
 // through process-reference-recipes.json, the Go tests that validate and run
 // them.
 //
-// TODO(tk_c324d5a4): the two settings gates ("Amend the criteria?" and
-// "Merge?") are lead decisions that quote {{params.allow_amend}} and
-// {{params.auto_merge}}: the lead is trusted to obey them. Once the engine
-// has rule decisions (decided by a condition on params and on a previous
-// step's result, ciperf's engine task), make each one a rule decision: one
-// Who change on that node, nothing else in the recipe moves.
+// The two settings gates are rule decisions: "Merge" merges only when the
+// run's auto_merge is on and the CI step before it succeeded (CI may fail:
+// the run goes on, for the rule to see), and "Amending allowed" lets the
+// lead judge a criteria gap only when the run's allow_amend is on.
 
 import * as m from '../dashboard/js/process-mini-edit.js';
-import { setStepConstraint, setStepName, setStepText, setStepWho, stepListToView, blankStepList } from '../dashboard/js/process-step-list.js';
+import { setStepConstraint, setStepFailure, setStepName, setStepText, setStepWho, stepListToView, blankStepList } from '../dashboard/js/process-step-list.js';
+import { fromRows, toRows } from '../dashboard/js/process-rules.js';
 import { addReviewer, setDeciderAsk, withReviewerDefault } from '../dashboard/js/process-gate-deciders.js';
 import { followName } from '../dashboard/js/process-step-ids.js';
 
@@ -24,13 +23,15 @@ const OPS = { after: m.insertAfter, before: m.insertBefore, branch: m.branch, al
 const onAnswer = (view, at, kind, outcome) => m.insertOnAnswer(view, at, outcome, kind);
 
 // offered is what the card's kind picker offers for an operation
-// (groups-mini-editor.js: KIND_CHOICES, INSERT_CHOICES, branchChoices), so a
-// recipe never uses a kind the operator could not pick there.
+// (groups-mini-editor.js: KIND_CHOICES, INSERT_CHOICES, branchChoices,
+// afterChoices, alongsideChoices), so a recipe never uses a kind the
+// operator could not pick there.
 const KINDS = ['agent', 'you', 'command'];
 const INSERT = [...KINDS, 'decide'];
 function offered(op, view, at) {
-  if (op === 'alongside') return KINDS;
+  if (op === 'alongside') return m.reviewLoop(view, at) && !m.canAddReviewerTrack(view, at) ? [...KINDS, m.REVIEWER_TRACK] : KINDS;
   if (op === 'branch') return m.branchKinds(view, at) || INSERT;
+  if (op === 'after') return m.canAddReviewerTrack(view, at) ? INSERT : [...INSERT, m.REVIEWER_TRACK];
   return INSERT;
 }
 
@@ -123,6 +124,40 @@ export class InlineEditor {
   params(params) {
     return this.land('params', m.setParams(this.view, params), { declare: false });
   }
+
+  // failure is the step's "If it fails" picker.
+  failure(id, mode) {
+    return this.land(`if-fails ${id}`, m.updateStep(this.view, id, (s) => setStepFailure(s, { mode })));
+  }
+
+  // rule is the decision's Who picker set to "a rule": it starts with one
+  // case on the first thing it can read.
+  rule(id) {
+    return this.who(id, { mode: 'rule' });
+  }
+
+  // ruleRow changes one picker of a rule's condition row, as RuleCases
+  // does: picking what it reads also picks that operand's first value.
+  ruleRow(id, index, row, change) {
+    const { cases } = this.view.template.nodes[id].performer;
+    const rows = toRows(cases[index].when);
+    const picked = change.operand && m.ruleOperands(this.view, id).find((o) => o.value === change.operand);
+    rows[row] = { ...rows[row], ...change, ...(picked?.values && !change.value ? { value: picked.values[0], cmp: '==' } : {}) };
+    return this.setCases(`rule ${id}.${index}.${row}`, id, cases.map((c, i) => (i === index ? { ...c, when: fromRows(rows) } : c)));
+  }
+
+  // ruleAnd is a case's "+ and": one more row, on the first thing it can read.
+  ruleAnd(id, index) {
+    const { cases } = this.view.template.nodes[id].performer;
+    const first = m.ruleOperands(this.view, id)[0];
+    const rows = [...toRows(cases[index].when), { operand: first?.value || 'params.x', cmp: '==', value: first?.values?.[0] || 'yes' }];
+    return this.setCases(`rule ${id}.${index} + and`, id, cases.map((c, i) => (i === index ? { ...c, when: fromRows(rows) } : c)));
+  }
+
+  setCases(label, id, cases) {
+    const rule = this.view.template.nodes[id].performer;
+    return this.land(label, m.setRule(this.view, id, { cases, else: rule.else }));
+  }
 }
 
 const LEAD = { mode: 'lead' };
@@ -145,18 +180,23 @@ function discussAndDecide(e) {
 }
 
 // shipIt is how both processes close: the lead readies the PR and tells the
-// operator, then merges it on green CI when the run allows it.
+// operator, CI runs (it may fail: the run goes on, for the rule to see), and
+// a rule merges only when the run allows it and CI passed. The params must
+// be declared first: a rule reads only declared params.
 function shipIt(e, at) {
   const ready = e.step('after', at, 'agent', {
     name: 'Ready the PR', who: LEAD,
     text: 'Mark the PR ready for review and notify the operator with a short summary.',
   });
-  const merge = e.step('after', ready, 'decide', {
-    name: 'Merge', who: LEAD,
-    text: 'Auto-merge is {{params.auto_merge}}. Answer merge only if it is true and CI on the PR passed; otherwise leave it for the operator.',
-  });
+  const ci = e.step('after', ready, 'command', { name: 'CI', text: 'gh pr checks --watch' });
+  e.failure(ci, 'go-on');
+  const merge = e.step('after', ci, 'decide', { name: 'Merge' });
   e.rename(merge, 'yes', 'merge');
   e.rename(merge, 'no', 'leave');
+  e.rule(merge);
+  e.ruleRow(merge, 0, 0, { operand: `steps.${ci}.result` });
+  e.ruleAnd(merge, 0);
+  e.ruleRow(merge, 0, 1, { operand: 'params.auto_merge' });
   e.step('after', merge, 'agent', { name: 'Merge the PR', who: LEAD, text: 'Merge the PR now that CI passed.' });
   return merge;
 }
@@ -182,18 +222,44 @@ export function simple() {
   e.rename(decide, 'yes', 'move-on');
   e.rename(decide, 'no', 'iterate');
   e.aim(decide, 'iterate', build);
-  shipIt(e, decide);
   e.params({
     idea: { type: 'string', required: true, description: 'The idea to build' },
     auto_merge: { type: 'boolean', default: false, description: 'Merge on green CI without asking' },
   });
+  shipIt(e, decide);
   return e;
 }
 
 // advanced is example 1: acceptance criteria, four reviewers who must all
 // approve, the lead's minors and criteria decisions, and the settings gates.
+// The four reviewers vote at once in one gate: one asking for changes sends
+// the work back with every reviewer's reasons.
 export function advanced() {
-  const e = new InlineEditor('Advanced implementation');
+  return advancedWith('gate');
+}
+
+// advancedTracks is example 1 with a reviewer track per reviewer: each
+// reviews, and sends the work back for its own fix, at its own pace; the
+// tracks join once every reviewer approved.
+export function advancedTracks() {
+  return advancedWith('tracks');
+}
+
+const REVIEWS = [
+  ['Cold review', 'Cold review of the PR, as someone who did not build it.'],
+  ['Security review', 'Security review of the PR: injection, secrets, permissions.'],
+  ['Product review', 'Product review of the PR: is the feature usable as the idea meant it?'],
+  ['Engineering review', 'Engineering review of the PR: structure, tests, maintainability.'],
+];
+const VERDICT = 'Approve it or ask for changes, with your reasons.';
+
+function advancedWith(reviews) {
+  const e = new InlineEditor(reviews === 'gate' ? 'Advanced implementation' : 'Advanced implementation, reviewer tracks');
+  e.params({
+    idea: { type: 'string', required: true, description: 'The idea to build' },
+    allow_amend: { type: 'boolean', default: false, description: 'The lead may make minor changes to the criteria and design' },
+    auto_merge: { type: 'boolean', default: false, description: 'Merge on green CI without asking' },
+  });
   const decided = discussAndDecide(e);
   const criteria = e.step('after', decided, 'agent', {
     name: 'Define acceptance criteria', who: LEAD, text: 'Write the acceptance criteria for the decided idea.',
@@ -204,20 +270,22 @@ export function advanced() {
   const implement = e.step('after', provision, 'agent', {
     name: 'Implement', who: IMPLEMENTOR, text: 'Implement the idea on a branch to meet the criteria, and open a draft PR.',
   });
-  // Four reviewers vote at once; all must approve.
-  const review = e.step('after', implement, 'decide', { name: 'Review' });
-  e.rename(review, 'yes', 'approved');
-  e.rename(review, 'no', 'changes');
-  e.aim(review, 'changes', implement);
-  e.decider(review, ANYONE, 'Security review of the PR: injection, secrets, permissions. Approve it or ask for changes, with your reasons.');
-  e.decider(review, ANYONE, 'Product review of the PR: is the feature usable as the idea meant it? Approve it or ask for changes, with your reasons.');
-  e.decider(review, ANYONE, 'Engineering review of the PR: structure, tests, maintainability. Approve it or ask for changes, with your reasons.');
-  // The first decider is the decision's own performer: give it who and focus.
-  e.deciderWho(review, 0, ANYONE);
-  e.land(`ask ${review}.0`, setDeciderAsk(e.view, review, 0, 'Cold review of the PR, as someone who did not build it. Approve it or ask for changes, with your reasons.'));
+  let reviewed = implement;
+  if (reviews === 'gate') {
+    // Four reviewers vote at once; all must approve.
+    const review = e.step('after', implement, 'decide', { name: 'Review' });
+    e.rename(review, 'yes', 'approved');
+    e.rename(review, 'no', 'changes');
+    e.aim(review, 'changes', implement);
+    for (const [, focus] of REVIEWS.slice(1)) e.decider(review, ANYONE, `${focus} ${VERDICT}`);
+    // The first decider is the decision's own performer: give it who and focus.
+    e.deciderWho(review, 0, ANYONE);
+    e.land(`ask ${review}.0`, setDeciderAsk(e.view, review, 0, `${REVIEWS[0][1]} ${VERDICT}`));
+    reviewed = review;
+  }
   // The lead checks the result against the criteria; off the criteria, it
   // may amend them only if the operator allowed it, else back it goes.
-  const conform = e.step('after', review, 'decide', {
+  const conform = e.step('after', reviewed, 'decide', {
     name: 'Meets the criteria', who: LEAD, text: 'Does the implementation, as reviewed, meet the acceptance criteria?',
   });
   e.rename(conform, 'yes', 'meets');
@@ -226,9 +294,15 @@ export function advanced() {
   e.rename(conform, 'no', 'misses');
   // Missing the criteria still ends in a ready PR, once amended.
   e.aim(conform, 'misses', ready);
-  const amendGate = e.step('answer', conform, 'decide', {
-    outcome: 'misses', name: 'Amend the criteria', who: LEAD,
-    text: 'The operator allowed amending: {{params.allow_amend}}. Only if that is true and the gap is minor, answer amend; otherwise rework.',
+  const allowed = e.step('answer', conform, 'decide', { outcome: 'misses', name: 'Amending allowed' });
+  e.rename(allowed, 'yes', 'allowed');
+  e.rename(allowed, 'no', 'rework');
+  e.rule(allowed);
+  e.ruleRow(allowed, 0, 0, { operand: 'params.allow_amend' });
+  e.aim(allowed, 'rework', implement);
+  const amendGate = e.step('answer', allowed, 'decide', {
+    outcome: 'allowed', name: 'Amend the criteria', who: LEAD,
+    text: 'The operator allows minor changes to the criteria and design. Is the gap minor? Then answer amend; otherwise rework.',
   });
   e.rename(amendGate, 'yes', 'amend');
   e.rename(amendGate, 'no', 'rework');
@@ -246,11 +320,17 @@ export function advanced() {
     outcome: 'fix-minors', name: 'Fix the minors', who: IMPLEMENTOR, constraint: { mode: 'same', step: implement },
     text: 'Fix the minor review findings on the same branch.',
   });
-  e.params({
-    idea: { type: 'string', required: true, description: 'The idea to build' },
-    allow_amend: { type: 'boolean', default: false, description: 'The lead may make minor changes to the criteria and design' },
-    auto_merge: { type: 'boolean', default: false, description: 'Merge on green CI without asking' },
-  });
+  if (reviews === 'tracks') {
+    // A reviewer track after the implementation, then three alongside it.
+    let track = '';
+    for (const [name, focus] of REVIEWS) {
+      const added = track ? e.add('alongside', track, m.REVIEWER_TRACK) : e.add('after', implement, m.REVIEWER_TRACK);
+      track = e.name(added.id, name);
+      e.text(track, `${focus} ${VERDICT}`);
+      e.who(track, ANYONE);
+      e.land(`constraint ${track}`, m.updateStep(e.view, track, (s) => setStepConstraint(s, { mode: 'different', steps: [implement] })));
+    }
+  }
   return e;
 }
 
