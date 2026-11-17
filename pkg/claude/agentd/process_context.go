@@ -97,6 +97,21 @@ type processProjectionNode struct {
 	// loop is in, out of that loop's limit (tcl-eu70x9). Absent elsewhere.
 	Round  int `json:"round,omitempty"`
 	Rounds int `json:"rounds,omitempty"`
+	// Rule is a rule decision's cases and, once it has decided, its last
+	// choice: the case that held (-1 for else) and the values it read.
+	Rule *processProjectionRule `json:"rule,omitempty"`
+}
+
+type processProjectionRule struct {
+	Cases  []model.RuleCase             `json:"cases"`
+	Else   string                       `json:"else"`
+	Choice *processProjectionRuleChoice `json:"choice,omitempty"`
+}
+
+type processProjectionRuleChoice struct {
+	Case    int               `json:"case"`
+	Outcome string            `json:"outcome"`
+	Read    map[string]string `json:"read,omitempty"`
 }
 
 const processProjectionDescriptionRunes = 160
@@ -110,7 +125,7 @@ func clipProjectionText(text string, limit int) string {
 }
 
 // processProjectionPerformer names who performs a node. Kind is agent,
-// human, program or engine. Ref is, for an agent node, the agent its latest
+// human, program, rule or engine. Ref is, for an agent node, the agent its latest
 // attempt is dispatched to, else the bound agent_id of an agent-scoped run,
 // else "unassigned"; for a program node it is the program profile.
 type processProjectionPerformer struct {
@@ -660,6 +675,9 @@ func newProcessProjectionSkeleton(tmpl *model.Template) *processProjectionSkelet
 		if projected.Label == "" {
 			projected.Label = id
 		}
+		if node.Type == model.NodeTypeDecision && node.Performer.IsRule() {
+			projected.Rule = &processProjectionRule{Cases: node.Performer.Cases, Else: node.Performer.Else}
+		}
 		switch node.Type {
 		case model.NodeTypeTask, model.NodeTypeDecision, model.NodeTypeWait:
 			skeleton.steps++
@@ -722,6 +740,8 @@ func processProjectionPerformerOf(node model.Node) processProjectionPerformer {
 			}
 		}
 		return processProjectionPerformer{Kind: string(model.PerformerAgent)}
+	case node.Type == model.NodeTypeDecision && node.Performer.IsRule():
+		return processProjectionPerformer{Kind: string(model.PerformerRule)}
 	case node.Type == model.NodeTypeDecision:
 		return processProjectionPerformer{Kind: string(model.PerformerHuman)}
 	case node.Performer == nil:
@@ -849,6 +869,13 @@ func (s *processProjectionSkeleton) project(run processRunView) processRunProjec
 		}
 		if bounds, ok := bounded[node.ID]; ok {
 			node.Bounds = &bounds
+		}
+		if node.Rule != nil {
+			rule := *node.Rule
+			if choice, ok := run.Checkpoint.Rules[s.engineSource(node.ID)]; ok {
+				rule.Choice = &processProjectionRuleChoice{Case: choice.Case, Outcome: choice.Outcome, Read: choice.Read}
+			}
+			node.Rule = &rule
 		}
 		if index, ok := s.innermost[node.ID]; ok {
 			loop := s.loops[index]

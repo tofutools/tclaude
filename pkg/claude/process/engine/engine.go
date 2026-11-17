@@ -7,6 +7,8 @@ import (
 	"slices"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/tofutools/tclaude/pkg/claude/process/model"
 )
 
 // Initialize creates the exact pre-execution v3 state from one prepared
@@ -168,6 +170,20 @@ func apply(checkpoint Checkpoint, definition *Definition, transition Transition)
 		switch node.kind {
 		case definitionStart:
 			if err := completeAndSettle(&next, definition, index, arrivesAt(soleOutcome(definition, node))); err != nil {
+				return Checkpoint{}, err
+			}
+		case definitionDecision:
+			if node.rule == nil {
+				return invalid("ready node %q requires a planned command or decision", node.id)
+			}
+			// A rule decides as soon as it is ready, by its cases, loops
+			// included, exactly as a person's verdict would.
+			choice := evaluateRule(next, node)
+			if next.Rules == nil {
+				next.Rules = map[string]RuleChoice{}
+			}
+			next.Rules[node.id] = choice
+			if err := settleVerdict(&next, definition, index, choice.Outcome); err != nil {
 				return Checkpoint{}, err
 			}
 		case definitionTally:
@@ -345,6 +361,7 @@ func apply(checkpoint Checkpoint, definition *Definition, transition Transition)
 			}
 			// Per-entry removal only: sibling branches' commands are untouched.
 			removeCommand(&next, outstanding.NodeID)
+			recordStep(&next, node, model.StepSucceeded, observation)
 			// A successful compound stage advances its parent's local sequence; an
 			// authored task settles its own authored route. Both are one reducer
 			// transition, so no intermediate state is ever durable.
@@ -369,6 +386,7 @@ func apply(checkpoint Checkpoint, definition *Definition, transition Transition)
 			// outbox drains, so those siblings remain individually observable
 			// or reconcilable and a crash mid-drain cold-loads them honestly.
 			removeCommand(&next, outstanding.NodeID)
+			recordStep(&next, node, model.StepFailed, observation)
 			// A run some OTHER branch already doomed takes neither of the two
 			// live dispositions below, and it has to be that way: planning is
 			// shut off for the rest of that run, so a re-readied node would never
@@ -400,6 +418,14 @@ func apply(checkpoint Checkpoint, definition *Definition, transition Transition)
 						break
 					}
 					next.Nodes[node.id] = NodeReady
+					break
+				}
+				// The budget is spent. A task that may fail goes on along its
+				// route with result failed, for a rule after it to read.
+				if node.mayFail {
+					if err := completeAndSettle(&next, definition, index, arrivesAt(soleOutcome(definition, node))); err != nil {
+						return Checkpoint{}, err
+					}
 					break
 				}
 				// The budget is spent. An author who explicitly asked for retries
@@ -1262,6 +1288,10 @@ func nextEngineTransition(checkpoint Checkpoint, definition *Definition) (Transi
 		case definitionStart, definitionParallel, definitionCompound, definitionStageDone, definitionSubprocess,
 			definitionTally:
 			return Transition{Kind: TransitionAdvance, NodeID: node.id}, true
+		case definitionDecision:
+			if node.rule != nil {
+				return Transition{Kind: TransitionAdvance, NodeID: node.id}, true
+			}
 		case definitionSubprocessExit:
 			// The subprocess-scoped twin of the end-node rule below: a body exit
 			// waits for its own body's live work, never for the rest of the run.
@@ -1361,7 +1391,7 @@ func (node definitionNode) runsCommand() bool {
 // awaitsHuman reports whether a ready node parks on a person's verdict: a
 // decision nobody delegated to an agent, including every approval gate.
 func (node definitionNode) awaitsHuman() bool {
-	return node.kind == definitionDecision && node.agent == nil
+	return node.kind == definitionDecision && node.agent == nil && node.rule == nil
 }
 
 // commandKind is the outbox kind a prepared task node plans.
@@ -1466,6 +1496,8 @@ func cloneCheckpoint(checkpoint Checkpoint) Checkpoint {
 	if len(checkpoint.Blocked) > 0 {
 		clone.Blocked = append([]BlockedObligation(nil), checkpoint.Blocked...)
 	}
+	clone.Steps = cloneSteps(checkpoint.Steps)
+	clone.Rules = cloneRules(checkpoint.Rules)
 	if len(checkpoint.Commands) > 0 {
 		clone.Commands = make([]Command, len(checkpoint.Commands))
 		for i := range checkpoint.Commands {

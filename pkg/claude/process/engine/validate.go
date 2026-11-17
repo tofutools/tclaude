@@ -83,6 +83,13 @@ type definitionNode struct {
 	// disposition — an explicit policy parks the branch for an operator, no
 	// policy stays fail-fast — so the two shapes have to stay distinguishable.
 	retryAuthored bool
+	// mayFail lets a task's last failed attempt go on along its route with
+	// result failed (model.Node.MayFail).
+	mayFail bool
+	// rule is a rule decision's bound cases (rules.go); recorded marks a step
+	// some rule reads, whose attempts the checkpoint records.
+	rule     *preparedRule
+	recorded bool
 	terminal      RunStatus // end nodes only
 	verdicts      []string  // decision nodes only: sorted authored outcome labels
 	outgoing      []int     // edge indices, sorted by outcome label
@@ -199,6 +206,17 @@ func Prepare(tmpl *model.Template, params map[string]string) (*Definition, error
 	if err := prepareScope(definition, tmpl, params, "", -1, nil, appendNode, nexts, &loops); err != nil {
 		return nil, err
 	}
+	// A step some rule reads keeps a record of its attempts.
+	for _, node := range definition.nodes {
+		if node.rule == nil {
+			continue
+		}
+		for _, id := range node.rule.recordedSteps() {
+			if index, ok := definition.index[id]; ok {
+				definition.nodes[index].recorded = true
+			}
+		}
+	}
 	for fromIndex := range definition.nodes {
 		from := &definition.nodes[fromIndex]
 		// Derived stages have no authored edges, and the engine gives them no
@@ -285,6 +303,7 @@ func prepareScope(definition *Definition, tmpl *model.Template, params map[strin
 			// absent policy to the fail-fast single attempt.
 			prepared.maxAttempts = model.RetryBudget(node.Retry)
 			prepared.retryAuthored = node.Retry != nil
+			prepared.mayFail = node.MayFail
 			if node.Performer.Kind == model.PerformerAgent {
 				agent, err := bindAgent(id, *node.Performer, node.Retry, params, definition.fallback)
 				if err != nil {
@@ -318,6 +337,13 @@ func prepareScope(definition *Definition, tmpl *model.Template, params map[strin
 				constrainAgent(agent, *node.Performer, prefix)
 				prepared.agent = agent
 				prepared.maxAttempts = 1
+			}
+			if node.Performer.IsRule() {
+				rule, err := prepareRule(id, *node.Performer, tmpl, params, prefix)
+				if err != nil {
+					return err
+				}
+				prepared.rule = rule
 			}
 		case model.NodeTypeEnd:
 			if owner != nil {

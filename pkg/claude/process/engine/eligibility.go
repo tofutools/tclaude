@@ -195,8 +195,9 @@ func CheckEligibility(tmpl *model.Template) model.Diagnostics {
 				switch {
 				case node.IsGate():
 					// Decided by its deciders, checked above.
-				case node.Performer == nil || (node.Performer.Kind != model.PerformerHuman && node.Performer.Kind != model.PerformerAgent):
-					add("unsupported_performer", path+".performer.kind", "this engine executes only human and agent deciders")
+				case node.Performer == nil || (node.Performer.Kind != model.PerformerHuman && node.Performer.Kind != model.PerformerAgent &&
+					node.Performer.Kind != model.PerformerRule):
+					add("unsupported_performer", path+".performer.kind", "this engine executes only human, agent and rule deciders")
 				case node.Performer.Contact != nil:
 					add("unsupported_contact", path+".performer.contact", "performer contact schedules are not executable in this engine yet")
 				case node.Performer.Kind == model.PerformerAgent && strings.TrimSpace(node.Performer.Timeout) != "":

@@ -52,6 +52,7 @@ func validateScope(tmpl *Template, edges []Edge, diagnostics *templateDiagnostic
 		func() Diagnostics { return validateOutcomeRouting(tmpl) },
 		func() Diagnostics { return validateLoopBudgets(tmpl) },
 		func() Diagnostics { return validateLoops(tmpl, edges) },
+		func() Diagnostics { return validateRules(tmpl, edges) },
 	} {
 		if !diagnostics.AddAll(validate()) {
 			return
@@ -167,6 +168,11 @@ func validateNodes(tmpl *Template, diagnostics *templateDiagnosticCollector, dep
 		}
 		if !validateCaptures(node, path, diagnostics) {
 			return false
+		}
+		if node.MayFail && (node.Type != NodeTypeTask || node.IsCompound()) {
+			if !diagnostics.Add(diagError("may_fail_on_non_task", path+".mayFail", "mayFail is only valid on a plain task")) {
+				return false
+			}
 		}
 		if !diagnostics.AddAll(validateDuration(path+".patience", node.Patience)) {
 			return false
@@ -496,6 +502,11 @@ func validatePerformer(performer Performer, path string, decision bool, diagnost
 			diagnostic := diagError("missing_run", path+".run", "program performer requires run")
 			finding = &diagnostic
 		}
+	case PerformerRule:
+		if !decision {
+			diagnostic := diagError("rule_on_non_decision", path+".kind", "a rule decides a decision; it is only valid on decision nodes")
+			finding = &diagnostic
+		}
 	default:
 		diagnostic := diagError("invalid_performer_kind", path+".kind", fmt.Sprintf("unsupported performer kind %q", performer.Kind))
 		finding = &diagnostic
@@ -549,7 +560,7 @@ func validatePerformer(performer Performer, path string, decision bool, diagnost
 // instruction text or a human's long-form context. An unrecognized kind gets
 // its own invalid_performer_kind error; skip the scoping noise then.
 func validateKindScopedFields(performer Performer, path string, diagnostics *templateDiagnosticCollector) bool {
-	if performer.Kind != PerformerHuman && performer.Kind != PerformerAgent && performer.Kind != PerformerProgram {
+	if performer.Kind != PerformerHuman && performer.Kind != PerformerAgent && performer.Kind != PerformerProgram && performer.Kind != PerformerRule {
 		return true
 	}
 	scoped := func(field string, set bool, kinds ...PerformerKind) bool {
@@ -578,7 +589,12 @@ func validateKindScopedFields(performer Performer, path string, diagnostics *tem
 		!scoped("model", !isBlank(performer.Model), PerformerAgent) ||
 		!scoped("effort", !isBlank(performer.Effort), PerformerAgent) ||
 		!scoped("run", !isBlank(performer.Run), PerformerProgram) ||
-		!scoped("args", len(performer.Args) > 0, PerformerProgram) {
+		!scoped("args", len(performer.Args) > 0, PerformerProgram) ||
+		!scoped("cases", len(performer.Cases) > 0, PerformerRule) ||
+		!scoped("else", !isBlank(performer.Else), PerformerRule) ||
+		!scoped("timeout", !isBlank(performer.Timeout), PerformerProgram, PerformerAgent, PerformerHuman) ||
+		!scoped("contact", performer.Contact != nil, PerformerProgram, PerformerAgent, PerformerHuman) ||
+		!scoped("profile", !isBlank(performer.Profile), PerformerProgram, PerformerAgent, PerformerHuman) {
 		return false
 	}
 	if !isBlank(performer.Spawn) && performer.Spawn != SpawnAllowed && performer.Spawn != SpawnNever {

@@ -146,6 +146,11 @@ type Checkpoint struct {
 	// nothing more is planned, the human outboxes are dropped, and the run
 	// drains its in-flight commands before finishing RunCanceled.
 	Canceled bool `json:"canceled,omitempty"`
+	// Steps records, per step some rule decision reads, its last attempt's
+	// result, exit code and outputs; Rules is each rule decision's last
+	// evaluation (rules.go). Both are sparse.
+	Steps map[string]StepRecord `json:"steps,omitempty"`
+	Rules map[string]RuleChoice `json:"rules,omitempty"`
 }
 
 // FirstCommand returns the lowest-node-id entry of the command outbox, or nil.
@@ -316,6 +321,9 @@ type ProgramObservation struct {
 	// Verdict is an agent decider's chosen outcome, on a successful
 	// observation of a decision node's command only.
 	Verdict string `json:"verdict,omitempty"`
+	// Outputs are the outputs an agent task reported, on a successful
+	// observation; the checkpoint keeps those a rule reads.
+	Outputs map[string]string `json:"outputs,omitempty"`
 }
 
 // DecisionRecord is the reducer payload for one decision verdict: for an

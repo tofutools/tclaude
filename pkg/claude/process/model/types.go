@@ -60,6 +60,9 @@ const (
 	PerformerHuman   PerformerKind = "human"
 	PerformerAgent   PerformerKind = "agent"
 	PerformerProgram PerformerKind = "program"
+	// PerformerRule decides a decision by its cases, with no agent or person
+	// involved (rule.go).
+	PerformerRule PerformerKind = "rule"
 )
 
 type Template struct {
@@ -106,6 +109,10 @@ type Node struct {
 	Checks      []Step       `json:"checks,omitempty" yaml:"checks,omitempty"`
 	Review      *Step        `json:"review,omitempty" yaml:"review,omitempty"`
 	Retry       *RetryPolicy `json:"retry,omitempty" yaml:"retry,omitempty"`
+	// MayFail lets a task fail without failing the run: once its last attempt
+	// fails, it goes on along its route with result failed, for a rule
+	// decision after it to read as steps.<id>.result.
+	MayFail bool `json:"mayFail,omitempty" yaml:"mayFail,omitempty"`
 	// Patience overrides the template's patience for this step.
 	Patience string      `json:"patience,omitempty" yaml:"patience,omitempty"`
 	Wait     *WaitConfig `json:"wait,omitempty" yaml:"wait,omitempty"`
@@ -206,6 +213,10 @@ type Performer struct {
 	Args    []string         `json:"args,omitempty" yaml:"args,omitempty"`
 	Timeout string           `json:"timeout,omitempty" yaml:"timeout,omitempty"`
 	Contact *ContactSchedule `json:"contact,omitempty" yaml:"contact,omitempty"`
+	// Cases and Else are rule-scoped: the decision takes the outcome of the
+	// first case whose condition holds, or Else (rule.go).
+	Cases []RuleCase `json:"cases,omitempty" yaml:"cases,omitempty"`
+	Else  string     `json:"else,omitempty" yaml:"else,omitempty"`
 }
 
 // ContactSchedule controls follow-up for an asynchronous performer slot. A
