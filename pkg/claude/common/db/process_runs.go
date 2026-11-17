@@ -159,9 +159,13 @@ type ProcessRunSummary struct {
 	TemplateRef  string
 	Status       string
 	StateVersion int64
-	Scope        ProcessRunScope
-	CreatedAt    time.Time
-	UpdatedAt    time.Time
+	// FailedNode and FailureReason are, for a failed run, the step whose
+	// unhandled failure ended it and why (the checkpoint's failure).
+	FailedNode    string
+	FailureReason string
+	Scope         ProcessRunScope
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
 }
 
 // ProcessRunCreate is the immutable and initial mutable state committed when a
@@ -809,10 +813,14 @@ func ListProcessRunSummaries(afterID string, limit int, filter ProcessRunFilter)
 	return queryProcessRunSummaries(d, `WHERE id > ?`+where+` ORDER BY id LIMIT ?`, limit, args...)
 }
 
+// maxProcessRunFailureReason bounds the failure reason a summary carries
+// (engine.MaxBlockedReasonBytes, which the checkpoint already holds it to).
+const maxProcessRunFailureReason = 1024
+
 // queryProcessRunSummaries runs the bounded metadata projection with the
 // given tail (WHERE/ORDER/LIMIT) and its arguments.
 func queryProcessRunSummaries(d *sql.DB, tail string, capacity int, tailArgs ...any) ([]ProcessRunSummary, error) {
-	args := append([]any{MaxProcessRunIDBytes, MaxProcessRunTemplateRef, MaxProcessRunStatusBytes}, tailArgs...)
+	args := append([]any{MaxProcessRunIDBytes, MaxProcessRunTemplateRef, MaxProcessRunStatusBytes, MaxProcessRunIDBytes, maxProcessRunFailureReason}, tailArgs...)
 	rows, err := d.Query(`SELECT
 		CASE WHEN typeof(id) = 'text' AND length(CAST(id AS BLOB)) BETWEEN 1 AND ? THEN id END,
 		CASE WHEN typeof(template_ref) = 'text' AND length(CAST(template_ref AS BLOB)) BETWEEN 1 AND ? THEN template_ref END,
@@ -820,6 +828,10 @@ func queryProcessRunSummaries(d *sql.DB, tail string, capacity int, tailArgs ...
 		CASE WHEN typeof(state_version) = 'integer' AND state_version > 0 THEN state_version END,
 		CASE WHEN typeof(created_at) = 'integer' THEN created_at END,
 		CASE WHEN typeof(updated_at) = 'integer' THEN updated_at END,
+		CASE WHEN status = 'failed' AND json_valid(checkpoint_json) AND typeof(json_extract(checkpoint_json, '$.failure.nodeId')) = 'text'
+			THEN substr(json_extract(checkpoint_json, '$.failure.nodeId'), 1, ?) END,
+		CASE WHEN status = 'failed' AND json_valid(checkpoint_json) AND typeof(json_extract(checkpoint_json, '$.failure.reason')) = 'text'
+			THEN substr(json_extract(checkpoint_json, '$.failure.reason'), 1, ?) END,
 		`+processRunScopeColumnsSelect+`
 		FROM process_runs `+tail, args...)
 	if err != nil {
@@ -831,8 +843,9 @@ func queryProcessRunSummaries(d *sql.DB, tail string, capacity int, tailArgs ...
 		var id, templateRef, status sql.NullString
 		var createdAt, updatedAt dbTimestamp
 		var stateVersion sql.NullInt64
+		var failedNode, failureReason sql.NullString
 		var scopeColumns processRunScopeColumns
-		if err := rows.Scan(append([]any{&id, &templateRef, &status, &stateVersion, &createdAt, &updatedAt},
+		if err := rows.Scan(append([]any{&id, &templateRef, &status, &stateVersion, &createdAt, &updatedAt, &failedNode, &failureReason},
 			scopeColumns.targets()...)...); err != nil {
 			return nil, err
 		}
@@ -848,6 +861,7 @@ func queryProcessRunSummaries(d *sql.DB, tail string, capacity int, tailArgs ...
 		}
 		runs = append(runs, ProcessRunSummary{
 			ID: id.String, TemplateRef: templateRef.String, Status: status.String,
+			FailedNode: failedNode.String, FailureReason: failureReason.String,
 			StateVersion: stateVersion.Int64, Scope: scope, CreatedAt: createdAt.Time(), UpdatedAt: updatedAt.Time(),
 		})
 	}

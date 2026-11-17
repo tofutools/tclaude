@@ -742,3 +742,8 @@ func TestUnauthorizedClaimLeavesThePermissionUsable(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, engine.ProgramSucceeded, result.Observation.Outcome)
 }
+
+func TestAFailedProgramSaysWhyFromItsLastStderrLine(t *testing.T) {
+	assert.Equal(t, "exit status 1: 3 tests failed in pkg/cart", withStderrTail("exit status 1", "building...\n3 tests failed in pkg/cart\n\n"))
+	assert.Equal(t, "exit status 1", withStderrTail("exit status 1", "  \n"), "no stderr: the error alone")
+}

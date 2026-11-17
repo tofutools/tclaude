@@ -62,11 +62,21 @@ type processRunProjection struct {
 	Nodes          []processProjectionNode `json:"nodes"`
 	Edges          []processProjectionEdge `json:"edges"`
 	Current        []string                `json:"current"`
-	Truncated      bool                    `json:"truncated,omitempty"`
-	StartedAt      time.Time               `json:"startedAt"`
-	UpdatedAt      time.Time               `json:"updatedAt"`
-	stepOrder      map[string]int          // node id → 1-based work-step index
-	steps          int                     // work steps in the projection
+	// Failure is the step whose unhandled failure ended the run, as a node of
+	// this graph (a stage or a vote maps to its node), with its label and why.
+	Failure   *processProjectionFailure `json:"failure,omitempty"`
+	Truncated bool                      `json:"truncated,omitempty"`
+	StartedAt time.Time                 `json:"startedAt"`
+	UpdatedAt time.Time                 `json:"updatedAt"`
+	stepOrder map[string]int            // node id → 1-based work-step index
+	steps     int                       // work steps in the projection
+}
+
+// processProjectionFailure is the step that failed a run, for the graph.
+type processProjectionFailure struct {
+	NodeID string `json:"nodeId"`
+	Label  string `json:"label"`
+	Reason string `json:"reason,omitempty"`
 }
 
 // processProjectionNode is one authored node. Kind is the template node type
@@ -886,6 +896,25 @@ func (s *processProjectionSkeleton) project(run processRunView) processRunProjec
 			projection.Current = append(projection.Current, node.ID)
 		}
 		projection.Nodes[i] = node
+	}
+	if failure := run.Checkpoint.Failure; failure != nil {
+		projection.Failure = &processProjectionFailure{NodeID: failure.NodeID, Label: failure.NodeID, Reason: failure.Reason}
+		// The graph node the failed engine node is: an exact match, else the
+		// longest id it is nested under (ids may hold dots: deploy and
+		// deploy.prod are both authored steps).
+		best := -1
+		for i, node := range projection.Nodes {
+			if s.engineSource(node.ID) == failure.NodeID {
+				best = i
+				break
+			}
+			if strings.HasPrefix(failure.NodeID, node.ID+".") && (best < 0 || len(node.ID) > len(projection.Nodes[best].ID)) {
+				best = i
+			}
+		}
+		if best >= 0 {
+			projection.Failure.NodeID, projection.Failure.Label = projection.Nodes[best].ID, projection.Nodes[best].Label
+		}
 	}
 	for i, edge := range projection.Edges {
 		projection.Edges[i].State = string(engine.EdgeUnresolved)

@@ -269,6 +269,12 @@ export function stateLabel(state) {
   return PROCESS_STATES[normalizeNodeState(state)].label;
 }
 
+// runStateLabel is a run's state in words: a canceled run is drawn as
+// failed, but says canceled.
+export function runStateLabel(run) {
+  return /^cancel+ed$/.test(String(run?.status || '').toLowerCase()) ? 'canceled' : stateLabel(runState(run));
+}
+
 // programBounds reads where a program step's latest attempt ran, as the run
 // read model recorded it when the attempt was planned (node.bounds): its
 // working directory and sandbox, or unconfined, or why it could not run.
@@ -631,6 +637,14 @@ export function ProcessScopeChip({ scope, wizard = false }) {
   const entry = PROCESS_SCOPES[kind];
   const text = `${entry.glyph} ${wizard ? entry.wizardLabel : entry.label}${name ? ` · ${name}` : ''}`;
   return html`<span class=${`pk-chip ui-tag pk-scope pk-scope-${kind}`} data-process-scope=${kind}>${text}</span>`;
+}
+
+// ProcessFailure says which step failed the run, and why: a step that
+// failed with nothing in the process to handle it ends the run there.
+export function ProcessFailure({ run }) {
+  const failure = run?.failure;
+  if (!failure?.nodeId) return null;
+  return html`<div class="pk-failure ui-error" role="status" data-run-failure=${failure.nodeId}>✖ <b>${failure.label || failure.nodeId}</b> failed${failure.reason ? html`: <span class="pk-failure-reason">${failure.reason}</span>` : ''}</div>`;
 }
 
 // ProcessPausedChip marks a run an operator paused.

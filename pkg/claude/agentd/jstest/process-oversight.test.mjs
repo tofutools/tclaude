@@ -262,3 +262,30 @@ test('an amended run lists its amendments; a proposal is applied from the run; t
   assert.deepEqual(calls.at(-1), ['amend', 'run_ov', { yaml: 'id: amendme\n', note: '', dryRun: false, baseStateVersion: 0 }]);
   assert.equal(root.querySelector('[data-run-amend]'), null, 'the form closes once applied');
 });
+
+test('a step that failed says so in the run log, with why; one that did not stays a plain line', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { eventSentence } = await harness.importDashboardModule('js/process-oversight.js');
+  const say = (event) => eventSentence(event, nameOf);
+  const failed = say({ kind: 'program_observed', actor: 'tclaude:engine', nodeId: 'ci', payload: { observation: { outcome: 'failed', exitCode: 1, error: 'program exited with code 1' } } });
+  assert.equal(failed.text, 'ci failed: program exited with code 1');
+  assert.equal(failed.tone, 'concern');
+  assert.equal(say({ kind: 'program_observed', nodeId: 'ci', payload: { observation: { outcome: 'succeeded' } } }).text, 'ci succeeded');
+  assert.equal(say({ kind: 'agent_reported', actor: 'agent:agt_alice', nodeId: 'build', payload: { observation: { outcome: 'failed' }, note: 'the tests do not compile' } }).text,
+    'alice reported build failed: the tests do not compile');
+  assert.equal(say({ kind: 'agent_reported', actor: 'agent:agt_alice', nodeId: 'review', payload: { observation: { outcome: 'succeeded', verdict: 'approved' } } }).text,
+    'alice reported review approved');
+});
+
+test('a failed run names the step that failed it; a canceled run says canceled', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { ProcessFailure, runStateLabel } = await harness.importDashboardModule('js/process-kit.js');
+  assert.equal(runStateLabel({ status: 'canceled' }), 'canceled');
+  assert.equal(runStateLabel({ status: 'failed' }), 'failed');
+  const failed = await harness.mount(harness.html`<div><${ProcessFailure} run=${{ failure: { nodeId: 'build', label: 'Build', reason: 'the tests do not compile' } }} /></div>`);
+  const line = failed.container.querySelector('[data-run-failure="build"]');
+  assert.ok(line);
+  assert.match(line.textContent, /Build failed: the tests do not compile/);
+  const none = await harness.mount(harness.html`<div><${ProcessFailure} run=${{ status: 'failed' }} /></div>`);
+  assert.equal(none.container.querySelector('[data-run-failure]'), null);
+});

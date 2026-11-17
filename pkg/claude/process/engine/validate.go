@@ -992,6 +992,14 @@ func validateCheckpoint(checkpoint Checkpoint, definition *Definition) error {
 			return invalid("endedEarly names %q, which is not a reached failed or canceled end node", checkpoint.EndedEarly)
 		}
 	}
+	if failure := checkpoint.Failure; failure != nil {
+		if _, ok := definitionNodeByID(definition, failure.NodeID); !ok || checkpoint.Nodes[failure.NodeID] != NodeFailed {
+			return invalid("failure names %q, which is not a failed node", failure.NodeID)
+		}
+		if len(failure.Reason) > MaxBlockedReasonBytes {
+			return invalid("failure reason for %q exceeds %d bytes", failure.NodeID, MaxBlockedReasonBytes)
+		}
+	}
 	if err := validateAttemptCeilings(checkpoint, definition); err != nil {
 		return err
 	}

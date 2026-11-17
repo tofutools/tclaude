@@ -436,6 +436,9 @@ export function RunPage({ runId, back, active = true, api = runDetailApi, source
       <${DesktopOnlyNote} what="Resolving it is" />
     </div>`}
     ${detail.error && html`<${ErrorNote}>${errorText('the run', detail.error)}<//>`}
+    ${run.failure?.nodeId && html`<div class="phone-run-wait" role="status" data-run-failure=${run.failure.nodeId}>
+      <strong>✖ ${run.failure.label || run.failure.nodeId} failed.</strong>${run.failure.reason ? ` ${run.failure.reason}` : ''}
+    </div>`}
     <p class="phone-run-facts">${[where, run.status, run.startedAt && `started ${relTime(run.startedAt)}`,
       run.startedAt && `${formatRunDuration(run.startedAt, Date.parse(run.status === 'running' ? '' : run.updatedAt || '') || Date.now())}`]
       .filter(Boolean).join(' · ')}</p>

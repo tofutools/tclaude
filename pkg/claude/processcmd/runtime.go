@@ -40,6 +40,7 @@ type processRunJSON struct {
 	Params                map[string]string        `json:"params"`
 	ProgramAuthorizations []string                 `json:"programAuthorizations"`
 	Status                engine.RunStatus         `json:"status"`
+	Failure               *engine.StepFailure      `json:"failure,omitempty"`
 	StateVersion          int64                    `json:"stateVersion"`
 	Checkpoint            engine.Checkpoint        `json:"checkpoint"`
 	Action                string                   `json:"action"`
@@ -171,6 +172,7 @@ type processRunSummaryJSON struct {
 	ID           string              `json:"id"`
 	TemplateRef  string              `json:"templateRef"`
 	Status       engine.RunStatus    `json:"status"`
+	Failure      *engine.StepFailure `json:"failure,omitempty"`
 	StateVersion int64               `json:"stateVersion"`
 	Scope        processRunScopeJSON `json:"scope"`
 	CreatedAt    time.Time           `json:"createdAt"`
@@ -347,7 +349,11 @@ func runProcessRunsLs(p *processRunsLsParams, stdout, stderr io.Writer) error {
 	tw := newTable(stdout)
 	fmt.Fprintln(tw, "ID\tTEMPLATE\tSTATUS\tSCOPE\tUPDATED")
 	for _, run := range response.Runs {
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", run.ID, run.TemplateRef, run.Status, run.Scope, formatTime(run.UpdatedAt))
+		status := string(run.Status)
+		if run.Failure != nil {
+			status += " at " + displayProcessEventField(run.Failure.NodeID)
+		}
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", run.ID, run.TemplateRef, status, run.Scope, formatTime(run.UpdatedAt))
 	}
 	if err := tw.Flush(); err != nil {
 		return err
@@ -961,6 +967,11 @@ func printProcessRun(out io.Writer, run *processRunJSON) {
 	}
 	if run.NeedsReconcile {
 		fmt.Fprintln(out, "needsReconcile=true")
+	}
+	if run.Failure != nil {
+		// The step that failed the run, with nothing authored to handle it.
+		fmt.Fprintf(out, "failed=%s (attempt %d): %s\n", displayProcessEventField(run.Failure.NodeID), run.Failure.Attempt,
+			displayProcessEventField(run.Failure.Reason))
 	}
 	printProcessRunOversight(out, run)
 	if len(run.Commands) > 0 {

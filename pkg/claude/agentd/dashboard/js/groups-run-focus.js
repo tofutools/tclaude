@@ -15,9 +15,9 @@ import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { Button, Seg, Select } from './ui-components.js';
 import {
-  ProcessMiniGraph, ProcessNodeGlyph, ProcessPauseControl, ProcessPausedChip, ProcessScopeChip, ProcessStateChip,
+  ProcessFailure, ProcessMiniGraph, ProcessNodeGlyph, ProcessPauseControl, ProcessPausedChip, ProcessScopeChip, ProcessStateChip,
   ProcessStepStrip, ProcessTemplateVersion,
-  kindLabel, miniGraphLayout, programBounds, performerColor, reassignableNode, runGraphNodes, runName, runState, stateLabel,
+  kindLabel, miniGraphLayout, programBounds, performerColor, reassignableNode, runGraphNodes, runName, runState, runStateLabel, stateLabel,
 } from './process-kit.js';
 import {
   formatRunDuration, groupContextEntry, groupRunsFor, runDetailApi, runNeedsYou, withPerformerNames,
@@ -109,10 +109,11 @@ export function useRunDetail(api, runId) {
   return [current, () => setRevision((value) => value + 1)];
 }
 
-// defaultNode picks what the inspector opens on: the gate waiting on you,
-// else the run's current node.
+// defaultNode picks what the inspector opens on: the step that failed the
+// run, else the gate waiting on you, else the run's current node.
 function defaultNode(run, view) {
   const ids = new Set(runGraphNodes(run).map((node) => node.id));
+  if (run?.failure && ids.has(run.failure.nodeId)) return run.failure.nodeId;
   const awaited = (view?.awaitingDecisions || []).map((decision) => gateNodeOf(decision.nodeId)).find((id) => ids.has(id));
   if (awaited) return awaited;
   return [].concat(run?.current || []).map(String).find((id) => ids.has(id)) || '';
@@ -262,7 +263,7 @@ function RunListItem({ run, entry, selected, onSelect, nameOf, wizard }) {
   return html`<li><button data-ui-exempt type="button" class=${`grf-run${selected ? ' selected' : ''}`} data-run-list-item=${run.runId}
       aria-current=${selected ? 'true' : undefined} onClick=${() => onSelect(run.runId)}>
     <span class="grf-run-name">${runName(run)}${agentScope && html` <${ProcessScopeChip} scope=${{ kind: 'agent', name: agentScope }} wizard=${wizard} />`}</span>
-    <span class="grf-run-meta"><span class=${`pk-dot-inline pk-state-${state}`} aria-hidden="true">●</span> ${runNeedsYou(run, entry) ? (wizard ? 'awaits you' : 'needs you') : stateLabel(state).toLowerCase()}${duration && ` · ${duration}`} <${ProcessStepStrip} run=${run} /></span>
+    <span class="grf-run-meta"><span class=${`pk-dot-inline pk-state-${state}`} aria-hidden="true">●</span> ${runNeedsYou(run, entry) ? (wizard ? 'awaits you' : 'needs you') : runStateLabel(run).toLowerCase()}${duration && ` · ${duration}`} <${ProcessStepStrip} run=${run} /></span>
   </button></li>`;
 }
 
@@ -482,6 +483,7 @@ export function GroupsRunFocus({
         ${detail.error && html`<span class="grf-error ui-error" role="status">${detail.error}</span>`}
         ${dropError && html`<span class="grf-error ui-error" role="alert">${dropError}</span>`}
       </div>
+      ${run && html`<${ProcessFailure} run=${run} />`}
       ${run && detail.view && html`<${RunOversight} view=${detail.view} runId=${runId} api=${api} wizard=${wizard}
         nodeId=${node?.id || ''} nodeLabel=${node?.label || ''}
         labelOf=${(id) => runGraphNodes(run).find((item) => item.id === id)?.label || id}
