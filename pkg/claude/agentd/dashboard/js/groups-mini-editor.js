@@ -29,7 +29,7 @@ import {
 import { LOOP_MAX_ROUNDS, LOOP_MIN_ROUNDS, loopBound, normalizeRounds } from './process-loops.js';
 import {
   agentStepIDs, collapseParamShorthand, constraintFromValue, constraintValue, outputRef, setStepConstraint, setStepName, setStepOutputs,
-  setStepText, setStepWho, stepConstraint, stepOutputs, stepText, stepWho, viewToStepList,
+  FAILURE_RETRIES_MAX, setStepFailure, setStepText, setStepWho, stepConstraint, stepFailure, stepOutputs, stepText, stepWho, viewToStepList,
 } from './process-step-list.js';
 import { openProcessDraft } from './process-draft-handoff.js';
 import { followName } from './process-step-ids.js';
@@ -149,6 +149,30 @@ function ExhaustionPicker({ view, id, outcome, value, onApply }) {
     <//></label>`;
 }
 
+// FailureRow is a step's "If it fails" (stepFailure): fail the run, the
+// default; hold it for the operator; or retry N times, then hold it. The
+// N× box shows only for retry. Routing a failure to another step is not
+// something the engine runs, so it is not offered.
+function FailureRow({ id, failure, onChange }) {
+  return html`<div class="gm-field" data-mini-failure=${id}><span>If it fails</span><div class="gm-failure">
+      <div class="gq-pick-pair">
+        <${Select} size="sm" aria-label="If this step fails" value=${failure.mode} data-failure=${failure.mode}
+          onChange=${(event) => onChange({ mode: event.currentTarget.value, retries: failure.retries || FAILURE_RETRIES_DEFAULT })}>
+          <option value="fail">fail the run</option>
+          <option value="hold">hold it for me</option>
+          <option value="retry">retry, then hold it for me</option>
+        <//>
+        ${failure.mode === 'retry' && html`<label class="gm-retries" title="How many times it is tried again before it waits for you">
+          <${TypedField} name="gm-retries" type="number" min="1" max=${FAILURE_RETRIES_MAX} aria-label="Retries" data-mini-retries value=${failure.retries}
+            onChange=${(event) => onChange({ mode: 'retry', retries: event.currentTarget.value })} />×</label>`}
+      </div>
+      ${failure.mode !== 'fail' && html`<span class="gq-dim" data-mini-failure-note>Held, it waits for you to retry, skip or cancel it.</span>`}
+    </div></div>`;
+}
+
+// FAILURE_RETRIES_DEFAULT is the retries "retry, then hold it for me" starts at.
+const FAILURE_RETRIES_DEFAULT = 2;
+
 function Inspector({ view, id, roster, roles, fallbackInfo, onApply, onRename, onKind, onClose, onFullEditor }) {
   const node = view.template.nodes[id];
   if (!node) return null;
@@ -229,6 +253,8 @@ function Inspector({ view, id, roster, roles, fallbackInfo, onApply, onRename, o
       label="If no member can take this step" inherit=${inheritLabel(fallbackInfo.fallback, fallbackInfo.defaultSpawnProfile)}
       defaultSpawnProfile=${fallbackInfo.defaultSpawnProfile} profiles=${fallbackInfo.profiles}
       onChange=${(next) => onApply(updateStep(view, id, (s) => setStepFallback(s, next)))} /></div>`}
+    ${(kind === 'agent' || kind === 'command') && node.type === 'task' && html`<${FailureRow} id=${id} failure=${stepFailure(step)}
+      onChange=${(next) => onApply(updateStep(view, id, (s) => setStepFailure(s, next)))} />`}
     ${kind === 'agent' && node.type === 'task' && html`<label class="gm-field" data-mini-outputs=${id}><span>Outputs</span><${TypedField} name="none-e-g-pr" type="text"
       value=${outputs.join(', ')} placeholder="none (e.g. pr)" title="Names this step reports, which later steps read as {{ outputs.<name> }}"
       onChange=${(event) => onApply(updateStep(view, id, (s) => setStepOutputs(s, event.currentTarget.value)))} /></label>`}
@@ -253,7 +279,7 @@ function Inspector({ view, id, roster, roles, fallbackInfo, onApply, onRename, o
       ${!outcomes.length && html`<span class="gq-dim">nothing yet: hover the step for + after</span>`}
     </div></div>
     <div class="gm-row"><${Button} size="sm" variant="link" class="gq-link gm-more" data-mini-more onClick=${onFullEditor}
-      title="Retry, model and effort, plan/check/review stages and the rest are edited in the full editor">More options in ⤢ Full editor<//>
+      title="Model and effort, plan/check/review stages and the rest are edited in the full editor">More options in ⤢ Full editor<//>
       <span class="gq-spacer"></span><${Button} size="sm" variant="link" class="gq-link" onClick=${onClose}>done<//></div>
   </div>`;
 }

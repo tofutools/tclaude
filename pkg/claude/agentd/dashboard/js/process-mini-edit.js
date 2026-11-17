@@ -745,6 +745,9 @@ export function draftProjection(view, { whoOf = () => '', noteOf = () => '', nam
     else projected.kind = node.type === 'task' ? 'agent' : node.type;
     if (kind === 'advanced') projected.sub = 'full editor';
     if (node.type === 'decision' && node.deciders?.length) projected.caption = whoOf(id, node);
+    // A step that retries if it fails wears ↻N (its "If it fails").
+    const retries = node.type === 'task' && node.retry ? (Number(node.retry.maxAttempts) || 0) - 1 : 0;
+    if (retries > 0) projected.retries = retries;
     const note = node.type === 'decision' ? noteOf(id, node) : '';
     if (note) projected.label = `${projected.label} ${note}`;
     return projected;

@@ -6,6 +6,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  FAILURE_RETRIES_MAX, setStepFailure, stepFailure,
   blankStepList, expandParamShorthand, forwardTargets, joinCommand, splitCommand, insertStep, moveStep, newStep, removeStep, replaceStep,
   setStepChoices, setStepLinks, setStepText, setStepWho, stepListFlow, stepListParams,
   stepListToView, stepTargetLabel, stepText, stepWho, viewToStepList,
@@ -442,4 +443,21 @@ test('outputs are id-shaped names, and a prompt reads them as {{ outputs.name }}
   assert.equal(outputRef('pr'), '{{ outputs.pr }}');
   // The step list's {{name}} shorthand means a parameter; an output is dotted, so it stays.
   assert.equal(setStepText(declared, 'Review {{ outputs.pr }} for {{task}}').node.performer.prompt, 'Review {{ outputs.pr }} for {{params.task}}');
+});
+
+test('"If it fails" maps onto the retry policy the engine runs', () => {
+  const step = { id: 'tests', node: { type: 'task', performer: { kind: 'program', run: 'make test' } } };
+  assert.deepEqual(stepFailure(step), { mode: 'fail', retries: 0 }, 'no policy: the run fails');
+  const held = setStepFailure(step, { mode: 'hold' });
+  assert.deepEqual(held.node.retry, { maxAttempts: 1 }, 'one attempt, then held');
+  assert.deepEqual(stepFailure(held), { mode: 'hold', retries: 0 });
+  const retried = setStepFailure(step, { mode: 'retry', retries: '2' });
+  assert.deepEqual(retried.node.retry, { maxAttempts: 3 }, 'the budget counts the first attempt');
+  assert.deepEqual(stepFailure(retried), { mode: 'retry', retries: 2 });
+  assert.equal(setStepFailure(step, { mode: 'retry', retries: 500 }).node.retry.maxAttempts, FAILURE_RETRIES_MAX + 1, 'the engine runs at most 100');
+  assert.equal(setStepFailure(step, { mode: 'retry', retries: 0 }).node.retry.maxAttempts, 2, 'at least one retry');
+  const feedback = { ...step, node: { ...step.node, retry: { maxAttempts: 4, onFail: 'feedback-same-session' } } };
+  assert.deepEqual(setStepFailure(feedback, { mode: 'retry', retries: 1 }).node.retry, { maxAttempts: 2, onFail: 'feedback-same-session' }, 'the full editor\'s mode stays');
+  assert.equal(setStepFailure(feedback, { mode: 'fail' }).node.retry, undefined);
+  assert.equal(step.node.retry, undefined, 'the step given is not changed');
 });

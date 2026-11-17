@@ -155,6 +155,16 @@ test('a gate carries its who as a caption under the diamond; a plain decision do
   assert.equal(m.draftProjection(gated, { whoOf }).nodes.find((n) => n.id === 'approve').caption, '2 deciders · all ship');
 });
 
+test('a step that retries if it fails projects its retries for the ↻N badge', () => {
+  const retrying = structuredClone(ship);
+  retrying.template.nodes.merge.retry = { maxAttempts: 3 };
+  retrying.template.nodes.implement.retry = { maxAttempts: 1 };
+  const run = m.draftProjection(retrying);
+  assert.equal(run.nodes.find((n) => n.id === 'merge').retries, 2);
+  assert.equal(run.nodes.find((n) => n.id === 'implement').retries, undefined, 'held without retrying: no badge');
+  assert.equal(run.nodes.find((n) => n.id === 'review').retries, undefined);
+});
+
 test('a bounded loop projects as a back edge carrying its bound', () => {
   const run = m.draftProjection(ship);
   const back = run.edges.find((e) => e.from === 'approve' && e.to === 'implement');
