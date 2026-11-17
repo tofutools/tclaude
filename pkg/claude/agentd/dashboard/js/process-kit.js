@@ -402,8 +402,15 @@ export function joinWaiting(run) {
   const out = new Map();
   for (const [id, edges] of into) {
     if (nodes.get(id)?.state !== 'pending' || !edges.some((edge) => edge.state === 'arrived')) continue;
-    const open = edges.filter((edge) => edge.state === 'unresolved').map((edge) => String(edge.from));
-    const names = [...new Set(open)].map((from) => nodes.get(from)?.label || from);
+    const open = new Set(edges.filter((edge) => edge.state === 'unresolved').map((edge) => String(edge.from)));
+    // A step reached only from another one still open (a track's "ask me"
+    // after its review) is that track: name the track once.
+    const enteredFrom = (id) => (run.edges || []).filter((edge) => String(edge.to) === id).map((edge) => String(edge.from));
+    for (const from of [...open]) {
+      const sources = enteredFrom(from);
+      if (sources.length && sources.every((source) => open.has(source) && source !== from)) open.delete(from);
+    }
+    const names = [...open].map((from) => nodes.get(from)?.label || from);
     if (names.length) out.set(id, names);
   }
   return out;

@@ -249,6 +249,8 @@ export function canRunAlongside(view, id) {
   if (!isStep(node)) return 'only a step runs alongside another';
   // A step that is already a track of a fork gets another track there.
   if (trackFork(view, id)) return '';
+  // A lone review gets another reviewer track beside it.
+  if (reviewLoop(view, id)) return canAddReviewerTrack(view, id);
   if (view.template.start === id || view.edges.some((edge) => edge.from === '' && edge.to === id)) return 'the first step has no step before it to fan out from';
   if (before(view, id).length !== 1) return 'it has several steps leading to it';
   const main = mainEdge(view, id);
@@ -469,6 +471,13 @@ export function setExhaustion(view, id, outcome, value) {
   if (!bound) throw new Error(`${outcome} does not go back`);
   const outcomes = outgoing(next, id).map((edge) => edge.outcome);
   let way = value;
+  // Leaving "ask me" removes the step it added, so it is not left behind as
+  // an outcome anyone could choose.
+  const asked = outgoing(next, id).find((edge) => edge.outcome === bound.onExhausted && isAskStep(next, edge.to));
+  if (asked && way !== asked.outcome && way !== ASK_YOU) {
+    dropAskStep(next, id);
+    if (way && !outgoing(next, id).some((edge) => edge.outcome === way) && way !== FAIL_RUN) throw new Error(`${way} is not an outcome of this step`);
+  }
   if (way === FAIL_RUN) way = addGiveUp(next, id);
   else if (way === ASK_YOU) way = addAskYou(next, id);
   else if (way && !outcomes.includes(way)) throw new Error(`${way} is not an outcome of this step`);
@@ -587,7 +596,7 @@ export function insertOnAnswer(view, id, outcome, kind) {
 export function runAlongside(view, id, kind) {
   const why = canRunAlongside(view, id);
   if (why) throw new Error(why);
-  if (kind === REVIEWER_TRACK) return addReviewerTrack(view, id);
+  if (kind === REVIEWER_TRACK || (reviewLoop(view, id) && !trackFork(view, id))) return addReviewerTrack(view, id);
   const into = trackFork(view, id);
   if (into) {
     const next = copyView(view);
@@ -673,7 +682,8 @@ function reviewSite(view, id) {
     const into = before(view, id).filter((f) => f !== reviewLoop(view, id).fix);
     const after = mainEdge(view, id)?.to;
     if (into.length !== 1 || !after) return { why: 'its review has no single step before it and after it' };
-    if (before(view, after).length !== 1) return { why: 'what comes after the review is already where several paths meet' };
+    // The review's own "ask me" step joins there too; that is fine.
+    if (before(view, after).filter((from) => !isAskStep(view, from)).length !== 1) return { why: 'what comes after the review is already where several paths meet' };
     return { reviewed: into[0], review: id, after };
   }
   if (!isStep(node) && node.type !== 'start') return { why: 'only a step\'s work is reviewed' };
@@ -740,16 +750,32 @@ export function addReviewerTrack(view, id) {
 // goes to a decision of yours, to count the work as passed or fail the run.
 export const ASK_YOU = '\u0000ask';
 
-// isAskStep says whether id is such a decision of yours: entered only by a
-// decision's used-up loop, with two answers, one of which fails the run.
+// isAskStep says whether id is such a decision of yours: entered only from
+// one decision, answering "count as approved" or "fail the run", the latter
+// into a failed end. It is known by its shape, so it stays one while no loop
+// goes to it.
+const ASK_ANSWERS = ['count as approved', 'fail the run'];
 function isAskStep(view, id) {
   const node = view.template.nodes[id];
   if (node?.type !== 'decision' || node.performer?.kind !== 'human') return false;
   const out = outgoing(view, id);
-  if (out.length !== 2 || !out.some((edge) => isFailedEnd(view.template.nodes[edge.to]))) return false;
+  if (out.length !== 2 || !ASK_ANSWERS.every((answer) => out.some((edge) => edge.outcome === answer))) return false;
+  if (!isFailedEnd(view.template.nodes[out.find((edge) => edge.outcome === 'fail the run').to])) return false;
   const into = incoming(view, id);
-  return into.length === 1 && Object.values(view.template.nodes[into[0].from]?.loops || {})
-    .some((bound) => bound?.onExhausted === into[0].outcome);
+  return into.length === 1 && view.template.nodes[into[0].from]?.type === 'decision';
+}
+
+// dropAskStep removes decision id's outcome to an ask step, the step, and a
+// failed end nothing leads to any more.
+function dropAskStep(view, id) {
+  const edge = outgoing(view, id).find((e) => isAskStep(view, e.to));
+  if (!edge) return;
+  const ask = edge.to;
+  const ends = outgoing(view, ask).map((e) => e.to);
+  view.edges = view.edges.filter((e) => e !== edge && e.from !== ask);
+  removeNode(view, ask);
+  for (const end of ends) if (isFailedEnd(view.template.nodes[end]) && !incoming(view, end).length) removeNode(view, end);
+  dropStaleJoins(view);
 }
 
 // addAskYou gives decision id an outcome to a decision of yours that counts
@@ -887,6 +913,13 @@ export function deleteStep(view, id) {
   const node = view.template.nodes[id];
   const next = copyView(view);
   const before = reachable(next);
+  // The fix of a loop that starts at its decision goes with the loop: the
+  // review's way back to it is dropped, not pointed at the review itself.
+  for (const decision of Object.keys(next.template.nodes)) {
+    const loop = reviewLoop(next, decision);
+    if (loop?.fix !== id) continue;
+    next.edges = next.edges.filter((edge) => !(edge.from === decision && edge.outcome === loop.outcome));
+  }
   const main = mainEdge(next, id);
   const target = main && main.to !== id ? main.to : '';
   next.edges = next.edges.filter((edge) => edge.from !== id);

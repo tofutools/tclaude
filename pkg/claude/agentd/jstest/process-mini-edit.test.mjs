@@ -95,6 +95,9 @@ function trackCases() {
     'reviewer-tracks-three': m.runAlongside(two.view, two.id, m.REVIEWER_TRACK).view,
     'reviewer-tracks-plain-track': fill(m.runAlongside(two.view, two.id, 'agent')),
     'reviewer-track-ask-me': m.setExhaustion(two.view, two.id, 'changes', m.ASK_YOU).view,
+    'reviewer-track-ask-me-left': m.setExhaustion(m.setExhaustion(two.view, two.id, 'changes', m.ASK_YOU).view, two.id, 'changes', m.FAIL_RUN).view,
+    'reviewer-track-ask-me-then-two': m.addReviewerTrack(m.setExhaustion(one.view, one.id, 'changes', m.ASK_YOU).view, 'implement').view,
+    'reviewer-track-fix-deleted': m.deleteStep(two.view, m.reviewLoop(two.view, two.id).fix).view,
   };
 }
 
@@ -611,4 +614,42 @@ test('a used-up agent track can ask you: count it as approved, or fail the run',
   assert.equal(m.mainEdge(view, two.id).outcome, 'approved', 'asking you is not the review\'s way on');
   assert.deepEqual(m.exhaustionOptions(view, two.id, 'changes').map((o) => [o.label, o.value === way]),
     [['fail the run', false], ['ask me', true]]);
+});
+
+const outs = (view, id) => view.edges.filter((e) => e.from === id);
+
+test('leaving "ask me" removes its step; choosing it again adds one', () => {
+  const two = m.addReviewerTrack(m.addReviewerTrack(ship, 'implement').view, 'implement');
+  const asked = m.setExhaustion(two.view, two.id, 'changes', m.ASK_YOU).view;
+  const failing = m.setExhaustion(asked, two.id, 'changes', m.FAIL_RUN).view;
+  assert.deepEqual(outs(failing, two.id).map((e) => e.outcome).sort(), ['approved', 'changes', 'give-up'], 'no ask-you outcome is left');
+  const humans = (view) => Object.values(view.template.nodes).filter((node) => node.performer?.kind === 'human').length;
+  assert.equal(humans(failing), humans(two.view), 'the ask step is gone');
+  assert.deepEqual(m.exhaustionOptions(failing, two.id, 'changes').map((o) => o.label), ['fail the run', 'ask me']);
+  assert.equal(m.canRunAlongside(failing, two.id), '');
+  const again = m.setExhaustion(failing, two.id, 'changes', m.ASK_YOU).view;
+  assert.equal(humans(again), humans(two.view) + 1, 'one ask step');
+});
+
+test('a second reviewer track can follow "ask me" on the first', () => {
+  const one = m.addReviewerTrack(ship, 'implement');
+  const asked = m.setExhaustion(one.view, one.id, 'changes', m.ASK_YOU).view;
+  assert.equal(m.canAddReviewerTrack(asked, 'implement'), '');
+  const two = m.addReviewerTrack(asked, 'implement');
+  assert.equal(two.view.template.nodes[m.mainEdge(two.view, one.id).to].join, 'all');
+});
+
+test('deleting a track\'s fix drops its review\'s loop too', () => {
+  const one = m.addReviewerTrack(ship, 'implement');
+  const fix = m.reviewLoop(one.view, one.id).fix;
+  const { view } = m.deleteStep(one.view, fix);
+  assert.ok(!outs(view, one.id).some((e) => e.to === one.id), 'the review does not loop onto itself');
+  assert.ok(!outs(view, one.id).some((e) => e.outcome === 'changes'));
+});
+
+test('alongside on a lone review adds a second reviewer track', () => {
+  const one = m.addReviewerTrack(ship, 'implement');
+  assert.equal(m.canRunAlongside(one.view, one.id), '');
+  const two = m.runAlongside(one.view, one.id, 'agent');
+  assert.equal(Object.keys(two.view.template.nodes).filter((id) => m.reviewLoop(two.view, id)).length, 2);
 });

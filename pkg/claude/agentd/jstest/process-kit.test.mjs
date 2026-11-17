@@ -330,6 +330,11 @@ test('a join some tracks reached says which it still waits for', async (t) => {
   none.edges[0].state = 'unresolved';
   assert.equal(mod.joinWaiting(none).size, 0, 'no track arrived yet');
   assert.equal(mod.joinWaiting({ nodes: [{ id: 'x', state: 'pending' }], edges: [{ from: 'y', to: 'x' }] }).size, 0, 'a template has no edge states');
+  const asking = tracksRun();
+  asking.nodes.push({ id: 'ask-b', label: 'Review 2: rounds used up', kind: 'decision', state: 'pending', performer: { kind: 'human' } });
+  asking.edges.push({ from: 'review-b', to: 'ask-b', label: 'ask-you', state: 'unresolved' },
+    { from: 'ask-b', to: 'signoff', label: 'count as approved', state: 'unresolved' });
+  assert.deepEqual([...mod.joinWaiting(asking)], [['signoff', ['Review 2']]], 'a track\'s "ask me" is named as its track');
 
   const mounted = await harness.mount(harness.html`<${mod.ProcessMiniGraph} run=${tracksRun()} onNodeClick=${() => {}} />`);
   const wait = mounted.container.querySelector('[data-process-join-waiting]');
