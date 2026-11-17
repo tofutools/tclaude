@@ -141,8 +141,14 @@ for (const [phone, device] of Object.entries(PHONES)) {
         await sheet.getByRole('button', { name: 'Tree', exact: true }).click();
         await closeView(page);
 
-        // The name, not the caret, opens the group's page.
-        await node('webshop').locator(':scope > h2 .phone-agents-fold').click();
+        // A tap on the name folds the group (tk_3aa23770); its ⋯ opens its page.
+        const fold = node('webshop').locator(':scope > h2 .phone-agents-fold');
+        const was = await fold.getAttribute('aria-expanded');
+        await fold.click();
+        await expect(fold).not.toHaveAttribute('aria-expanded', was);
+        await fold.click();
+        await expect(fold).toHaveAttribute('aria-expanded', was);
+        await page.getByRole('button', { name: 'Group webshop: more', exact: true }).click();
         await expect(page.locator('.phone-bar-title')).toHaveText('webshop');
         const view = page.locator('.phone-group-page');
         await expect(view.locator('.phone-agents-subcard', { hasText: SUB })).toBeVisible();
@@ -167,7 +173,7 @@ for (const [phone, device] of Object.entries(PHONES)) {
         await back.click();
         await expect(view).toHaveCount(0);
         // The browser's Back (a phone's back gesture) does the same.
-        await node('webshop').locator(':scope > h2 .phone-agents-fold').click();
+        await page.getByRole('button', { name: 'Group webshop: more', exact: true }).click();
         await view.locator('.phone-agents-subcard', { hasText: SUB }).click();
         await expect(page.locator('.phone-bar-title')).toHaveText(SUB);
         await page.goBack();
@@ -262,8 +268,8 @@ test.describe('iPhone 13 header and offline', () => {
       await steady(rootHead, 'top level');
       await shot(page, 'iphone-13-tree-caret');
 
-      // The name opens the group's page.
-      await rootHead.locator('.phone-agents-fold').click();
+      // Its ⋯ opens the group's page.
+      await rootHead.getByRole('button', { name: 'Group webshop: more', exact: true }).click();
       await expect(page.locator('.phone-bar-title')).toHaveText('webshop');
       await page.getByRole('button', { name: 'Back', exact: true }).click();
       await expect(page.locator('.phone-group-page')).toHaveCount(0);
