@@ -175,20 +175,69 @@ function useDocumentVisible(documentRef) {
   return visible;
 }
 
+// KEYBOARD_SETTLE_MS is how long the terminal waits, once a compose field
+// lets go of the keyboard, for the screen to grow back before it refits
+// anyway (a keyboard that stays up, a rotation).
+export const KEYBOARD_SETTLE_MS = 800;
+
+// composingOutside says whether the keyboard belongs to a field outside the
+// terminal: a sheet's input (✉ Message, Type into, a reply), not the
+// terminal's own.
+export function composingOutside(documentRef, root) {
+  const el = documentRef?.activeElement;
+  if (!el || el === documentRef.body || root?.contains?.(el)) return false;
+  return el.isContentEditable === true || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName || '');
+}
+
 // The part of the screen the on-screen keyboard leaves, so the key strip
-// rides above the keyboard while ⌨ is on.
-function useVisualViewport(windowRef) {
+// rides above the keyboard while ⌨ is on (tk_1e2337c3). A keyboard raised for
+// a sheet's own field over the terminal does not shrink it: the box keeps its
+// size while that field has focus, so the terminal is not refitted and the
+// agent's screen is not resized. Once the field lets go, the box follows the
+// screen again when it has grown back (or after KEYBOARD_SETTLE_MS): one
+// refit, not one per step of the keyboard closing.
+function useTerminalBox(windowRef, documentRef, rootRef) {
   const viewport = windowRef?.visualViewport;
   const read = () => (viewport ? { height: viewport.height, top: viewport.offsetTop } : null);
   const [box, setBox] = useState(read);
+  const shown = useRef(box);
   useEffect(() => {
     if (!viewport) return undefined;
-    const sync = () => setBox(read());
+    let held = null;
+    let settle = null;
+    const stopSettle = () => { if (settle !== null) { (windowRef.clearTimeout ? windowRef : globalThis).clearTimeout(settle); settle = null; } };
+    const show = (next) => {
+      if (shown.current && next && shown.current.height === next.height && shown.current.top === next.top) return;
+      shown.current = next;
+      setBox(next);
+    };
+    const sync = () => {
+      const now = read();
+      if (composingOutside(documentRef, rootRef.current)) {
+        if (!held) held = shown.current || now;
+        stopSettle();
+        return;
+      }
+      if (held) {
+        if (now.height < held.height - 1) {
+          if (settle === null) settle = (windowRef.setTimeout ? windowRef : globalThis).setTimeout(() => { settle = null; held = null; show(read()); }, KEYBOARD_SETTLE_MS);
+          return;
+        }
+        held = null;
+        stopSettle();
+      }
+      show(now);
+    };
     viewport.addEventListener('resize', sync);
     viewport.addEventListener('scroll', sync);
+    documentRef.addEventListener('focusin', sync);
+    documentRef.addEventListener('focusout', sync);
     return () => {
+      stopSettle();
       viewport.removeEventListener('resize', sync);
       viewport.removeEventListener('scroll', sync);
+      documentRef.removeEventListener('focusin', sync);
+      documentRef.removeEventListener('focusout', sync);
     };
   }, [viewport]);
   return box;
@@ -278,7 +327,8 @@ export function dirShellTitle(seed, row) {
 export function PhoneTerminal({ seed, deps, onClose }) {
   const documentRef = deps.documentRef || globalThis.document;
   const visible = useDocumentVisible(documentRef);
-  const viewport = useVisualViewport(deps.windowRef || globalThis.window);
+  const rootRef = useRef(null);
+  const viewport = useTerminalBox(deps.windowRef || globalThis.window, documentRef, rootRef);
   const key = seed.key || seed.ws;
   const [font, setFont] = useTerminalFont(FONT_SURFACE, key, deps.prefs);
   // The pinch chip waits for the widget's size: until then the hook holds
@@ -392,7 +442,7 @@ export function PhoneTerminal({ seed, deps, onClose }) {
   const dirShell = dirShellTitle(seed, row);
 
   const style = viewport ? `height:${viewport.height}px;top:${viewport.top}px` : undefined;
-  return html`<div class="phone-term" role="dialog" aria-modal="true" aria-label=${dirShell ? dirShell.label : label ? `Terminal: ${label}` : 'Terminal'} style=${style}>
+  return html`<div ref=${rootRef} class="phone-term" role="dialog" aria-modal="true" aria-label=${dirShell ? dirShell.label : label ? `Terminal: ${label}` : 'Terminal'} style=${style}>
     <header class="phone-term-bar">
       <button data-ui-exempt type="button" class="phone-bar-back" aria-label="Back" onClick=${onClose}>‹</button>
       ${dirShell
