@@ -385,13 +385,16 @@ let headsPending = false;
 export async function observeFloatingHeads(fetchImpl = globalThis.fetch) {
   if (headsPending || !floating.size) return false;
   headsPending = true;
+  // What each editor had saved when the read began: one saved (or first
+  // saved) meanwhile is not judged by a list that predates it.
+  const before = new Map([...floating].map(([id, { editor }]) => [id, editor?.model?.sourceHash || '']));
   try {
     const response = await fetchImpl('/v1/process/template-heads', { credentials: 'same-origin', cache: 'no-store' });
     if (!response.ok) return false;
     const heads = (await response.json())?.heads || [];
     for (const [id, { editor }] of floating) {
       const head = heads.find((candidate) => candidate.id === id);
-      if (!head && editor?.model?.template?.id === id) editor.observeTemplateDeleted?.();
+      if (!head && editor?.model?.template?.id === id && before.get(id) && editor.model.sourceHash === before.get(id)) editor.observeTemplateDeleted?.();
       if (head?.ref && head?.sourceHash && editor?.model?.template?.id === id) editor.observeExternalHead?.(head);
     }
     return true;

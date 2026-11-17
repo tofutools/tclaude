@@ -1029,15 +1029,36 @@ const withoutShip = () => ({
   groups: [{ ...SAVED_CONTEXT.groups[0], processes: SAVED_CONTEXT.groups[0].processes.filter((p) => p.templateId !== 'tmpl_ship') }],
 });
 
-test('a process that leaves the group closes its open editor, which saves nothing more', async (t) => {
+test('a process deleted elsewhere closes its open editor once its head is gone; one still there stays open', async (t) => {
   const { api, card, node, click, setValue, notes, source, settle, harness } = await openMini(t);
+  let head = 'there';
+  api.getTemplateHead = async () => { if (head === 'gone') throw Object.assign(new Error('no such process template'), { status: 404 }); return { sourceHash: 'h1' }; };
   await click(node('review'));
   await setValue(card().querySelector('[data-mini-inspector="review"] [data-mini-name]'), 'Security review', 'change');
+  // Unpinned or moved elsewhere (or the list briefly unreadable): it still
+  // exists, and its unsaved edit stays open.
+  await harness.act(() => { source.context.value = withoutShip(); });
+  await settle();
+  assert.ok(card(), 'still open: the template exists');
+  assert.ok(!notes.some((note) => /its editor closed/.test(note.message)));
+  // Deleted (another tab, node or the CLI): it closes and is not saved back.
+  await harness.act(() => { source.context.value = SAVED_CONTEXT; });
+  await settle();
+  head = 'gone';
   await harness.act(() => { source.context.value = withoutShip(); });
   await settle();
   assert.equal(card(), null, 'the editor closed');
-  assert.match(notes.at(-1).message, /ship-feature is no longer in webshop; its editor closed/);
+  assert.match(notes.at(-1).message, /ship-feature was deleted; its editor closed/);
   assert.equal(api.calls.save.length, 0, 'its edit was not saved back');
+  assert.equal(api.calls.remove.length, 0, 'nor discarded as a draft');
+});
+
+test('removing the open process here (🗑 or the bin) closes its editor', async (t) => {
+  const { root, api, card, click } = await openMini(t);
+  await click(root.querySelector('[data-saved-remove-chip="tmpl_ship"]'));
+  await click(root.querySelector('[data-saved-remove-confirm]'));
+  assert.deepEqual(api.calls.unpin, [{ group: 'webshop', id: 'tmpl_ship' }]);
+  assert.equal(card(), null, 'the editor on it closed');
 });
 
 test('a save that finds the template deleted closes the editor instead of saving it back', async (t) => {
