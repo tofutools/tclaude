@@ -53,3 +53,11 @@ test('what a rule cannot read is refused, as the engine does', () => {
     assert.throws(() => r.parseCondition(when), when);
   }
 });
+
+test('the row edits leave a condition the rows cannot show alone', () => {
+  const rule = { cases: [{ when: 'steps.a.result == failed or params.x == y', then: 'fix' }], else: 'hold' };
+  const operands = [{ value: 'steps.a.result', values: r.STEP_RESULTS }];
+  assert.deepEqual(r.withAnd(rule, operands, 0), rule);
+  assert.deepEqual(r.withRow(rule, operands, 0, 0, { cmp: '!=' }), rule);
+  assert.deepEqual(r.withoutRow(rule, 0, 0), rule);
+});

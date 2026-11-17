@@ -198,3 +198,102 @@ export function choiceWords(rule, stepName = (id) => id) {
   const read = Object.entries(choice.read || {}).map(([operand, value]) => `${operandWords(operand, stepName)} = ${value}`).join(' · ');
   return { said, read };
 }
+
+// ruleOperands are what a rule at id can read, for the rows' first picker:
+// the results (and a command's exit code) of the steps before it, nearest
+// first, the outputs they report, and the process's params. Each has the
+// values it can take when they are few (a step's result, a boolean param),
+// or null for free text. view is {template, edges}: an inline editor view
+// or the full editor's model.
+export function ruleOperands(view, id) {
+  const nodes = view.template.nodes;
+  // Breadth-first from the rule, so the step just before it comes first.
+  const distance = new Map();
+  let frontier = [id];
+  for (let hops = 1; frontier.length; hops += 1) {
+    const next = [];
+    for (const at of frontier) {
+      for (const edge of view.edges) {
+        if (edge.to === at && edge.from && edge.from !== id && !distance.has(edge.from)) {
+          distance.set(edge.from, hops);
+          next.push(edge.from);
+        }
+      }
+    }
+    frontier = next;
+  }
+  const upstream = [...distance.keys()].sort((a, b) => distance.get(a) - distance.get(b) || a.localeCompare(b));
+  const name = (stepID) => nodes[stepID]?.name || stepID;
+  const operands = [];
+  for (const stepID of upstream) {
+    const step = nodes[stepID];
+    if (step?.type !== 'task') continue;
+    operands.push({ value: `steps.${stepID}.result`, label: `${name(stepID)} · result`, values: STEP_RESULTS });
+    if (step.performer?.kind === 'program' && !step.plan && !step.checks?.length && !step.review) {
+      operands.push({ value: `steps.${stepID}.exitCode`, label: `${name(stepID)} · exit code`, values: null });
+    }
+  }
+  for (const stepID of upstream) {
+    for (const output of nodes[stepID]?.captures || []) operands.push({ value: `outputs.${output}`, label: `output · ${output}`, values: null });
+  }
+  for (const [param, spec] of Object.entries(view.template.params || {}).sort(([a], [b]) => a.localeCompare(b))) {
+    const boolean = spec?.type === 'boolean' || spec?.type === 'bool';
+    operands.push({ value: `params.${param}`, label: `param · ${param}`, values: boolean ? ['true', 'false'] : null });
+  }
+  return operands;
+}
+
+// seedRule is a new rule's cases and else for decision id: one case on the
+// nearest thing it can read, picking its first outcome, and else its next
+// way that does not loop back (loopsBack(outcome)).
+export function seedRule(view, id, loopsBack = () => false) {
+  const outcomes = view.edges.filter((edge) => edge.from === id).map((edge) => edge.outcome);
+  const first = ruleOperands(view, id)[0];
+  const when = first ? `${first.value} == ${first.values?.[0] || 'yes'}` : '';
+  const ways = outcomes.filter((outcome) => !loopsBack(outcome));
+  return { cases: [{ when, then: outcomes[0] || '' }], else: ways.find((o) => o !== outcomes[0]) || ways[0] || outcomes[0] || '' };
+}
+
+// blankRow is the row "+ and" or "+ another case" adds: the nearest operand
+// the case does not read yet.
+export function blankRow(operands, rows = []) {
+  const used = new Set(rows.map((row) => row.operand));
+  const pick = operands.find((operand) => !used.has(operand.value)) || operands[0];
+  return { operand: pick?.value || '', cmp: '==', value: pick?.values?.[0] || 'yes' };
+}
+
+// The rows' edits, as RuleCases makes them, on a rule ({cases, else}); each
+// returns the new rule. A case whose condition the rows cannot show is left
+// alone by the row edits.
+const mapCase = (rule, index, change) => ({
+  ...rule, cases: (rule.cases || []).map((c, i) => (i === index && toRows(c.when) ? { ...c, ...change(c) } : c)),
+});
+
+// withRow changes one row of case `index`: picking what it reads also
+// picks that operand's first value when it has few.
+export function withRow(rule, operands, index, row, change) {
+  return mapCase(rule, index, (c) => {
+    const rows = toRows(c.when) || [];
+    const picked = change.operand && operands.find((o) => o.value === change.operand);
+    rows[row] = { ...rows[row], ...change, ...(picked?.values && change.value === undefined ? { value: picked.values[0], cmp: '==' } : {}) };
+    return { when: fromRows(rows) };
+  });
+}
+
+// withoutRow drops one row of case `index`.
+export function withoutRow(rule, index, row) {
+  return mapCase(rule, index, (c) => ({ when: fromRows((toRows(c.when) || []).filter((_, j) => j !== row)) }));
+}
+
+// withAnd is a case's "+ and": a row on the nearest thing it does not read yet.
+export function withAnd(rule, operands, index) {
+  return mapCase(rule, index, (c) => {
+    const rows = toRows(c.when) || [];
+    return { when: fromRows([...rows, blankRow(operands, rows)]) };
+  });
+}
+
+// withCase is "+ another case", picking `then`.
+export function withCase(rule, operands, then) {
+  return { ...rule, cases: [...(rule.cases || []), { when: fromRows([blankRow(operands)]), then }] };
+}

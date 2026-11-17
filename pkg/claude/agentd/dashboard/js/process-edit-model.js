@@ -71,8 +71,11 @@ export function blankSubprocessBody() {
   };
 }
 
+// A new task comes with an agent doing it, as most do: no separate "add
+// work performer" step before its prompt can be written.
 export function defaultNode(type) {
   const node = { type };
+  if (type === 'task') node.performer = { kind: 'agent' };
   if (type === 'end') node.result = 'success';
   if (type === 'subprocess') node.subprocess = blankSubprocessBody();
   return node;

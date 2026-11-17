@@ -57,11 +57,11 @@ export const NODE_BLOCKS = [
     present: (node, context) => (context?.inputs?.captures?.length || 0) > 0,
   },
   {
-    key: 'retry', label: 'Retry · patience', icon: '↻',
+    key: 'retry', label: 'If it fails · patience', icon: '↻',
     kinds: ['task'],
-    hint: 'How many attempts the work gets, how a failed attempt restarts, and how long the step may stay stuck before its overseer hears',
-    present: (node) => !!node.retry || !!node.patience,
-    clear: (node) => { delete node.retry; delete node.patience; },
+    hint: 'What a failure does (fail the run, hold it, retry, or go on as failed for a rule to see), how a failed attempt restarts, and how long the step may stay stuck before its overseer hears',
+    present: (node) => !!node.retry || !!node.patience || !!node.mayFail,
+    clear: (node) => { delete node.retry; delete node.patience; delete node.mayFail; },
   },
   {
     key: 'captures', label: 'Outputs', icon: '⇤',
@@ -89,7 +89,8 @@ export const NODE_BLOCKS = [
     key: 'bounds', label: 'Bounds', icon: '🛡',
     kinds: ['task', 'decision'],
     hint: 'Performer timeout and contact schedule (nudge cadence, budget, escalation)',
-    available: (node) => !node.deciders?.length,
+    // A rule runs at once: it has no timeout and nobody to contact.
+    available: (node) => !node.deciders?.length && node.performer?.kind !== 'rule',
     present: (node) => !!(node.performer?.timeout || node.performer?.contact),
     clear: (node) => clearPerformerKeys(node, ['timeout', 'contact']),
   },

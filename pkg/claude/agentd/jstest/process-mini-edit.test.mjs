@@ -672,11 +672,11 @@ test('alongside on a lone review adds a second reviewer track', () => {
 test('a decision decided by a rule: cases on what ran before, then else', () => {
   const { view } = m.setDecisionWho(ship, 'approve', { mode: 'rule' });
   const rule = view.template.nodes.approve.performer;
-  assert.deepEqual(rule, { kind: 'rule', cases: [{ when: 'steps.implement.result == succeeded', then: 'ship' }], else: 'hold' });
+  assert.deepEqual(rule, { kind: 'rule', cases: [{ when: 'steps.review.result == succeeded', then: 'ship' }], else: 'hold' });
   assert.equal(m.miniKind(view.template.nodes.approve), 'rule');
   assert.equal(view.template.nodes.approve.loops.changes.onExhausted, 'hold', 'its loop keeps a way out');
   assert.deepEqual(m.ruleOperands(view, 'approve').map((o) => o.value),
-    ['steps.implement.result', 'steps.review.result', 'params.issue'], 'the steps before it and the params');
+    ['steps.review.result', 'steps.implement.result', 'params.issue'], 'the steps before it, nearest first, and the params');
   const renamed = m.renameOutcome(view, 'approve', 'ship', 'merge').view;
   assert.equal(renamed.template.nodes.approve.performer.cases[0].then, 'merge', 'a renamed outcome follows into the rule');
   assert.throws(() => m.setRule(view, 'approve', { cases: [{ when: 'params.issue == x', then: 'nope' }], else: 'hold' }), /not an outcome/);

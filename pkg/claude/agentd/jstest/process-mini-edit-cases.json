@@ -5370,7 +5370,7 @@
        "kind": "rule",
        "cases": [
         {
-         "when": "steps.implement.result == succeeded",
+         "when": "steps.review.result == succeeded",
          "then": "ship"
         }
        ],

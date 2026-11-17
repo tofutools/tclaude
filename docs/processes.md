@@ -655,11 +655,13 @@ from* under it fills it: a [built-in way of working](#built-in-ways-of-working)
 *More ways of working ›* (a library template). The inline inspector keeps to
 the essentials (what, who, if nobody takes it, if it fails, then). *If it
 fails*, on agent and command steps, is *fail the run* (the default), *hold it
-for me* (the step waits, blocked, for you to retry, skip or cancel it), or
-*retry N×, then hold it for me*; it saves as the step's `retry.maxAttempts`
-(1, or N+1), and a step that retries shows ↻N on the graph. To send a
-failure somewhere, make the step `mayFail` and put a rule decision after it
-(see [Rule decisions](#rule-decisions)). A decision's *Who* can be *a rule*:
+for me* (the step waits, blocked, for you to retry, skip or cancel it),
+*retry N×, then hold it for me*, or *go on as failed, for a rule to see*.
+Holding and retrying save as the step's `retry.maxAttempts` (1, or N+1),
+and a step that retries shows ↻N on the graph. Going on saves as `mayFail`
+(not offered on a step with plan, check or review stages): to send a
+failure somewhere, pick it and put a rule decision after it (see
+[Rule decisions](#rule-decisions)). A decision's *Who* can be *a rule*:
 its cases are rows, each made of what it reads (an earlier step's result or
 exit code, an output, a param), a comparison and a value. *+ and* adds a
 condition to a case, *+ another case* adds a case, and *else* names the
@@ -785,7 +787,12 @@ reached says which it still waits for (*⧗ waiting for Review 2*).
 
 **Authoring** (Automations › Processes, then open a template). The graph
 editor has the node inspector, live validation, undo/redo, snippets and
-versioned saves; see [Dashboard › Processes](dashboard-automations.md#processes). Three
+versioned saves; see [Dashboard › Processes](dashboard-automations.md#processes). Its
+node inspector shares the inline editor's rule rows and *If it fails* row:
+a decision's Performer kind can be *rule*, whose cases show both as rows and
+as text (the text is how a condition with *or*, *not* or parentheses is
+written), and a task's *If it fails · patience* block can make it go on as
+failed. A task added on the canvas comes with an agent doing it. Three
 things there are specific to processes:
 
 - **Co-design with a scribe.** The editor header's *Get help ▾* brings an

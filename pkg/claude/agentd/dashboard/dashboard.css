@@ -18315,6 +18315,13 @@ body.wizard .gq-fallback { background: #1a1430; border-color: rgba(122, 93, 176,
 .gm-rule-and { color: #8b949e; font-size: 12px; min-width: 26px; text-align: right; }
 .gm-rule-arrow { color: #a371f7; }
 .gm-rule-value { width: 90px; padding: 1px 5px; }
+.gm-rule-when { flex: 1 1 220px; min-width: 0; padding: 1px 5px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+.gm-rule-as-text { width: 100%; }
+/* The full editor's rule block: its label over the shared rows. */
+.process-node-rule { display: flex; flex-direction: column; gap: 4px; }
+.process-node-rule > span { font-size: 12px; color: #8b949e; }
+.process-node-rule input { font: inherit; font-size: 12px; border: 1px solid #30363d; border-radius: 6px; padding: 3px 7px; background: #0d1117; color: #e6edf3; min-width: 0; }
+body.wizard .process-node-rule input { background: #1a1430; border-color: rgba(122, 93, 176, 0.5); color: #e7d9f5; }
 .gm-rule-text { font-size: 12px; color: #d2a8ff; }
 .gm-rule-words { border: 1px solid #238636; background: rgba(35, 134, 54, 0.12); color: #7ee787; border-radius: 6px; padding: 4px 8px; font-size: 12px; }
 /* A gate's deciders, one row each (process-gate-deciders.js): ▸ opens the

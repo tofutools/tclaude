@@ -19,7 +19,13 @@ import {
   defaultPerformer, setStageEnabled, setPlanApproval, addCheck, removeCheck, moveCheck, setCheckID,
   setRetryField, setCaptures, setWaitField, setNodeText, formatLines,
   MAX_GATE_DECIDERS, addGateDecider, removeGateDecider,
+  DECISION_KINDS, RULE_KIND, setDecisionKind, setNodeFailure, setRule,
 } from './process-node-form.js';
+import { ruleOperands } from './process-rules.js';
+import { RuleCases } from './process-rule-cases.js';
+import { loopBound } from './process-loops.js';
+import { FailureRow } from './process-failure-row.js';
+import { stepFailure } from './process-step-list.js';
 import {
   nodeBlock, visibleBlocks, addableBlocks, removeBlock, moveKey, moveKeyBefore, mergeOrder,
   upstreamInputs, stageSummary,
@@ -93,16 +99,31 @@ function DecidersBlock({ node, commit, readOnly, edges }) {
   </div>`;
 }
 
-function PerformerBlock({ node, commit, readOnly, edges }) {
+// RuleBlock edits a rule decision's cases with the inline editor's rows,
+// plus each case's condition as text, which is how one with or, not or
+// parentheses is written.
+function RuleBlock({ node, nodeId, model, commit, readOnly, edges }) {
+  return html`<${RuleCases} rule=${node.performer} outcomes=${edges.map((edge) => edge.outcome)}
+    operands=${ruleOperands(model, nodeId)} loopsBack=${(outcome) => !!loopBound(node, outcome)}
+    stepName=${(id) => model.node(id)?.name || id} readOnly=${readOnly} editText=${true}
+    label="cases" fieldClass="process-node-rule"
+    onChange=${(rule) => commit('performer.rule', (draft) => setRule(draft.performer, rule))} />`;
+}
+
+function PerformerBlock({ node, nodeId, controller, commit, readOnly, edges }) {
   const type = node.type || 'task';
+  const model = controller.model;
+  const rule = type === 'decision' && node.performer?.kind === RULE_KIND;
   if (type === 'decision' && node.deciders?.length) return html`<${DecidersBlock} node=${node} commit=${commit} readOnly=${readOnly} edges=${edges} />`;
   if (type === 'task' && !node.performer && !readOnly) {
     return html`<${Button} size="sm" class="process-action process-node-add"
       onClick=${() => commit('work.add', (draft) => { draft.performer = defaultPerformer('agent'); })}>add work performer<//>`;
   }
   return html`<${PerformerEditor} path="performer" locate=${locateMain(type)} performer=${mainPerformer(node)}
-    commit=${commit} readOnly=${readOnly} choiceRouting=${type !== 'decision'} omit=${[...PROMPT_FIELDS, ...BOUNDS_FIELDS]} />
-    ${type === 'decision' && !readOnly && node.performer?.kind !== 'program' && edges.length > 1 && html`<${Button} size="sm" class="process-action process-node-add" data-node-add-decider
+    commit=${commit} readOnly=${readOnly} choiceRouting=${type !== 'decision'} omit=${[...PROMPT_FIELDS, ...BOUNDS_FIELDS]}
+    ...${type === 'decision' ? { kinds: DECISION_KINDS, setKind: (slot, kind, draft) => setDecisionKind(model, nodeId, draft, slot, kind) } : {}} />
+    ${rule && html`<${RuleBlock} node=${node} nodeId=${nodeId} model=${model} commit=${commit} readOnly=${readOnly} edges=${edges} />`}
+    ${type === 'decision' && !readOnly && node.performer?.kind !== 'program' && !rule && edges.length > 1 && html`<${Button} size="sm" class="process-action process-node-add" data-node-add-decider
       title="Several decide together, and all must agree" onClick=${() => commit('deciders.add', (draft) => addGateDecider(draft, edges.map((edge) => edge.outcome)))}>+ another decider<//>`}`;
 }
 
@@ -159,8 +180,13 @@ function InputsBlock({ inputs }) {
   </div>`;
 }
 
-function RetryBlock({ node, commit, readOnly }) {
-  return html`<div class="pni-row">
+function RetryBlock({ node, nodeId, commit, readOnly }) {
+  // "If it fails" is the inline editor's row, on the steps it is for there:
+  // an agent's or a command's work.
+  const failing = (node.performer?.kind || 'agent') !== 'human';
+  return html`${failing && !readOnly && html`<${FailureRow} id=${nodeId} failure=${stepFailure({ node })} staged=${!!(node.plan || node.checks?.length || node.review)}
+      onChange=${(failure) => commit('failure', (draft) => setNodeFailure(draft, failure))} />`}
+    <div class="pni-row">
     <${NodeField} fieldKey="retry.maxAttempts" label="max attempts" placeholder="unset" readOnly=${readOnly}
       value=${node.retry?.maxAttempts === undefined ? '' : String(node.retry.maxAttempts)}
       apply=${(key, raw) => commit(key, (draft) => setRetryField(draft, 'maxAttempts', raw))} />

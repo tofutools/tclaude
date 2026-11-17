@@ -194,7 +194,7 @@ test('removing an optional block clears its slice as one undoable edit', async (
   await set('patience', '45m');
   assert.equal(editor.model.node('build').patience, '45m', 'the step\'s patience sits beside its retry');
   assert.ok(blocks().includes('retry'));
-  await click('[aria-label="Remove Retry · patience"]');
+  await click('[aria-label="Remove If it fails · patience"]');
   assert.equal(editor.model.node('build').retry, undefined);
   assert.equal(editor.model.node('build').patience, undefined);
   assert.ok(!blocks().includes('retry'));
@@ -272,4 +272,85 @@ test('a decision takes another decider and edits as a gate', async (t) => {
   gate = ctx.editor.model.saveBody().template.nodes.gate;
   assert.equal(gate.deciders, undefined);
   assert.deepEqual(gate.performer, { kind: 'human', ask: 'Ship it?', choices: ['yes', 'no'] });
+});
+
+test('a decision can be decided by a rule: rows, its condition as text, and no prompt or bounds', async (t) => {
+  const ctx = await openEditor(t);
+  await ctx.open('gate');
+  await ctx.set('performer.kind', 'rule');
+  let gate = ctx.editor.model.saveBody().template.nodes.gate;
+  assert.deepEqual(gate.performer, { kind: 'rule', cases: [{ when: 'steps.build.result == succeeded', then: 'yes' }], else: 'no' },
+    'one case on the step just before it; the question goes');
+  assert.ok(!ctx.blocks().includes('prompt') && !ctx.blocks().includes('bounds'), 'a rule asks nobody and runs at once');
+  assert.equal(ctx.dock().querySelector('[data-node-add-decider]'), null, 'a rule takes no other deciders');
+  assert.equal(ctx.dock().querySelector('[data-mini-rule-words]').textContent, 'Build succeeded → yes · otherwise → no');
+
+  const value = ctx.dock().querySelector('[data-mini-rule-row="0.0"] select[aria-label="The value"]');
+  Object.defineProperty(value, 'value', { configurable: true, writable: true, value: 'failed' });
+  await ctx.harness.act(() => ctx.harness.fireEvent(value, 'change'));
+  assert.equal(ctx.editor.model.saveBody().template.nodes.gate.performer.cases[0].when, 'steps.build.result == failed');
+
+  await ctx.click('[data-mini-rule-and="0"]');
+  assert.equal(ctx.dock().querySelectorAll('[data-mini-rule-case="0"] [data-mini-rule-row]').length, 2, '+ and adds a row');
+  assert.equal(ctx.editor.model.saveBody().template.nodes.gate.performer.cases[0].when, 'steps.build.result == failed and steps.spec.result == succeeded');
+  const reads = ctx.dock().querySelector('[data-mini-rule-row="0.1"] select[aria-label="What the rule reads"]');
+  Object.defineProperty(reads, 'value', { configurable: true, writable: true, value: 'outputs.spec' });
+  await ctx.harness.act(() => ctx.harness.fireEvent(reads, 'change'));
+  const free = ctx.dock().querySelector('[data-mini-rule-row="0.1"] input[aria-label="The value"]');
+  assert.equal(free.getAttribute('title'), 'A value cannot hold both \' and "', 'an output takes free text, with its hint intact');
+  assert.equal(free.getAttribute('aria-label'), 'The value');
+  await ctx.click('[data-mini-rule-row="0.1"] [aria-label="Remove this condition"]');
+  const text = ctx.dock().querySelector('[data-mini-rule-when="0"]');
+  Object.defineProperty(text, 'value', { configurable: true, writable: true, value: 'steps.build.result == failed or params.ticket == none' });
+  await ctx.harness.act(() => ctx.harness.fireEvent(text, 'change'));
+  gate = ctx.editor.model.saveBody().template.nodes.gate;
+  assert.equal(gate.performer.cases[0].when, 'steps.build.result == failed or params.ticket == none');
+  assert.equal(ctx.dock().querySelector('[data-mini-rule-row="0.0"]'), null, 'an or shows as text only');
+
+  await ctx.set('performer.kind', 'agent');
+  assert.deepEqual(ctx.editor.model.saveBody().template.nodes.gate.performer, { kind: 'agent' }, 'the cases go with the rule');
+});
+
+test('a task added to the canvas comes with an agent doing it', async (t) => {
+  const ctx = await openEditor(t);
+  const { id } = ctx.editor.model.addConnectedNode('task', { connectFrom: 'spec' });
+  assert.deepEqual(ctx.editor.model.saveBody().template.nodes[id].performer, { kind: 'agent' });
+});
+
+test('a step can go on as failed, for a rule to see: the inline editor\'s "If it fails" row', async (t) => {
+  const ctx = await openEditor(t);
+  await ctx.open('build');
+  ctx.editor.model.updateNode('build', (draft) => { draft.patience = '45m'; });
+  await ctx.open('spec');
+  await ctx.open('build');
+  const pick = ctx.dock().querySelector('[data-mini-failure="build"] select[aria-label="If this step fails"]');
+  assert.ok(pick, 'the shared row is in the block');
+  Object.defineProperty(pick, 'value', { configurable: true, writable: true, value: 'go-on' });
+  await ctx.harness.act(() => ctx.harness.fireEvent(pick, 'change'));
+  let build = ctx.editor.model.saveBody().template.nodes.build;
+  assert.equal(build.mayFail, true);
+  assert.equal(build.retry, undefined);
+  const again = ctx.dock().querySelector('[data-mini-failure="build"] select[aria-label="If this step fails"]');
+  Object.defineProperty(again, 'value', { configurable: true, writable: true, value: 'retry' });
+  await ctx.harness.act(() => ctx.harness.fireEvent(again, 'change'));
+  build = ctx.editor.model.saveBody().template.nodes.build;
+  assert.equal(build.mayFail, undefined);
+  assert.deepEqual(build.retry, { maxAttempts: 3 });
+});
+
+test('a rule gets a way out of its loops, and a stage ends going on as failed', async (t) => {
+  const ctx = await openEditor(t);
+  ctx.editor.model.updateNode('gate', (draft) => { draft.loops = { no: { maxIterations: 2 } }; });
+  await ctx.open('gate');
+  await ctx.set('performer.kind', 'rule');
+  assert.deepEqual(ctx.editor.model.saveBody().template.nodes.gate.loops, { no: { maxIterations: 2, onExhausted: 'yes' } },
+    'nobody can be asked once a rule\'s loop runs out');
+
+  ctx.editor.model.updateNode('build', (draft) => { draft.mayFail = true; });
+  await ctx.open('build');
+  await ctx.click('[data-add-block="stages"]');
+  await ctx.set('plan.enabled', true);
+  const build = ctx.editor.model.saveBody().template.nodes.build;
+  assert.ok(build.plan);
+  assert.equal(build.mayFail, undefined, 'a staged step cannot go on as failed');
 });
