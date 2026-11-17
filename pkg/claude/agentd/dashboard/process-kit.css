@@ -307,3 +307,7 @@ button.pk-gnode { cursor: pointer; }
   cursor: copy;
 }
 .pk-template-version:hover { color: var(--accent, #58a6ff); }
+
+/* A run's failure: which step failed it, and why. */
+.pk-failure { margin: 4px 8px; font-size: 12px; overflow-wrap: anywhere; }
+.pk-failure-reason { font-family: var(--font-mono, monospace); }

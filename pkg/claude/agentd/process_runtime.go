@@ -276,6 +276,9 @@ type processRunView struct {
 	AwaitingDecisions []processRunDecisionView `json:"awaitingDecisions"`
 	Commands          []processRunCommandView  `json:"commands"`
 	Blocked           []processRunBlockedView  `json:"blocked"`
+	// Failure is the step whose unhandled failure ended the run, and why
+	// (the checkpoint's failure, repeated for clients that read no checkpoint).
+	Failure *engine.StepFailure `json:"failure,omitempty"`
 	// Draining is a run given up (canceled, or a step failed) that is still
 	// waiting for work that was out to come back.
 	Draining bool                `json:"draining,omitempty"`
@@ -381,9 +384,12 @@ const (
 )
 
 type processRunSummaryView struct {
-	ID           string               `json:"id"`
-	TemplateRef  string               `json:"templateRef"`
-	Status       engine.RunStatus     `json:"status"`
+	ID          string           `json:"id"`
+	TemplateRef string           `json:"templateRef"`
+	Status      engine.RunStatus `json:"status"`
+	// Failure is, for a failed run, the step whose unhandled failure ended
+	// it and why.
+	Failure      *engine.StepFailure  `json:"failure,omitempty"`
 	StateVersion int64                `json:"stateVersion"`
 	Scope        processRunScopeView  `json:"scope"`
 	Paused       *processRunPauseView `json:"paused,omitempty"`
@@ -1069,8 +1075,12 @@ func handleProcessRunList(w http.ResponseWriter, r *http.Request) {
 	}
 	views := make([]processRunSummaryView, 0, len(runs))
 	for i := range runs {
+		var failure *engine.StepFailure
+		if runs[i].FailedNode != "" {
+			failure = &engine.StepFailure{NodeID: runs[i].FailedNode, Reason: runs[i].FailureReason}
+		}
 		views = append(views, processRunSummaryView{
-			ID: runs[i].ID, TemplateRef: runs[i].TemplateRef,
+			ID: runs[i].ID, TemplateRef: runs[i].TemplateRef, Failure: failure,
 			Status: engine.RunStatus(runs[i].Status), StateVersion: runs[i].StateVersion,
 			Scope:     processRunScopeViewOf(runs[i].Scope),
 			Paused:    processRunPauseViewOf(runs[i].Scope),
@@ -1917,6 +1927,7 @@ func processRunViewWith(record *db.ProcessRun, accounted map[string]struct{}, cl
 		Action: action, NeedsReconcile: needsReconcile,
 		AwaitingDecision: awaiting, AwaitingDecisions: awaitingDecisions, Commands: commands,
 		Draining: checkpoint.Status == engine.RunRunning && engine.Draining(checkpoint),
+		Failure:  checkpoint.Failure,
 		Blocked:  blocked, Scope: processRunScopeViewOf(record.Scope), Performers: performers,
 		Paused: processRunPauseViewOf(record.Scope), ProgramBounds: programBounds, Loops: loops,
 		Gates: gates, CreatedAt: record.CreatedAt, UpdatedAt: record.UpdatedAt,

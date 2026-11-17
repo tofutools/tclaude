@@ -118,6 +118,18 @@ export function eventSentence(event, nameOf = () => '', { withStep = true } = {}
         return { icon: '⚙', tone: '', text: `the rule chose ${payload.verdict}${step}: ${said}${read ? ` (read ${read})` : ''}` };
       }
       return { icon: '·', tone: '', text: `${String(event.kind || '').replace(/[_.]+/g, ' ')}${step}${event.actor ? ` · ${who}` : ''}` };
+    // A step's result: what failed and why, in words (a success is a dot).
+    case 'program_observed': {
+      const observation = payload.observation || {};
+      if (observation.outcome !== 'failed') return { icon: '·', tone: '', text: `${event.nodeId || 'a command'} ${observation.outcome || 'finished'}${observation.exitCode ? ` (exit ${observation.exitCode})` : ''}` };
+      return { icon: '✖', tone: 'concern', text: `${event.nodeId || 'a command'} failed${observation.error ? `: ${clip(observation.error)}` : ''}` };
+    }
+    case 'agent_reported': {
+      const observation = payload.observation || {};
+      const verdict = observation.verdict ? ` ${observation.verdict}` : '';
+      if (observation.outcome !== 'failed') return { icon: '·', tone: '', text: `${who} reported ${event.nodeId || 'a step'}${verdict || ' done'}${payload.note ? `: ${clip(payload.note, 100)}` : ''}` };
+      return { icon: '✖', tone: 'concern', text: `${who} reported ${event.nodeId || 'a step'} failed${payload.note || observation.error ? `: ${clip(payload.note || observation.error)}` : ''}` };
+    }
     case 'run_canceled':
       return { icon: '✕', tone: 'concern', text: `${who} canceled the run${payload.note ? `: ${clip(payload.note)}` : ''}` };
     default:

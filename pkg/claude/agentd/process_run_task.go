@@ -34,7 +34,14 @@ const (
 	processRunTaskTextMax = 16 << 10
 )
 
-func init() { executor.SetTerminalHook(settleProcessRunTask) }
+func init() {
+	executor.SetTerminalHook(func(runID string, status engine.RunStatus) {
+		settleProcessRunTask(runID, status)
+		if status == engine.RunFailed {
+			notifyProcessRunFailed(runID)
+		}
+	})
+}
 
 // processRunTaskLocks serialise, per task, the check that a task has no
 // live run with the create that gives it one, so two starts for one task
@@ -216,6 +223,10 @@ func settleProcessRunTask(runID string, status engine.RunStatus) {
 		next, reason = db.GroupTaskDone, fmt.Sprintf("its process %s completed (run %s)", name, runID)
 	case engine.RunFailed:
 		next, reason = db.GroupTaskBlocked, fmt.Sprintf("its process %s failed (run %s)", name, runID)
+		if failure := processRunFailure(runID); failure != nil {
+			reason = fmt.Sprintf("its process %s failed at step %s (run %s): %s", name, failure.NodeID, runID,
+				processConcernHeadline(sanitizeProcessText(failure.Reason)))
+		}
 	default:
 		return
 	}

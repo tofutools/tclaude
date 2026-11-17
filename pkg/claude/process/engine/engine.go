@@ -447,7 +447,12 @@ func apply(checkpoint Checkpoint, definition *Definition, transition Transition)
 			// today's failure disposition, unchanged. Planning stops immediately
 			// — doomed shuts off both nextPlannableTask and nextEngineTransition
 			// — and this is the transition that may empty the last outbox entry
-			// and let the doomed run finalize.
+			// and let the doomed run finalize. The first such failure is what
+			// ended the run; a sibling failing once the run is already doomed
+			// (withdrawn, killed while it drains) is not.
+			if !doomed(next) && next.Failure == nil {
+				next.Failure = &StepFailure{NodeID: node.id, Attempt: next.Attempts[node.id], Reason: truncateReason(observation.Error)}
+			}
 			next.Nodes[node.id] = NodeFailed
 			abandonAfterDoom(&next, definition)
 		default:

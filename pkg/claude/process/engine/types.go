@@ -141,6 +141,11 @@ type Checkpoint struct {
 	// dropped, and the run drains its in-flight commands before finishing with
 	// that end's result.
 	EndedEarly string `json:"endedEarly,omitempty"`
+	// Failure is the step whose failure, with nothing authored to handle it
+	// (no retry budget left to park on, no mayFail), ended the run: the first
+	// such failure only. Steps withdrawn or killed because the run was then
+	// ending fail too, but they are not the reason, so they never replace it.
+	Failure *StepFailure `json:"failure,omitempty"`
 	// Canceled records that someone gave the whole run up (TransitionRunCanceled),
 	// whatever its nodes were doing. It dooms the run like a canceled node does:
 	// nothing more is planned, the human outboxes are dropped, and the run
@@ -191,6 +196,14 @@ type DecisionObligation struct {
 // already bounded far more generously, so this is deliberately small: the
 // obligation is a pointer to a parked branch, not a place to store output.
 const MaxBlockedReasonBytes = 1024
+
+// StepFailure is the step that failed a run, at which attempt, and why (the
+// failing observation's error, bounded like a blocked reason).
+type StepFailure struct {
+	NodeID  string `json:"nodeId"`
+	Attempt int    `json:"attempt,omitempty"`
+	Reason  string `json:"reason,omitempty"`
+}
 
 // BlockedObligation names one branch parked on an operator, and why. Together
 // with the run id and Attempts[NodeID] it is the exact identity a resolution

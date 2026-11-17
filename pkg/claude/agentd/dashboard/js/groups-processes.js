@@ -13,7 +13,7 @@ import { createContext, h } from 'preact';
 import { useContext, useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import {
-  ProcessMiniGraph, ProcessRunBadge, ProcessScopeChip, ProcessStateChip, ProcessTemplateVersion, runName, runState, stateLabel,
+  ProcessFailure, ProcessMiniGraph, ProcessRunBadge, ProcessScopeChip, ProcessStateChip, ProcessTemplateVersion, runName, runState, runStateLabel,
 } from './process-kit.js';
 import {
   DEFAULT_RUN_FILTER, RUN_KINDS, RUN_KIND_LABELS, busyPerformers, formatRunDuration, groupContextEntry, groupRunsFor,
@@ -304,7 +304,7 @@ function RunCard({ run, entry, nameOf, wizard, onOpen, group = null }) {
   return html`<article class="gp-card ui-card" data-process-run-card=${named.runId}>
     <div class="gp-card-head">
       <span class="gp-card-name">${runName(named)}</span>
-      <${ProcessStateChip} state=${state} label=${`${stateLabel(state)}${duration ? ` · ${duration}` : ''}`} />
+      <${ProcessStateChip} state=${state} label=${`${runStateLabel(named)}${duration ? ` · ${duration}` : ''}`} />
       <${ProcessScopeChip} scope=${named.scope?.kind === 'agent' && nameOf(named.scope.agentId) ? { kind: 'agent', name: nameOf(named.scope.agentId) } : named.scope} wizard=${wizard} />
       ${named.scope?.task && html`<span class="pk-chip ui-tag gp-card-task" data-process-run-task=${named.scope.task}>◈ for task:${' '}<a class="tk-link" href="#" ...${taskLink({ shown: group?.name || named.scope?.group || '', group: named.scope?.group || group?.name || '', node: group?.fleet_node?.id || '', taskId: named.scope.task, title: named.scope.taskTitle })}>${named.scope.taskTitle || named.scope.task}</a></span>`}
       ${(template || owner) && html`<span class="gp-card-meta">${template && html`<${ProcessTemplateVersion} run=${named} wizard=${wizard} />`}${template && owner && ' · '}${owner && html`owner <b>${owner}</b>`}</span>`}
@@ -315,6 +315,7 @@ function RunCard({ run, entry, nameOf, wizard, onOpen, group = null }) {
       <button data-ui-exempt type="button" class="gp-open" data-process-open=${named.runId} onClick=${() => onOpen(named.runId)}
         title=${wizard ? `Gaze into ${runName(named)}` : `Open ${runName(named)}: live graph, node inspector and performers`}>${wizard ? 'gaze ›' : 'open ›'}</button>
     </div>
+    <${ProcessFailure} run=${named} />
     <div class="gp-card-body"><${ProcessMiniGraph} run=${named} wizard=${wizard} /></div>
     ${named.truncated && html`<div class="gp-card-note">Graph truncated: open the run for every node.</div>`}
   </article>`;
