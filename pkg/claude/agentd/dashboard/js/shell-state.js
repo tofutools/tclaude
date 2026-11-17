@@ -71,7 +71,8 @@ export function createShellState({ setTimer = setTimeout, clearTimer = clearTime
         cancelLabel: String(options.cancelLabel || 'Cancel'),
         busyLabel: String(options.busyLabel || 'Working…'),
         informational: !!options.informational,
-        // backConfirms: Back answers OK rather than Cancel (Discard input?).
+        // backConfirms: a Back that raised it, asked again, answers OK rather
+        // than Cancel (Discard input?; shell-island.js Confirm).
         backConfirms: !!options.backConfirms,
         preformatted: !!options.preformatted,
         // checks are optional checkboxes ({label, checked, hint?}). The modal

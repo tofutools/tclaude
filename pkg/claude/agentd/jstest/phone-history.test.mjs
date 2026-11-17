@@ -235,7 +235,7 @@ const GUARDS = [
       // renders, a microtask after it is asked for.
       const confirmDiscard = () => new Promise((resolve) => {
         answer = (yes) => { off?.(); off = null; answer = null; resolve(yes); };
-        queueMicrotask(() => { if (answer) off = registerBackLayer({ close: () => { answer?.(true); return true; } }); });
+        queueMicrotask(() => { if (answer) off = registerBackLayer({ close: (why) => { answer?.(!!why?.question); return true; } }); });
       });
       const { open } = await mountDialog(t, harness, { dirty: true, confirmDiscard });
       return {

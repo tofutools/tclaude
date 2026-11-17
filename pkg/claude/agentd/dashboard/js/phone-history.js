@@ -229,7 +229,7 @@ export function installPhoneHistory({ view, tab = () => null, doc = globalThis.d
     // question: no step of its own, and the form takes its entry back now,
     // so a further Back finds it and keeps it.
     if (asking && !asking.retaken && raised.length) {
-      for (const layer of raised) quiet.add(layer);
+      for (const layer of raised) { quiet.add(layer); layer.question = true; }
       asking.retaken = true;
       closing -= 1;
       depth = counted(page, sheet, layers);
