@@ -145,7 +145,7 @@ Top-level fields:
 |---|---|
 | `id` | Stable template key and route id. |
 | `name`, `description`, `doc` | Optional human-facing prose. |
-| `params` | Map of parameter ids to `{type, name?, description?, doc?, required?, default?}`. `type` is `string`, `number` or `boolean` (validation does not check it, so use exactly these); a run binds each from `--param name=value`. |
+| `params` | Map of parameter ids to `{type, name?, description?, doc?, required?, default?}`. `type` is `string` (the default), `number`, `integer`, `boolean`, `object` or `array`, and a `default` must be a value of that type (`default: false`, not `"false"`); validation refuses anything else. A run binds each from `--param name=value`. |
 | `start` | Entry node id. A separate start-typed node is optional. |
 | `nodes` | Map keyed by stable node id. |
 | `fallback` | Default for agent steps nobody can take; see Performers. |
