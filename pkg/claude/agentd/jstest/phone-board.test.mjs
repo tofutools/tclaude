@@ -230,6 +230,18 @@ test("a task's page: its brief, refs and activity, a comment box, and Back to th
   assert.equal(pageMod.phonePage.value, null);
 });
 
+test('a task opened from another task\'s page goes Back to that page, then to the board', async (t) => {
+  const harness = await createPreactHarness(t);
+  const m = await harness.importDashboardModule('js/phone-board.js');
+  const a = { id: 'tk_a', group: 'webshop' };
+  const b = m.openFrom(a, 'tk_b');
+  const c = m.openFrom(b, 'tk_c');
+  assert.deepEqual(c, { id: 'tk_c', group: 'webshop', back: ['tk_a', 'tk_b'] });
+  assert.deepEqual(m.closeTask(c), { id: 'tk_b', group: 'webshop', back: ['tk_a'] });
+  assert.deepEqual(m.closeTask(m.closeTask(c)), { id: 'tk_a', group: 'webshop', back: [] });
+  assert.equal(m.closeTask(a), null, 'from the first, Back is the board');
+});
+
 test("a question is also answered in words on the task's page", async (t) => {
   const { harness, c, submit, settle, button, writes, boardMod } = await setupView(t);
   await harness.act(() => boardMod.openBoardTask('tk_carrier', 'webshop'));

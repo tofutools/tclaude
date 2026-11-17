@@ -47,9 +47,19 @@
 :root[data-layout="phone"] .phone-task-md { overflow-wrap: anywhere; font-size: 14px; }
 :root[data-layout="phone"] .phone-task-md :is(pre, table) { max-width: 100%; overflow-x: auto; }
 :root[data-layout="phone"] .phone-task-md img { max-width: 100%; height: auto; }
-:root[data-layout="phone"] .phone-task-refs li { display: flex; flex-direction: column; gap: 2px; padding: 8px 0; border-bottom: 1px solid var(--phone-tile); }
-:root[data-layout="phone"] .phone-task-refs a { color: var(--phone-accent); font-weight: 600; text-decoration: none; }
-:root[data-layout="phone"] .phone-task-ref-sub { color: var(--ui-muted-text); font-size: 12px; }
+/* Refs, After and Epic (phone-task-links.js): phone rows, each a link or a
+   tap that opens the task, with its state pills; text wraps under them. */
+:root[data-layout="phone"] .phone-task-ref { flex-wrap: wrap; row-gap: 4px; }
+:root[data-layout="phone"] .phone-task-ref-label { color: var(--phone-accent); font-weight: 600; overflow-wrap: anywhere; }
+:root[data-layout="phone"] .phone-task-ref-kind { color: var(--ui-muted-text); font-weight: 600; font-size: 12px; }
+:root[data-layout="phone"] .phone-task-ref-sub { flex-basis: 100%; color: var(--ui-muted-text); font-size: 12px; overflow-wrap: anywhere; }
+:root[data-layout="phone"] .phone-task-ref-pills { display: flex; flex-wrap: wrap; gap: 4px; }
+:root[data-layout="phone"] .phone-task-row-title { color: var(--ui-text-strong); overflow-wrap: anywhere; }
+:root[data-layout="phone"] .phone-row-chev { color: var(--ui-focus); font-size: 16px; }
+:root[data-layout="phone"] .phone-task-epic-progress { display: flex; flex-direction: column; gap: 4px; margin-bottom: 8px; }
+:root[data-layout="phone"] .phone-task-epic-progress .tb-epic-bar { flex: none; width: 100%; min-width: 0; }
+:root[data-layout="phone"] .phone-task-run { margin-top: 8px; }
+:root[data-layout="phone"] .phone-task-run .tk-run { width: 100%; }
 :root[data-layout="phone"] .phone-task-activity { list-style: none; margin: 0; padding: 0; }
 :root[data-layout="phone"] .phone-task-activity li {
   display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; padding: 8px 0; border-bottom: 1px solid var(--phone-tile);
