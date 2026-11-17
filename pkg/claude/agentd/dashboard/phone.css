@@ -251,14 +251,9 @@
   background: none; border: 0; padding-inline: 0; color: var(--ui-focus); font: inherit; cursor: pointer;
 }
 :root[data-layout="phone"] .phone-empty { margin: 6px 0; }
-/* ErrorNote (phone-ui.js): the error banner, padded, its Retry at the end.
-   Desktop islands the phone shares (Usage's overview, an island that failed
-   to load) write .island-error, which has no style of its own: on the phone
-   it is the same note. */
-:root[data-layout="phone"] .island-error {
-  border-left: 3px solid var(--ui-danger); background: rgba(248, 81, 73, .08);
-  color: var(--ui-danger-text); font-size: 12px; line-height: 1.4;
-}
+/* ErrorNote (phone-ui.js): the .ui-error-box banner, padded, its Retry at
+   the end. A desktop island the phone shares (Usage's overview) writes
+   .island-error with .ui-error-box: on the phone it gets the same spacing. */
 :root[data-layout="phone"] :is(.phone-error, .island-error) {
   display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px;
   margin: 6px 0; padding: 8px 10px; border-radius: 6px; overflow-wrap: anywhere;
