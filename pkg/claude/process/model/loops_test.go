@@ -312,3 +312,54 @@ func TestUnboundedReviewFirstCycleHintNamesTheReview(t *testing.T) {
 		t.Fatalf("message = %q", got)
 	}
 }
+
+// A work-first loop around a decision-first loop whose repeated work may
+// leave it: the exit into the outer body is no entry from outside.
+func TestLoopAroundADecisionFirstLoopWithAnExitValidates(t *testing.T) {
+	tmpl := decisionFirstTemplate(func(nodes map[string]Node) {
+		review := nodes["review"]
+		review.Next = Next{"approved": "signoff", "changes": "fix"}
+		review.Loops = map[string]LoopBound{"changes": {MaxIterations: 3}}
+		nodes["review"] = review
+		nodes["fix"] = Node{Type: NodeTypeDecision, Performer: &Performer{Kind: PerformerHuman, Ask: "Fixed?"},
+			Next: Next{"done": "review", "giveup": "signoff"}}
+		nodes["signoff"] = Node{Type: NodeTypeDecision, Performer: &Performer{Kind: PerformerHuman, Ask: "Ship?"},
+			Next:  Next{"ok": "end", "redo": "implement"},
+			Loops: map[string]LoopBound{"redo": {MaxIterations: 2}}}
+		delete(nodes, "escalated")
+	})
+	if codes := loopErrorCodes(tmpl); len(codes) != 0 {
+		t.Fatalf("errors = %v", codes)
+	}
+	for _, loop := range Loops(tmpl, NormalizeEdges(tmpl)) {
+		if loop.From == "signoff" && (loop.DecisionFirst || !loop.Contains("fix")) {
+			t.Fatalf("outer loop = %#v", loop)
+		}
+	}
+}
+
+// Two tracks whose repeated work leads into each other's decision cannot be
+// ordered: refused at authoring rather than when a run starts.
+func TestDecisionFirstLoopsLeadingIntoEachOtherAreRefused(t *testing.T) {
+	review := func(fix string) Node {
+		return Node{Type: NodeTypeDecision, Join: JoinAll, Performer: &Performer{Kind: PerformerHuman, Ask: "Approve?"},
+			Next:  Next{"approved": "join", "changes": fix},
+			Loops: map[string]LoopBound{"changes": {MaxIterations: 3}}}
+	}
+	fix := func(own, other string) Node {
+		return Node{Type: NodeTypeDecision, Performer: &Performer{Kind: PerformerHuman, Ask: "Done?"},
+			Next: Next{"done": own, "handoff": other}}
+	}
+	tmpl := &Template{APIVersion: APIVersion, Kind: Kind, ID: "crossed", Start: "par", Nodes: map[string]Node{
+		"par":  {Type: NodeTypeParallel, Next: Next{"a": "ra", "b": "rb"}},
+		"ra":   review("fixa"),
+		"rb":   review("fixb"),
+		"fixa": fix("ra", "rb"),
+		"fixb": fix("rb", "ra"),
+		"join": {Type: NodeTypeTask, Join: JoinAll, Performer: &Performer{Kind: PerformerProgram, Run: "true"}, Next: Next{DefaultOutcome: "end"}},
+		"end":  {Type: NodeTypeEnd},
+	}}
+	if _, ok := loopErrorCodes(tmpl)["loop_decision_first_order"]; !ok {
+		t.Fatalf("errors = %v", loopErrorCodes(tmpl))
+	}
+}

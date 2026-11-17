@@ -190,6 +190,10 @@ func Loops(tmpl *Template, edges []Edge) []Loop {
 	}
 	for i := range loops {
 		loop := &loops[i]
+		// An outer loop's entries are judged on its body with the inner
+		// decision-first bodies added: an edge from an inner loop's repeated
+		// work into the outer body is not an entry from outside.
+		loop.DecisionFirst = loopEntries(tmpl, edges, *loop)[loop.From]
 		for _, edge := range edges {
 			if edge.From == "" || !loop.Contains(edge.From) || loop.Contains(edge.To) || isCycleExemptEdge(tmpl, edge) {
 				continue
@@ -310,6 +314,10 @@ func validateLoops(tmpl *Template, edges []Edge) Diagnostics {
 			}
 		}
 	}
+	if cycle := decisionFirstOrderCycle(tmpl, edges, loops); cycle != "" {
+		add("loop_decision_first_order", "nodes."+cycle, fmt.Sprintf(
+			"%q is reached from a loop that starts at a decision and also leads into one, so neither can run first; route it through the decision of its own loop", cycle))
+	}
 	for i := range loops {
 		for j := range loops {
 			if i != j && loops[i].DecisionFirst && loopInside(loops[j], loops[i]) {
@@ -344,6 +352,59 @@ func loopEntries(tmpl *Template, edges []Edge, loop Loop) map[string]bool {
 		entries[edge.To] = true
 	}
 	return entries
+}
+
+// decisionFirstOrderCycle checks the order a run executes in: a
+// decision-first loop's decision runs before its repeated work, so its bounded
+// edge orders and the edges from its body back into the decision do not. That
+// order must be acyclic (the engine prepares nodes in it); it returns a node
+// on a cycle, or "".
+func decisionFirstOrderCycle(tmpl *Template, edges []Edge, loops []Loop) string {
+	adj := map[string][]string{}
+	for _, edge := range edges {
+		if edge.From == "" {
+			continue
+		}
+		if _, ok := tmpl.Nodes[edge.To]; !ok {
+			continue
+		}
+		orders := !isCycleExemptEdge(tmpl, edge)
+		for _, loop := range loops {
+			if !loop.DecisionFirst {
+				continue
+			}
+			if edge.From == loop.From && edge.Outcome == loop.Outcome {
+				orders = true
+			} else if edge.To == loop.From && edge.From != loop.From && loop.Contains(edge.From) {
+				orders = false
+			}
+		}
+		if orders {
+			adj[edge.From] = append(adj[edge.From], edge.To)
+		}
+	}
+	state := map[string]int{}
+	var found string
+	var visit func(id string) bool
+	visit = func(id string) bool {
+		state[id] = 1
+		for _, next := range adj[id] {
+			if state[next] == 1 || state[next] == 0 && visit(next) {
+				if found == "" {
+					found = next
+				}
+				return true
+			}
+		}
+		state[id] = 2
+		return false
+	}
+	for _, id := range sortedKeys(tmpl.Nodes) {
+		if state[id] == 0 && visit(id) {
+			return found
+		}
+	}
+	return ""
 }
 
 // loopInside reports whether inner's body lies within outer's.
