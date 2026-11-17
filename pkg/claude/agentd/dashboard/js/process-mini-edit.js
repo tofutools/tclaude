@@ -885,7 +885,11 @@ export function changeKind(view, id, kind) {
     for (const orphan of orphans) removeNode(next, orphan);
   }
   dropStaleJoins(next);
-  return { view: syncLoops(next), id, orphans };
+  // Another step that was the same agent as, or kept off, this one's agent
+  // has no agent to match now that it is yours or a command.
+  const names = Object.fromEntries(Object.entries(view.template.nodes).map(([nodeID, n]) => [nodeID, n.name || nodeID]));
+  const note = danglingNote(dropDanglingRefs(next, [id, ...orphans], names));
+  return { view: syncLoops(next), id, orphans, ...(note ? { note } : {}) };
 }
 
 // entryOf is where a run starts: the start pseudo edge's target, else
@@ -910,6 +914,52 @@ function removeNode(view, id) {
   delete view.template.nodes[id];
   delete view.layout.nodes[id];
   view.edges = view.edges.filter((edge) => edge.from !== id && edge.to !== id);
+}
+
+// agentPerformed says whether an agent performs node, as the engine reads
+// it for sameAs and differentFrom: an agent task or decision, or a gate with
+// an agent decider.
+function agentPerformed(node) {
+  if (node?.type === 'decision' && (node.deciders || []).some((decider) => decider?.kind === 'agent')) return true;
+  return node?.performer?.kind === 'agent' && (node.type === 'task' || node.type === 'decision');
+}
+
+function performersOf(node) {
+  return [node?.performer, ...(node?.deciders || []), node?.plan?.performer, node?.review?.performer,
+    ...(node?.checks || []).map((check) => check?.performer)].filter(Boolean);
+}
+
+// dropDanglingRefs drops the sameAs and differentFrom that name one of ids
+// once it is gone or no agent performs it (the engine refuses those), and
+// says what went: "Review's “not Implement”" and the like, for the note.
+// names gives a gone step's name, as it read before.
+function dropDanglingRefs(view, ids, names) {
+  const dropped = [];
+  const stale = (ref) => ids.includes(ref) && !agentPerformed(view.template.nodes[ref]);
+  const name = (ref) => names[ref] || ref;
+  for (const [id, node] of Object.entries(view.template.nodes)) {
+    for (const performer of performersOf(node)) {
+      const who = node.name || id;
+      if (performer.sameAs && stale(performer.sameAs)) {
+        dropped.push(`${who}'s “same agent as ${name(performer.sameAs)}”`);
+        delete performer.sameAs;
+      }
+      if (Array.isArray(performer.differentFrom)) {
+        const gone = performer.differentFrom.filter(stale);
+        if (!gone.length) continue;
+        dropped.push(`${who}'s “not ${gone.map(name).join(', ')}”`);
+        const kept = performer.differentFrom.filter((ref) => !stale(ref));
+        if (kept.length) performer.differentFrom = kept;
+        else delete performer.differentFrom;
+      }
+    }
+  }
+  return dropped;
+}
+
+// danglingNote is the change note for what dropDanglingRefs dropped.
+function danglingNote(dropped) {
+  return dropped.length ? `Also cleared ${dropped.join(', ')}: that step no longer has an agent to match.` : '';
 }
 
 // canDelete says why a node cannot be deleted ('' when it can): the start,
@@ -962,7 +1012,9 @@ export function deleteStep(view, id) {
   const orphans = [...before].filter((nodeID) => nodeID !== id && !after.has(nodeID));
   for (const orphan of orphans) removeNode(next, orphan);
   dropStaleJoins(next);
-  return { view: syncLoops(next), id: target, orphans };
+  const names = Object.fromEntries(Object.entries(view.template.nodes).map(([nodeID, n]) => [nodeID, n.name || nodeID]));
+  const note = danglingNote(dropDanglingRefs(next, [id, ...orphans], names));
+  return { view: syncLoops(next), id: target, orphans, ...(note ? { note } : {}) };
 }
 
 // deleteOrphans names the steps deleting `id` would also remove.

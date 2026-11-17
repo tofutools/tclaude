@@ -730,6 +730,8 @@ export function MiniGraphEditor({
       const result = op();
       if (result.view === draft) return;
       apply(result, result.id && result.view.template.nodes[result.id] ? result.id : '');
+      // What the edit also changed elsewhere, with its undo.
+      if (result.note) setNotice({ note: result.note });
       if (result.id && !draft.template.nodes[result.id] && isStep(result.view.template.nodes[result.id])) setFresh(result.id);
     } catch (cause) {
       setError(cause.message);
@@ -1148,8 +1150,8 @@ export function MiniGraphEditor({
       <span class="gq-dim">Their other changes are merged either way.</span>
     </div>`}
     ${notice && !incoming && html`<div class="gm-live" role="status" data-mini-notice>
-      <span>✨ ${notice.who} changed ${notice.what}${notice.kept ? ' (your edits kept where you both changed)' : ''}.</span>
-      <${Button} size="sm" variant="link" class="gq-link" data-mini-notice-undo title="Take their change back out; it saves again" onClick=${undo}>undo<//>
+      <span>${notice.note || `✨ ${notice.who} changed ${notice.what}${notice.kept ? ' (your edits kept where you both changed)' : ''}.`}</span>
+      <${Button} size="sm" variant="link" class="gq-link" data-mini-notice-undo title=${notice.note ? 'Undo this edit, clearing included' : 'Take their change back out; it saves again'} onClick=${undo}>undo<//>
       <${Button} size="sm" variant="link" class="gq-link" aria-label="Dismiss" onClick=${() => setNotice(null)}>✕<//>
     </div>`}
     <div class="gm-canvas" ref=${canvas} data-mini-canvas

@@ -709,3 +709,31 @@ test('a new reviewer track\'s review has a reviewer and is kept off the reviewed
   assert.equal(m.reviewerRoleOf([{ role: 'dev', count: 2 }, { role: 'Reviewer', count: 1 }]), 'Reviewer');
   assert.equal(m.reviewerRoleOf([{ role: 'dev', count: 2 }]), '');
 });
+
+test('deleting a step, or making it yours or a command, clears what named its agent, and says so', () => {
+  const tracked = m.addReviewerTrack(ship, 'implement');
+  const review = tracked.id;
+  const fix = m.reviewLoop(tracked.view, review).fix;
+  assert.deepEqual(tracked.view.template.nodes[review].performer.differentFrom, ['implement']);
+  assert.equal(tracked.view.template.nodes[fix].performer.sameAs, 'implement');
+
+  const deleted = m.deleteStep(tracked.view, 'implement');
+  assert.equal(deleted.view.template.nodes[review].performer.differentFrom, undefined, 'the review is no longer kept off a step that is gone');
+  assert.equal(deleted.view.template.nodes[fix].performer.sameAs, undefined, 'nor the fix the same agent as it');
+  assert.match(deleted.note, /Also cleared .*Review's “not Implement”.*Fix's “same agent as Implement”/);
+
+  for (const kind of ['you', 'command']) {
+    const changed = m.changeKind(tracked.view, 'implement', kind);
+    assert.equal(changed.view.template.nodes[review].performer.differentFrom, undefined, `${kind}: no agent to keep off`);
+    assert.equal(changed.view.template.nodes[fix].performer.sameAs, undefined);
+    assert.match(changed.note, /Also cleared/);
+  }
+  const still = m.changeKind(m.changeKind(tracked.view, 'implement', 'agent').view, 'implement', 'agent');
+  assert.equal(still.note, undefined, 'an agent step keeps them');
+
+  // Another reference survives: only what named the changed step goes.
+  assert.notEqual(review, 'review');
+  const two = m.updateStep(tracked.view, review, (s) => ({ ...s, node: { ...s.node, performer: { ...s.node.performer, differentFrom: ['implement', 'review'] } } }));
+  assert.deepEqual(m.deleteStep(two.view, 'implement').view.template.nodes[review].performer.differentFrom, ['review']);
+  assert.equal(m.deleteStep(ship, 'merge').note, undefined, 'nothing named it: no note');
+});
