@@ -18,6 +18,9 @@ function board() {
     tasks: [
       { id: 'tk_ready', title: 'Checkout page redesign', status: 'open', stage: 'next', held: true,
         assignee: { agent_id: AGENT, name: 'checkout-ui' },
+        created_by: `agent:${LEAD}`, created_by_name: 'lead', created_at: '2026-11-14T00:00:00Z',
+        assigned_by: `agent:${LEAD}`, assigned_at: '2026-11-14T00:00:30Z',
+        last_edited_by: 'human:operator', last_edited_by_name: 'operator', last_edited_at: '2026-11-14T00:01:00Z',
         refs: [{ kind: 'github', label: '#1482', url: 'https://github.com/acme/webshop/pull/1482', pr: { number: 1482, checks: { state: 'passing', total: 4, passed: 4 } } }] },
       { id: 'tk_coupon', title: 'Coupon lookup p95 regression', status: 'open', stage: 'next', kind: 'bug' },
       { id: 'tk_carrier', title: 'Which carrier?', status: 'open', stage: 'next',
@@ -296,12 +299,11 @@ test("a task's page: its id with copy, who made and holds it, changes in words, 
       question: { n: 1, title: 'Which carrier?', state: 'answered', recommend: 'dhl',
         options: [{ key: 'dhl', label: 'DHL' }, { key: 'ups', label: 'UPS' }],
         answer: { picked: ['dhl'], text: '', answered_by: 'human:operator', answered_at: '2026-11-14T00:03:00Z' } } } },
-    { id: 4, at: '2026-11-14T00:03:00Z', actor: 'human:operator', kind: 'comment', comment: { id: 11, author: 'human:operator', body: 'DHL', answers: 1 } },
-    { id: 5, at: '2026-11-14T00:03:30Z', actor: 'human:operator', kind: 'comment_edited', comment: { id: 11, author: 'human:operator', body: 'DHL' } },
+    { id: 4, at: '2026-11-14T00:03:00Z', actor: 'human:operator', actor_name: 'operator', kind: 'comment', comment: { id: 11, author: 'human:operator', author_name: 'operator', body: 'DHL', answers: 1 } },
+    { id: 5, at: '2026-11-14T00:03:30Z', actor: 'human:operator', actor_name: 'operator', kind: 'comment_edited', comment: { id: 11, author: 'human:operator', author_name: 'operator', body: 'DHL' } },
+    { id: 6, at: '2026-11-14T00:04:00Z', actor: 'peer:node-b', actor_name: 'node-b', kind: 'comment', comment: { id: 12, author: 'peer:node-b', author_name: 'node-b', body: '', deleted_at: '2026-11-14T00:05:00Z' } },
   ] });
-  const task = async (id) => ({ ...board().tasks.find((one) => one.id === id), body: '', created_by: `agent:${LEAD}`, created_at: '2026-11-14T00:00:00Z',
-    assigned_by: `agent:${LEAD}`, assigned_at: '2026-11-14T00:00:30Z' });
-  const { harness, c, settle, boardMod } = await setupView(t, { activity, task });
+  const { harness, c, settle, boardMod } = await setupView(t, { activity });
   const history = await harness.importDashboardModule('js/phone-task-history.js');
   await harness.act(() => boardMod.openBoardTask('tk_ready', 'webshop'));
   await settle();
@@ -309,14 +311,20 @@ test("a task's page: its id with copy, who made and holds it, changes in words, 
   const idLine = c.querySelector('.phone-task-id');
   assert.equal(idLine.querySelector('code').textContent, 'tk_ready');
   assert.equal(idLine.querySelector('button').getAttribute('aria-label'), 'Copy tk_ready');
-  await history.copyId('tk_ready', async (text) => { copied.push(text); return true; }, () => {});
-  assert.deepEqual(copied, ['tk_ready'], '⧉ copies the id');
+  const line = await harness.mount(harness.html`<${history.TaskIdLine} id="tk_x" copy=${(id) => copied.push(id)} />`);
+  await harness.act(() => line.container.querySelector('button').click());
+  assert.deepEqual(copied, ['tk_x'], '⧉ copies the id');
+  const toasts = [];
+  await history.copyId('tk_ready', async () => false, (text, bad) => toasts.push([text, !!bad]));
+  assert.deepEqual(toasts, [['Could not copy tk_ready', true]]);
   const meta = c.querySelector('[data-task-meta]').textContent;
   assert.match(meta, /^created by lead /);
   assert.match(meta, /assigned to checkout-ui by lead /);
-  assert.match(meta, /last changed by you /, 'the newest entry\'s actor');
+  assert.match(meta, /last edited by you /, 'the board\'s last edit, the operator as "you"');
   const items = [...c.querySelectorAll('.phone-task-activity > li')];
-  assert.equal(items.length, 3, 'created, the edit and the question; the answer sits under its question, the edit note is no entry');
+  assert.equal(items.length, 4, 'created, the edit, the question and a deleted comment; the answer sits under its question, the edit note is no entry');
+  assert.equal(items[3].querySelector('.phone-task-who').textContent, 'node-b', 'a peer by the name the server sent');
+  assert.equal(items[3].querySelector('.phone-task-what').textContent, 'deleted');
   assert.equal(items[1].querySelector('.phone-task-what').textContent, 'status: open → blocked · edited the brief', 'changeText words');
   const q = c.querySelector('[data-question-n="1"]');
   assert.match(q.querySelector('.phone-task-q-kind').textContent, /Q1 · answered/);

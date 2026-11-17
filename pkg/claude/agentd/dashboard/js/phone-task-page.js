@@ -99,9 +99,7 @@ export function TaskPage({ id, group, source, state, api, onClose, onMove }) {
   const commentKey = useRef(newCommentKey());
   const { entry, row } = liveRow(source.context.value, group, id);
   const read = useTaskRead(api, id, version);
-  // The board's live row over the full read: the read has what a row leaves
-  // out (who created it, when it was assigned).
-  const task = row ? { ...(read.task || {}), ...row } : read.task;
+  const task = row || read.task;
   const names = companionAgents(state.snapshot.value);
 
   // The page over the board. When it goes, a tab page it covered (Mail's
@@ -136,7 +134,7 @@ export function TaskPage({ id, group, source, state, api, onClose, onMove }) {
   return html`<div class="phone-task-page">
     <h2 class="phone-task-page-title">${task.title}</h2>
     <${TaskIdLine} id=${task.id} />
-    <${TaskMetaLine} task=${task} nameOf=${nameOf} entries=${all} />
+    <${TaskMetaLine} task=${task} nameOf=${nameOf} />
     <div class="phone-board-tags">
       <${StatePill} tone=${state_.tone}>${state_.text}<//>
       ${cardTags(task, names).map((tag) => html`<span key=${tag.key} class=${`phone-board-tag${tag.tone ? ` phone-board-tag-${tag.tone}` : ''}`}>${tag.text}</span>`)}
@@ -174,7 +172,9 @@ export function TaskPage({ id, group, source, state, api, onClose, onMove }) {
               ? html`<li key=${`c-${ev.comment.id}`} class="phone-task-comment">
                 <span class="phone-task-who">${ev.actor_name || actorName(ev.actor, names)}</span>
                 <span class="phone-task-when">${relTime(ev.at)}</span>
-                <${MarkdownDocument} source=${ev.comment.body || ''} className="markdown-document phone-task-md" />
+                ${ev.comment.deleted_at
+                  ? html`<span class="phone-task-what ui-hint">deleted</span>`
+                  : html`<${MarkdownDocument} source=${ev.comment.body || ''} className="markdown-document phone-task-md" />`}
               </li>`
               : html`<${ChangeItem} key=${ev.id || `e-${i}`} entry=${ev} nameOf=${nameOf} />`))}
         </ol>`}
