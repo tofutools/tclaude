@@ -15918,6 +15918,8 @@ body.process-solo #companion-root, body.process-solo #drawing-board-overlay-root
 .process-palette-card.is-built-in { border-left-color: #58a6ff; }
 .process-palette-card.is-custom { border-left-color: #a371f7; }
 .process-palette-card.is-unavailable { border-style: dashed; opacity: .75; }
+.process-palette-card.is-cant-run { opacity: .55; border-style: dashed; }
+.process-palette-card.is-cant-run:hover, .process-palette-card.is-cant-run:focus-within { opacity: .85; }
 .process-palette-card[draggable="false"] { cursor: default; }
 .process-palette-card-copy { display: flex; flex: 1; min-width: 0; flex-direction: column; gap: 2px; }
 .process-palette-card-actions { display: inline-flex; align-items: center; gap: 4px; }
