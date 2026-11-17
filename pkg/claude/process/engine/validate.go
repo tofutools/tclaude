@@ -206,7 +206,13 @@ func Prepare(tmpl *model.Template, params map[string]string) (*Definition, error
 	if err := prepareScope(definition, tmpl, params, "", -1, nil, appendNode, nexts, &loops); err != nil {
 		return nil, err
 	}
-	// A step some rule reads keeps a record of its attempts.
+	// A step some rule reads keeps a record of its attempts, and so does a
+	// step that may fail: done with no record would read as succeeded.
+	for i := range definition.nodes {
+		if definition.nodes[i].mayFail {
+			definition.nodes[i].recorded = true
+		}
+	}
 	for _, node := range definition.nodes {
 		if node.rule == nil {
 			continue
@@ -943,6 +949,20 @@ func validateCheckpoint(checkpoint Checkpoint, definition *Definition) error {
 	}
 	if !validRunID(checkpoint.RunID) {
 		return invalid("runId must be a lowercase runtime identifier of at most 128 bytes")
+	}
+	for id := range checkpoint.Steps {
+		if node, ok := definitionNodeByID(definition, id); !ok || !node.recorded {
+			return invalid("step record %q names no step a rule reads", id)
+		}
+	}
+	for id, choice := range checkpoint.Rules {
+		node, ok := definitionNodeByID(definition, id)
+		if !ok || node.rule == nil {
+			return invalid("rule choice %q names no rule decision", id)
+		}
+		if choice.Case < -1 || choice.Case >= len(node.rule.cases) || choice.Count < 1 || !verdictAllowed(node, choice.Outcome) {
+			return invalid("rule choice %q is not one its rule can make", id)
+		}
 	}
 	switch checkpoint.Status {
 	case RunRunning, RunCompleted, RunFailed, RunCanceled:

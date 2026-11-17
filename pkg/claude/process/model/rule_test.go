@@ -172,3 +172,19 @@ func TestRuleBooleanParams(t *testing.T) {
 	require.Contains(t, valid(`params.merge`), "invalid_rule_condition", "only a boolean param stands alone")
 	require.Contains(t, valid(`steps.ci.result`), "invalid_rule_condition")
 }
+
+func TestRuleLoopNeedsWork(t *testing.T) {
+	rule := &Performer{Kind: PerformerRule, Cases: []RuleCase{{When: `params.merge == yes`, Then: "merge"}}, Else: "stop"}
+	tmpl := ruleTemplate(rule, func(nodes map[string]Node) {
+		nodes["start"] = Node{Type: NodeTypeStart, Next: Next{DefaultOutcome: "first"}}
+		nodes["first"] = Node{Type: NodeTypeDecision, Performer: &Performer{Kind: PerformerRule, Cases: []RuleCase{{When: `params.merge == yes`, Then: "on"}}, Else: "on"},
+			Next: Next{"on": "gate"}}
+		gate := nodes["gate"]
+		gate.Next = Next{"again": "first", "merge": "merge", "stop": "end"}
+		gate.Loops = map[string]LoopBound{"again": {MaxIterations: 3, OnExhausted: "stop"}}
+		gate.Performer = &Performer{Kind: PerformerRule, Cases: []RuleCase{{When: `params.merge == no`, Then: "again"}}, Else: "merge"}
+		nodes["gate"] = gate
+		delete(nodes, "ci")
+	})
+	require.Contains(t, loopErrorCodes(tmpl), "rule_loop_without_work")
+}

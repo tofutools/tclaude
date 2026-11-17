@@ -192,6 +192,20 @@ func Amend(checkpoint Checkpoint, oldDef *Definition, current, amended *model.Te
 		}
 	}
 
+	// A rule reads what the run recorded of a step; a step that already ran
+	// with nothing recording it has no record for a new rule to read.
+	for _, node := range newDef.nodes {
+		if !node.recorded {
+			continue
+		}
+		if index, ok := oldDef.index[node.id]; ok && oldDef.nodes[index].recorded {
+			continue
+		}
+		if checkpoint.Attempts[node.id] > 0 {
+			return refuse("a rule would read step %s, which has already run with nothing recording it; send the run back to before it and amend again", authoredRoot(node.id))
+		}
+	}
+
 	oldTargets := map[string]map[string]string{}
 	for _, edge := range oldDef.edges {
 		if oldTargets[edge.from] == nil {

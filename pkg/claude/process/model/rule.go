@@ -467,6 +467,21 @@ func validateRules(tmpl *Template, edges []Edge) Diagnostics {
 				}
 			}
 		}
+		for _, loop := range Loops(tmpl, edges) {
+			if loop.From != nodeID {
+				continue
+			}
+			// Round after round a rule reads the same values unless something
+			// in its loop does work: a loop of rules alone only spins.
+			worked := slices.ContainsFunc(loop.Body, func(id string) bool {
+				body := tmpl.Nodes[id]
+				return body.Type == NodeTypeTask || body.Type == NodeTypeSubprocess || (body.Type == NodeTypeDecision && !body.Performer.IsRule())
+			})
+			if !worked {
+				add("rule_loop_without_work", "nodes."+nodeID+".loops."+loop.Outcome,
+					"a rule's loop needs a step that does work: with only rules in it, every round reads the same values")
+			}
+		}
 		for outcome, loop := range node.Loops {
 			if isBlank(loop.OnExhausted) {
 				add("rule_loop_without_exhaustion", "nodes."+nodeID+".loops."+outcome,

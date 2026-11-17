@@ -152,3 +152,76 @@ func TestARunWithoutTheParamReadsItsDefault(t *testing.T) {
 		require.Equal(t, want, checkpoint.Rules["gate"].Outcome, "auto_merge=%q", params)
 	}
 }
+
+func TestAMayFailStepIsRecordedEvenWithNoRuleReadingIt(t *testing.T) {
+	ci := ruleProgram("end")
+	ci.MayFail = true
+	tmpl := &model.Template{APIVersion: model.APIVersion, Kind: model.Kind, ID: "may-fail", Start: "start", Nodes: map[string]model.Node{
+		"start": {Type: model.NodeTypeStart, Next: model.Next{model.DefaultOutcome: "ci"}},
+		"ci":    ci,
+		"end":   {Type: model.NodeTypeEnd},
+	}}
+	definition := mustPrepare(t, tmpl, nil)
+	checkpoint, err := Initialize("run-may-fail", definition)
+	require.NoError(t, err)
+	checkpoint, command := advanceAndPlan(t, checkpoint, definition)
+	checkpoint, err = Apply(checkpoint, definition, observed(command, ProgramFailed, 3))
+	require.NoError(t, err)
+	require.Equal(t, model.StepFailed, checkpoint.Steps["ci"].Result, "a later rule, amended in, must not read it as succeeded")
+	checkpoint, err = AdvanceUntilQuiescent(checkpoint, definition)
+	require.NoError(t, err)
+	require.Equal(t, RunCompleted, checkpoint.Status)
+}
+
+func TestARuleReadsOutputsOnlyOfAStepDoneThisRound(t *testing.T) {
+	definition := mustPrepare(t, mergeTemplate(), map[string]string{"merge": "yes"})
+	gate := definition.nodes[definition.index["gate"]]
+	checkpoint := Checkpoint{
+		Nodes: map[string]NodeStatus{"dev": NodePending, "ci": NodeDone},
+		Steps: map[string]StepRecord{"dev": {Result: "succeeded", Outputs: map[string]string{"risk": "high"}}},
+	}
+	_, ok := readOperand(checkpoint, gate.rule, model.Operand{Kind: model.OperandOutput, Name: "risk"})
+	require.False(t, ok, "an earlier round's output no longer stands")
+	checkpoint.Nodes["dev"] = NodeDone
+	value, ok := readOperand(checkpoint, gate.rule, model.Operand{Kind: model.OperandOutput, Name: "risk"})
+	require.True(t, ok)
+	require.Equal(t, "high", value)
+}
+
+func TestAnAmendmentCannotAddARuleReadingAStepThatAlreadyRan(t *testing.T) {
+	current := mergeTemplate()
+	gate := current.Nodes["gate"]
+	gate.Performer = &model.Performer{Kind: model.PerformerHuman, Ask: "Merge?"}
+	gate.Loops = map[string]model.LoopBound{"fix": {MaxIterations: 2, OnExhausted: "give-up"}}
+	current.Nodes["gate"] = gate
+	oldDef := mustPrepare(t, current, map[string]string{"merge": "yes"})
+	checkpoint, err := Initialize("run-amend-rule", oldDef)
+	require.NoError(t, err)
+	checkpoint, command := advanceAndPlan(t, checkpoint, oldDef)
+	report := observed(command, ProgramSucceeded, 0)
+	report.Observation.Outputs = map[string]string{"risk": "high"}
+	checkpoint, err = Apply(checkpoint, oldDef, report)
+	require.NoError(t, err)
+	require.Empty(t, checkpoint.Steps["dev"].Outputs, "no rule read dev, so nothing was kept")
+
+	amended := mergeTemplate()
+	newDef := mustPrepare(t, amended, map[string]string{"merge": "yes"})
+	_, _, err = Amend(checkpoint, oldDef, current, amended, newDef)
+	require.ErrorIs(t, err, ErrAmendmentRefused)
+	require.Contains(t, err.Error(), "step dev")
+}
+
+func TestALoadedCheckpointRefusesAStrayRuleChoice(t *testing.T) {
+	checkpoint, definition := ruleRun(t, "yes", 0)
+	stray := cloneCheckpoint(checkpoint)
+	stray.Rules["dev"] = RuleChoice{Case: 0, Outcome: "fix", Count: 1}
+	encoded, err := json.Marshal(stray)
+	require.NoError(t, err)
+	_, err = DecodeCheckpoint(encoded, definition)
+	require.ErrorIs(t, err, ErrInvalidCheckpoint)
+	stray = cloneCheckpoint(checkpoint)
+	stray.Rules["gate"] = RuleChoice{Case: 7, Outcome: "merge", Count: 1}
+	encoded, _ = json.Marshal(stray)
+	_, err = DecodeCheckpoint(encoded, definition)
+	require.ErrorIs(t, err, ErrInvalidCheckpoint)
+}

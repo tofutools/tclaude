@@ -139,7 +139,12 @@ func readOperand(checkpoint Checkpoint, rule *preparedRule, operand model.Operan
 		value, ok := rule.params[operand.Name]
 		return value, ok
 	case model.OperandOutput:
+		// Only a step done this round has outputs: what it reported in an
+		// earlier round, or on a branch not taken, no longer stands.
 		owner := rule.outputs[operand.Name]
+		if checkpoint.Nodes[owner] != NodeDone {
+			return "", false
+		}
 		value, ok := checkpoint.Steps[owner].Outputs[operand.Name]
 		return value, ok
 	case model.OperandResult:
