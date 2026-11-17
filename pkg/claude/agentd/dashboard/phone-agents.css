@@ -139,7 +139,6 @@
 :root[data-layout="phone"] .phone-agent-tile:disabled,
 :root[data-layout="phone"] .phone-agent-tile[aria-disabled="true"] { opacity: .4; cursor: default; }
 :root[data-layout="phone"] .phone-agent-tile-icon { font-size: 20px; line-height: 1; }
-:root[data-layout="phone"] .phone-agent-menu-head { margin: 14px 4px 4px; }
 :root[data-layout="phone"] .phone-agent-menu-item { min-height: 52px; text-decoration: none; }
 :root[data-layout="phone"] .phone-agent-menu-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 :root[data-layout="phone"] .phone-agent-menu-text small { color: var(--ui-muted-text); font-size: 12.5px; }
@@ -152,7 +151,6 @@
 :root[data-layout="phone"] .phone-agents-view-head .phone-agents-sheet-title { flex: 1; margin: 0; font-size: 17px; }
 :root[data-layout="phone"] .phone-agents-view-reset { min-height: var(--phone-tap); font-size: 14px; }
 :root[data-layout="phone"] .phone-agents-view-reset:disabled { color: var(--ui-muted-text); opacity: .5; cursor: default; }
-:root[data-layout="phone"] .phone-agents-view .ui-eyebrow { margin: 14px 0 6px; }
 :root[data-layout="phone"] .phone-agents-seg {
   display: flex; gap: 2px; padding: 2px; margin: 0;
   border-radius: 10px; background: var(--phone-panel); border: 1px solid var(--phone-line);

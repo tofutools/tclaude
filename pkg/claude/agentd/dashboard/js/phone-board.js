@@ -19,7 +19,7 @@ import { signal } from '@preact/signals';
 import htm from 'htm';
 import { companionAgents } from './companion-model.js';
 import { boardGroups } from './phone-shell-model.js';
-import { ButtonRow, Card, ChipRow, Section } from './phone-ui.js';
+import { ButtonRow, Card, ChipRow, Section, SheetHead } from './phone-ui.js';
 import { usePhoneBar } from './phone-page.js';
 import { openPhoneSheet, requestClosePhoneSheet } from './phone-sheet.js';
 import { DiscardAsk, useDraftGuard } from './phone-draft-guard.js';
@@ -104,7 +104,7 @@ export function MoveSheet({ task, entry, peers, api, source, close }) {
   };
   return html`<div class="phone-board-move">
     <p class="phone-board-sheet-title">${task.title}</p>
-    <h2 class="ui-eyebrow phone-menu-head">Move to</h2>
+    <${SheetHead}>Move to<//>
     <ul class="phone-menu">
       ${columns.map((column) => html`<li key=${column.key}>
         <button data-ui-exempt type="button" class="phone-menu-item" disabled=${column.current || column.disabled}
@@ -116,7 +116,7 @@ export function MoveSheet({ task, entry, peers, api, source, close }) {
         </button>
       </li>`)}
     </ul>
-    <h2 class="ui-eyebrow phone-menu-head">Order</h2>
+    <${SheetHead}>Order<//>
     <${ButtonRow} buttons=${[
       { key: 'top', label: '⤒ Top', disabled: !moves.top, onClick: go(() => api.move(task.id, moves.top), 'Could not move it') },
       { key: 'up', label: '↑ Up', disabled: !moves.up, onClick: go(() => api.move(task.id, moves.up), 'Could not move it') },

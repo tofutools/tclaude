@@ -93,6 +93,13 @@ export function Section({ title, count = null, children, more = null, fold = nul
   </div>`;
 }
 
+// SheetHead is a sub-head inside a sheet ("Move to", "Actions", "Session"):
+// the same eyebrow as a Section's head, with one margin everywhere. A sheet
+// has its own title above, so it is an h3.
+export function SheetHead({ class: extra, children, ...rest }) {
+  return html`<h3 ...${rest} class=${join('ui-eyebrow phone-sheet-subhead', extra)}>${children}</h3>`;
+}
+
 // ChipRow is a row of rounded chips that scrolls sideways: one view's
 // filters or groups, one of them picked. items: [{ key, label, count?,
 // badge?, badgeTone? }]; count is muted after the label, badge a bubble

@@ -22,7 +22,7 @@ import { gateNodeOf, useRunDetail, verdictPresentation } from './groups-run-focu
 import { openPhoneSheet } from './phone-sheet.js';
 import { DiscardAsk, useDraftGuard } from './phone-draft-guard.js';
 import { Button, Textarea } from './ui-components.js';
-import { Avatar, Card, StatePill } from './phone-ui.js';
+import { Avatar, Card, Section, StatePill } from './phone-ui.js';
 import { usePhonePage } from './phone-page.js';
 import { relTime } from './helpers.js';
 import { DesktopOnlyNote } from './phone-desktop-only.js';
@@ -181,10 +181,9 @@ function RunRow({ item, waiting, onOpen }) {
 
 function RunSection({ title, items, waiting = false, onOpen }) {
   if (!items.length) return null;
-  return html`<div class="phone-run-section" role="region" aria-label=${title}>
-    <h2 class="ui-eyebrow phone-section-title">${title}</h2>
+  return html`<${Section} title=${title} class="phone-run-section">
     <ul class="phone-list">${items.map((item) => html`<${RunRow} key=${item.run.runId} item=${item} waiting=${waiting} onOpen=${onOpen} />`)}</ul>
-  </div>`;
+  <//>`;
 }
 
 // RunsList is the Runs view: every group's runs, waiting on you first.
@@ -439,20 +438,22 @@ export function RunPage({ runId, back, active = true, api = runDetailApi, source
     <p class="phone-run-facts">${[where, run.status, run.startedAt && `started ${relTime(run.startedAt)}`,
       run.startedAt && `${formatRunDuration(run.startedAt, Date.parse(run.status === 'running' ? '' : run.updatedAt || '') || Date.now())}`]
       .filter(Boolean).join(' · ')}</p>
-    <h2 class="ui-eyebrow phone-section-title">Steps</h2>
-    <ol class="phone-run-steps">${steps.map((step) => {
-      const mine = waitingOn.has(String(step.id));
-      const who = mine ? 'you' : (step.performer?.label || step.performer?.name || '');
-      // A finished step says who did it and when.
-      const when = step.state === 'done' || step.state === 'failed' ? relTime(lastEvent.get(String(step.id))?.occurredAt) : '';
-      const meta = mine ? 'you' : [who, when].filter(Boolean).join(' · ');
-      return html`<li key=${step.id} class=${`phone-run-step s-${step.state}${mine ? ' mine' : ''}`}>
-        <span class="phone-run-dot" aria-hidden="true"></span>
-        <span class="phone-run-step-label">${step.label}</span>
-        <span class="phone-run-step-meta">${meta || stateLabel(step.state)}</span>
-      </li>`;
-    })}</ol>
-    <h2 class="ui-eyebrow phone-section-title">Log</h2>
-    <${RunLog} events=${detail.events} nameOf=${nameOf} catchingUp=${detail.catchingUp} limit=${40} />
+    <${Section} title="Steps">
+      <ol class="phone-run-steps">${steps.map((step) => {
+        const mine = waitingOn.has(String(step.id));
+        const who = mine ? 'you' : (step.performer?.label || step.performer?.name || '');
+        // A finished step says who did it and when.
+        const when = step.state === 'done' || step.state === 'failed' ? relTime(lastEvent.get(String(step.id))?.occurredAt) : '';
+        const meta = mine ? 'you' : [who, when].filter(Boolean).join(' · ');
+        return html`<li key=${step.id} class=${`phone-run-step s-${step.state}${mine ? ' mine' : ''}`}>
+          <span class="phone-run-dot" aria-hidden="true"></span>
+          <span class="phone-run-step-label">${step.label}</span>
+          <span class="phone-run-step-meta">${meta || stateLabel(step.state)}</span>
+        </li>`;
+      })}</ol>
+    <//>
+    <${Section} title="Log">
+      <${RunLog} events=${detail.events} nameOf=${nameOf} catchingUp=${detail.catchingUp} limit=${40} />
+    <//>
   </div>`;
 }

@@ -105,7 +105,6 @@
 /* The mailbox sheet (the title's ▾). */
 :root[data-layout="phone"] .phone-mail-boxes .phone-menu-item.on { color: var(--phone-accent-bg); font-weight: 600; }
 :root[data-layout="phone"] .phone-mail-boxes .phone-av { width: 34px; height: 34px; font-size: 15px; }
-:root[data-layout="phone"] .phone-mail-boxes-head { margin: 16px 4px 6px; }
 :root[data-layout="phone"] .phone-mail-boxes .phone-mail-search { margin-bottom: 4px; }
 :root[data-layout="phone"] .phone-mail-folder { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
@@ -188,4 +187,5 @@
 /* The reader's decision: Now's decision block (a note, full-width options,
    Dismiss) under the message. */
 :root[data-layout="phone"] .phone-mail-decision { margin-top: 18px; }
-:root[data-layout="phone"] .phone-mail-decision-head { margin: 0 2px 8px; }
+/* Decide opens its box: no space above it. */
+:root[data-layout="phone"] .phone-mail-decision .phone-sheet-subhead { margin-top: 0; }

@@ -300,7 +300,8 @@
   max-height: calc(85vh - max(var(--footer-h), var(--phone-keyboard))); padding-bottom: 16px;
 }
 :root[data-layout="phone"] .phone-menu { list-style: none; margin: 0; padding: 0; }
-:root[data-layout="phone"] .phone-menu-head { margin: 14px 0 4px; }
+/* A sheet's sub-head (SheetHead): a Section head's type, one margin. */
+:root[data-layout="phone"] .phone-sheet-subhead { margin: 14px 4px 6px; font-size: 12px; font-weight: 700; }
 :root[data-layout="phone"] .phone-menu-item {
   display: flex; align-items: center; gap: 14px; width: 100%; min-height: 58px; padding: 0 6px;
   background: none; border: 0; border-bottom: 1px solid var(--phone-tile);

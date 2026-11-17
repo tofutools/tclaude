@@ -8,7 +8,7 @@ import htm from 'htm';
 import { footerMetaView } from './shell-model.js';
 import { MORE_TABS } from './phone-shell-model.js';
 import { NodeChip } from './phone-node-picker.js';
-import { ScopeBadge } from './phone-ui.js';
+import { ScopeBadge, SheetHead } from './phone-ui.js';
 import { featureState } from './feature-state-registry.js';
 import { openSettingsSection } from './phone-config-island.js';
 import { openPhoneSheet } from './phone-sheet.js';
@@ -61,7 +61,7 @@ export function MoreMenu({ state, actions, close, fleet = null, doctor = feature
         after=${entry.tab === 'diagnostics' ? html`<${DiagnosticsCounts} doctor=${doctor} />` : null}
         end=${entry.scope && html`<span class="phone-menu-end"><${ScopeBadge} kind=${entry.scope.kind}>${entry.scope.text}<//></span>`} />`)}
     </ul>
-    <h2 class="ui-eyebrow phone-menu-head">Actions</h2>
+    <${SheetHead}>Actions<//>
     <ul class="phone-menu">
       <${Entry} icon="🟢" label="Power on all" onClick=${() => run(actions.powerOnAll)} />
       <${Entry} icon="🛑" label="Shut down all…" danger onClick=${() => run(actions.shutdownAll)} />

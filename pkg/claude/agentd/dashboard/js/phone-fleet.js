@@ -14,6 +14,7 @@ import { fleetAdminLocation, fleetAdminPage, setFleetAdminPage } from './fleet-a
 import { hubOffReason } from './fleet-model.js';
 import { relTime } from './helpers.js';
 import { DesktopOnlyNote, DesktopOnlyPage } from './phone-desktop-only.js';
+import { Section } from './phone-ui.js';
 
 const html = htm.bind(h);
 
@@ -95,16 +96,14 @@ export function PhoneFleet({ state, page = fleetAdminPage }) {
   const asking = (current.strangers || []).filter((stranger) => stranger.request);
   return html`<div class="phone-fleet">
     <${ThisNode} node=${node} />
-    <div class="phone-section" role="group" aria-label="Trusted peers">
-      <h2 class="phone-section-head ui-eyebrow">Trusted peers · ${peers.length}</h2>
+    <${Section} title="Trusted peers" count=${peers.length}>
       ${peers.length
         ? html`<ul class="phone-list">${peers.map((peer) => html`<${Peer} key=${peer.id} peer=${peer} />`)}</ul>`
         : html`<p class="ui-empty phone-empty">No trusted peers yet.</p>`}
-    </div>
-    ${asking.length > 0 && html`<div class="phone-section" role="group" aria-label="Waiting to be trusted">
-      <h2 class="phone-section-head ui-eyebrow">Waiting to be trusted · ${asking.length}</h2>
+    <//>
+    ${asking.length > 0 && html`<${Section} title="Waiting to be trusted" count=${asking.length}>
       <ul class="phone-list">${asking.map((stranger) => html`<${Asking} key=${stranger.id} stranger=${stranger} />`)}</ul>
-    </div>`}
+    <//>`}
     <${DesktopOnlyNote} what="Trust, grants, hub settings and the rest of Fleet admin are" />
   </div>`;
 }

@@ -139,16 +139,15 @@ function Limit({ label, presets, value, onChange, show, customLabel, placeholder
   // A value no preset shows (the policy's default time, say) shows in the
   // field, never as no choice at all.
   useEffect(() => { if (!presets.includes(value)) setCustom(true); }, [value, presets.join('|')]);
-  return html`<div class="phone-grant-limit">
-    <h2 class="ui-eyebrow phone-grant-label">${label}</h2>
-    <${Seg} class="phone-grant-seg" aria-label=${label}>
+  return html`<${Section} title=${label} class="phone-grant-limit">
+    <${Seg} class="phone-grant-seg">
       ${presets.map((preset) => html`<${Button} key=${preset || 'none'} pressed=${!custom && value === preset}
         onClick=${() => { setCustom(false); onChange(preset); }}>${show(preset)}<//>`)}
       <${Button} pressed=${custom} aria-label=${customLabel} onClick=${() => setCustom(true)}>…<//>
     <//>
     ${custom && html`<${Input} class="phone-grant-custom" aria-label=${customLabel} placeholder=${placeholder} inputmode=${inputMode}
       autocomplete="off" spellcheck=${false} invalid=${bad} value=${value} onInput=${(event) => onChange(event.currentTarget.value)} />`}
-  </div>`;
+  <//>`;
 }
 
 // PermsStep is step 2: what, for how long, how often, why.
@@ -210,7 +209,7 @@ function PermsStep({ snapshot, agent, grantActions, onBack, onGranted }) {
   };
   return html`<div class="phone-grant phone-grant-perms">
     <p class="phone-grant-warn" role="note"><b>Temporary:</b> what you pick applies at once and ends by itself when a limit runs out. Sudo wins over an explicit Deny.</p>
-    <h2 class="ui-eyebrow phone-grant-label">Permissions · ${pickedRows.length} picked</h2>
+    <${Section} title="Permissions" count=${`${pickedRows.length} picked`}>
     ${pickedRows.length > 0 && html`<div class="phone-grant-picked">${pickedRows.map((row) => html`<button data-ui-exempt type="button" key=${row.slug}
       class="phone-grant-chip" aria-label=${`Remove ${row.slug}`} onClick=${() => toggle(row.slug)}>${row.slug} <span aria-hidden="true">✕</span></button>`)}</div>`}
     <${Input} class="phone-access-search" type="search" aria-label="Filter permissions" placeholder=${`Filter ${rows.length} permissions`}
@@ -232,6 +231,7 @@ function PermsStep({ snapshot, agent, grantActions, onBack, onGranted }) {
       </li>`;
     })}</ul>
     ${shown.length < matching.length && html`<${Button} class="phone-wide" onClick=${() => setAll(true)}>Show all ${matching.length} permissions<//>`}
+    <//>
     <${Limit} label="Time limit" presets=${presets} value=${duration} customLabel="Custom time limit" placeholder="like 20m or 1h30m"
       show=${(preset) => goDuration(sudoDurationText(sudoDurationSeconds(preset)))}
       bad=${!!duration.trim() && (!sudoDurationSeconds(duration) || sudoDurationSeconds(duration) > policy.max_seconds)}
@@ -239,9 +239,10 @@ function PermsStep({ snapshot, agent, grantActions, onBack, onGranted }) {
     <${Limit} label="Max uses" presets=${USES_PRESETS} value=${uses} customLabel="Custom use limit" placeholder=${`1 to ${MAX_USES}`} inputMode="numeric"
       show=${(preset) => preset || 'No limit'} bad=${!usesValid(uses)} onChange=${setUses} />
     ${uncounted > 0 && html`<p class="phone-grant-note">${uncounted} picked ${uncounted === 1 ? 'takes' : 'take'} no use limit, only the time limit.</p>`}
-    <h2 class="ui-eyebrow phone-grant-label">Reason</h2>
-    <${Input} class="phone-grant-reason" aria-label="Reason" placeholder="optional, kept on the audit row" autocomplete="off"
-      value=${reason} onInput=${(event) => setReason(event.currentTarget.value)} />
+    <${Section} title="Reason">
+      <${Input} class="phone-grant-reason" aria-label="Reason" placeholder="optional, kept on the audit row" autocomplete="off"
+        value=${reason} onInput=${(event) => setReason(event.currentTarget.value)} />
+    <//>
     ${error && html`<div role="alert" class="ui-error-box">${error}</div>`}
     <div class="phone-grant-bar">
       ${!plan.ready && html`<p class="phone-grant-why">${plan.why}</p>`}

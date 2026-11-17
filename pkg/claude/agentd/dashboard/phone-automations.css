@@ -27,7 +27,6 @@
 }
 :root[data-layout="phone"] .phone-auto-switch { margin-inline: 4px; }
 :root[data-layout="phone"] .phone-auto-pager { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin: 12px 0; }
-:root[data-layout="phone"] .phone-section-title { margin: 18px 0 6px; }
 :root[data-layout="phone"] .phone-auto-page { padding: 12px var(--phone-gutter) 24px; }
 :root[data-layout="phone"] .phone-auto-summary { margin: 0 0 10px; color: var(--ui-text-strong); }
 :root[data-layout="phone"] .phone-auto-facts { display: grid; grid-template-columns: 96px 1fr; gap: 8px 12px; margin: 0; font-size: 14px; }
@@ -39,7 +38,6 @@
   font-family: var(--ui-mono, ui-monospace, monospace); font-size: 12px; color: var(--ui-muted-text); overflow-wrap: anywhere;
 }
 
-:root[data-layout="phone"] .phone-runs .phone-section-title:first-child { margin-top: 8px; }
 :root[data-layout="phone"] .phone-run-open {
   display: flex; align-items: center; gap: 10px; width: 100%; min-height: var(--phone-tap); padding: 10px 0;
   background: none; border: 0; color: var(--ui-text); font: inherit; text-align: left; cursor: pointer;
@@ -88,3 +86,5 @@
 :root[data-layout="phone"] .phone-run-page .pov-note { flex-basis: 100%; font-size: 14px; padding: 8px; }
 :root[data-layout="phone"] .phone-run-page .pov-raise textarea { font-size: 14px; }
 :root[data-layout="phone"] .phone-run-page .pov-log-list { font-size: 13px; }
+/* The Runs list's first section sits 8px under the chips. */
+:root[data-layout="phone"] .phone-runs > .phone-section:first-child { margin-top: 8px; }
