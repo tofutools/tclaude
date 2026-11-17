@@ -21,7 +21,7 @@ const FIXTURE = new URL('./process-reference-recipes.json', import.meta.url);
 // BUDGET is how many inline edits each process takes today. A change that
 // makes building one harder fails here; one that makes it easier lowers
 // the number (and should lower the budget with it).
-const BUDGET = { simple: 41, advanced: 79, 'advanced-tracks': 84 };
+const BUDGET = { simple: 41, advanced: 79, 'advanced-tracks': 76 };
 // FULL_BUDGET is the same for the full editor (process-reference-full.mjs),
 // which names a node apart from adding it and has no Who picker.
 const FULL_BUDGET = { simple: 65, advanced: 126 };

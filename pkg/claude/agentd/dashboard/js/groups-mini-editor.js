@@ -23,7 +23,7 @@ import { ProcessEditModel } from './process-edit-model.js';
 import {
   addOutcome, branch, branchKinds, canBranch, canDelete, canInsertAfter, canInsertBefore, canRunAlongside, changeKind, changeSummary,
   deleteOrphans, deleteStep, draftProjection, duplicate, insertAfter, insertBefore, isStep, miniKind, outcomesOf,
-  canRemoveOutcome, removeOutcome, renameOutcome, runAlongside, REVIEWER_TRACK, canAddReviewerTrack, reviewLoop, setLoopRounds, setOutcomeTarget, targetsFor, updateStep,
+  canRemoveOutcome, removeOutcome, renameOutcome, runAlongside, REVIEWER_TRACK, canAddReviewerTrack, reviewerRoleOf, reviewLoop, setLoopRounds, setOutcomeTarget, targetsFor, updateStep,
   addDecider, canAddDecider, gateDeciders, removeDecider, setAgree, setDecider,
   exhaustionOptions, setDecisionWho, setExhaustion, declareParams, setParams, insertOnAnswer, ruleOperands, setRule,
 } from './process-mini-edit.js';
@@ -42,7 +42,7 @@ import {
 import {
   AUTOSAVE_DELAY_MS, DRAFT_DESCRIPTION_MAX, FallbackPicker, TypedField, UNTITLED_PROCESS, WhoPicker, defaultNotify, inheritLabel, useSpawnProfiles,
 } from './groups-quickstart.js';
-import { fallbackNote, setStepFallback, stepFallbackValue } from './process-quickstart.js';
+import { fallbackNote, groupRoles, setStepFallback, stepFallbackValue } from './process-quickstart.js';
 import { withShortcut } from './keybindings.js';
 import { Button, Select } from './ui-components.js';
 import { GetHelpMenu } from './get-help-menu.js';
@@ -451,8 +451,8 @@ function Inspector({ view, id, roster, roles, fallbackInfo, onApply, onRename, o
       value=${constraint} onChange=${(event) => onApply(updateStep(view, id, (s) => setStepConstraint(s, constraintFromValue(event.currentTarget.value))))}>
       <option value="">whoever fits</option>
       ${!constraintKnown && html`<option value=${constraint}>${constraint.startsWith('same:') ? `same as ${stepName(constraint.slice(5))}` : `not the agent of ${constraint.slice(10).split(',').map(stepName).join(', ')}`}</option>`}
-      <optgroup label="The same agent as">${others.filter((other) => !view.template.nodes[other]?.deciders?.length).map((other) => html`<option key=${`same:${other}`} value=${`same:${other}`}>${stepName(other)}</option>`)}</optgroup>
-      <optgroup label="Not the agent of">${others.map((other) => html`<option key=${`different:${other}`} value=${`different:${other}`}>${stepName(other)}</option>`)}</optgroup>
+      <optgroup label="The same agent as">${others.filter((other) => !view.template.nodes[other]?.deciders?.length).map((other) => html`<option key=${`same:${other}`} value=${`same:${other}`}>same as ${stepName(other)}</option>`)}</optgroup>
+      <optgroup label="Not the agent of">${others.map((other) => html`<option key=${`different:${other}`} value=${`different:${other}`}>not ${stepName(other)}</option>`)}</optgroup>
     <//></div>`}
     ${kind === 'agent' && !spawns && html`<div class="gm-field" data-mini-fallback=${id}><span>If nobody</span><${FallbackPicker} value=${stepFallbackValue(step)}
       label="If no member can take this step" inherit=${inheritLabel(fallbackInfo.fallback, fallbackInfo.defaultSpawnProfile)}
@@ -1006,7 +1006,9 @@ export function MiniGraphEditor({
       const box = event.currentTarget?.getBoundingClientRect?.() || { left: 0, bottom: 0 };
       if (!why) setPicker({ op, id, cx: box.left, cy: box.bottom + 4 });
     }}>${glyph}<span>${text}</span></button>`;
-  const OPS = { after: insertAfter, branch, alongside: runAlongside, before: insertBefore, answer: (v, id, kind) => insertOnAnswer(v, id, picker.outcome, kind) };
+  // A new reviewer track's review defaults to the group's reviewer role.
+  const trackOptions = { reviewerRole: reviewerRoleOf(roles?.length ? roles : groupRoles(roster)) };
+  const OPS = { after: (v, id, kind) => insertAfter(v, id, kind, trackOptions), branch, alongside: (v, id, kind) => runAlongside(v, id, kind, trackOptions), before: insertBefore, answer: (v, id, kind) => insertOnAnswer(v, id, picker.outcome, kind) };
   const dropOp = (id) => (draft.template.nodes[id]?.type === 'decision' && !canBranch(draft, id) ? 'branch' : 'after');
   // overlay draws, over the laid-out graph: the hovered (or selected) step's
   // handles, a drag's ghost, the kind picker and the structure menu.

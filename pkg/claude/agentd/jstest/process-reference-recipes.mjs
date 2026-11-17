@@ -327,8 +327,8 @@ function advancedWith(reviews) {
       const added = track ? e.add('alongside', track, m.REVIEWER_TRACK) : e.add('after', implement, m.REVIEWER_TRACK);
       track = e.name(added.id, name);
       e.text(track, `${focus} ${VERDICT}`);
-      e.who(track, ANYONE);
-      e.land(`constraint ${track}`, m.updateStep(e.view, track, (s) => setStepConstraint(s, { mode: 'different', steps: [implement] })));
+      // Its Who (anyone free, the group having no reviewer role) and "not
+      // the implementor" are the new track's defaults: no edits.
     }
   }
   return e;

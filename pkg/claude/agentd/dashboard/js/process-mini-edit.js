@@ -512,10 +512,10 @@ export function setDecisionWho(view, id, who) {
 }
 
 // insertAfter puts a new step on `id`'s main path, before what came next.
-export function insertAfter(view, id, kind) {
+export function insertAfter(view, id, kind, options = {}) {
   const why = canInsertAfter(view, id);
   if (why) throw new Error(why);
-  if (kind === REVIEWER_TRACK) return addReviewerTrack(view, id);
+  if (kind === REVIEWER_TRACK) return addReviewerTrack(view, id, options);
   const next = copyView(view);
   const added = addNode(next, newStepNode(kind));
   const main = mainEdge(next, id);
@@ -597,10 +597,10 @@ export function insertOnAnswer(view, id, outcome, kind) {
 // goes to a new parallel node that fans out to both, and both join at what
 // came after `id`. On a one-step branch of a fork already there, the new step
 // is one more branch of that fork, joining where the others do.
-export function runAlongside(view, id, kind) {
+export function runAlongside(view, id, kind, options = {}) {
   const why = canRunAlongside(view, id);
   if (why) throw new Error(why);
-  if (kind === REVIEWER_TRACK || (reviewLoop(view, id) && !trackFork(view, id))) return addReviewerTrack(view, id);
+  if (kind === REVIEWER_TRACK || (reviewLoop(view, id) && !trackFork(view, id))) return addReviewerTrack(view, id, options);
   const into = trackFork(view, id);
   if (into) {
     const next = copyView(view);
@@ -639,6 +639,12 @@ export function runAlongside(view, id, kind) {
 // REVIEWER_TRACK is the kind the + after and ⫴ alongside pickers offer for a
 // reviewer track.
 export const REVIEWER_TRACK = 'reviewer-track';
+
+// reviewerRoleOf is the role a new review defaults to: the group's role named
+// reviewer (any case), else ''. roles is [{ role }], as the Who picker has it.
+export function reviewerRoleOf(roles = []) {
+  return (roles || []).map((entry) => String(entry?.role || '')).find((role) => role.toLowerCase() === 'reviewer') || '';
+}
 
 // sideExits are id's outcomes other than its main way on that are neither a
 // loop back nor a way to fail the run: what would leave a track.
@@ -714,17 +720,23 @@ export function canAddReviewerTrack(view, id) {
 // The fix goes to the agent that did the reviewed step (sameAs) when that is
 // an agent step, so fixes from every track queue on that one agent while the
 // reviews run alongside each other. A used-up track fails the run.
-export function addReviewerTrack(view, id) {
+//
+// The review starts with a reviewer: any member with the group's reviewer
+// role (reviewerRole, when the group has one), else anyone free, and, like
+// a gate's + another decider, it is kept off the agent that did the
+// reviewed step. Both are the usual Who and "not", to change as any other.
+export function addReviewerTrack(view, id, { reviewerRole = '' } = {}) {
   const site = reviewSite(view, id);
   if (site.why) throw new Error(site.why);
   const next = copyView(view);
   const count = Object.keys(next.template.nodes).filter((nodeID) => reviewLoop(next, nodeID)).length + 1;
   const suffix = count > 1 ? ` ${count}` : '';
   const reviewed = next.template.nodes[site.reviewed];
-  const review = addNode(next, {
-    type: 'decision', name: `Review${suffix}`,
-    performer: { kind: 'agent', prompt: 'Review the work. Report approved, or changes with what to fix.' },
-  }, `review${suffix}`);
+  const reviewer = { kind: 'agent', prompt: 'Review the work. Report approved, or changes with what to fix.' };
+  if (reviewerRole) reviewer.role = reviewerRole;
+  else reviewer.anyone = true;
+  if (reviewed?.type === 'task' && reviewed.performer?.kind === 'agent') reviewer.differentFrom = [site.reviewed];
+  const review = addNode(next, { type: 'decision', name: `Review${suffix}`, performer: reviewer }, `review${suffix}`);
   const fixPerformer = { kind: 'agent', prompt: 'Address the review feedback, then hand the work back for review.' };
   if (reviewed?.type === 'task' && reviewed.performer?.kind === 'agent') fixPerformer.sameAs = site.reviewed;
   const fix = addNode(next, { type: 'task', name: `Fix${suffix}`, performer: fixPerformer }, `fix${suffix}`);
