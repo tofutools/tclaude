@@ -45,8 +45,9 @@ test('After lists the dependencies with where each stands; Epic finds the parent
   const m = await harness.importDashboardModule('js/phone-task-links.js');
   const entry = board();
   const page = entry.tasks[1];
-  assert.deepEqual(m.depRows(page, entry).map((row) => [row.title, row.state.text, row.open]), [
-    ['Payments API', 'started', true], ['Address form', 'done', true], ['tk_gone', 'not on the board', false]]);
+  assert.deepEqual(m.depRows(page, entry).map((row) => [row.title, row.state.text]), [
+    ['Payments API', 'started'], ['Address form', 'done'], ['tk_gone', 'done']]);
+  assert.equal(m.depRows({ ...page, unmet: ['tk_gone'] }, entry)[2].state.text, 'not on the board', 'still waited on, but not listed');
   assert.deepEqual(m.epicOfTask(page, entry), { id: 'tk_epic', title: 'Checkout v2', progress: entry.tasks[0].progress });
   assert.equal(m.epicOfTask({ parent_id: 'tk_old' }, entry).gone, true);
   assert.equal(m.epicOfTask(entry.tasks[0], entry), null, 'an epic is in none');
@@ -95,7 +96,8 @@ test("a task's page shows its refs, epic and dependencies, and a tap opens one",
   await harness.act(() => c.querySelector('[data-task-epic="tk_epic"] button').click());
   await harness.act(() => c.querySelector('[data-task-dep="tk_api"] button').click());
   assert.deepEqual(opened, ['tk_epic', 'tk_api']);
-  assert.equal(c.querySelector('[data-task-dep="tk_gone"] button'), null, 'a dependency the board no longer lists does not open');
+  await harness.act(() => c.querySelector('[data-task-dep="tk_gone"] button').click());
+  assert.deepEqual(opened.at(-1), 'tk_gone', 'a dependency the board no longer lists still opens: the read finds it');
 });
 
 test("an epic's page shows its progress and its tasks", async (t) => {

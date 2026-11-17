@@ -40,6 +40,17 @@ const html = htm.bind(h);
 // null. Search opens a task by setting it (openBoardTask) with the Board up.
 export const boardTask = signal(null);
 
+// openFrom opens task id from the page of `open` (its epic, a dependency):
+// Back returns to `open`. closeTask is Back: the task it was opened from, or
+// the board.
+export function openFrom(open, id) {
+  return { id, group: open.group, back: [...(open.back || []), open.id] };
+}
+export function closeTask(open) {
+  const back = open?.back || [];
+  return back.length ? { id: back[back.length - 1], group: open.group, back: back.slice(0, -1) } : null;
+}
+
 export function openBoardTask(id, group) {
   boardTask.value = id && group ? { id, group } : null;
 }
@@ -239,7 +250,7 @@ export function BoardView({ source, state, actions, fetchImpl = globalThis.fetch
 
   if (open) {
     return html`<${TaskPage} key=${open.id} id=${open.id} group=${open.group} source=${source} state=${state} api=${api}
-      onClose=${() => { boardTask.value = null; }} onOpenTask=${(id) => { boardTask.value = { id, group: open.group }; }} onMove=${(task, entry_) => openSheet('Move', MoveSheet, { task, entry: entry_, peers: sectionPeers(entry_, task) })} />`;
+      onClose=${() => { boardTask.value = closeTask(open); }} onOpenTask=${(id) => { boardTask.value = openFrom(open, id); }} onMove=${(task, entry_) => openSheet('Move', MoveSheet, { task, entry: entry_, peers: sectionPeers(entry_, task) })} />`;
   }
 
   if (status === 'unavailable') return html`<p class="ui-empty phone-empty">Task boards are turned off.</p>`;

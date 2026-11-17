@@ -64,15 +64,17 @@ export function refRow(ref) {
 // boardTasks are the tasks the board knows: open, then recently closed.
 const boardTasks = (entry) => [...(entry?.tasks || []), ...(entry?.closed || [])];
 
-// depRows are the tasks this one comes after, each with where it stands; a
-// dependency the board no longer lists shows its id.
+// depRows are the tasks this one comes after, each with where it stands. The
+// board lists only its latest closed tasks, so a dependency it does not list
+// shows its id: done when the task no longer waits on it (`unmet`), else not
+// on the board. Every row opens: the task's own read finds it either way.
 export function depRows(task, entry) {
   const known = boardTasks(entry);
+  const unmet = new Set(task?.unmet || []);
   return (task?.depends_on || []).map((id) => {
     const dep = known.find((t) => t.id === id);
-    return dep
-      ? { id, title: dep.title || id, state: taskStateLabel(dep, entry), open: true }
-      : { id, title: id, state: { text: 'not on the board', tone: 'off' }, open: false };
+    if (dep) return { id, title: dep.title || id, state: taskStateLabel(dep, entry) };
+    return { id, title: id, state: unmet.has(id) ? { text: 'not on the board', tone: 'off' } : { text: 'done', tone: 'idle' } };
   });
 }
 
@@ -145,7 +147,7 @@ export function TaskAfter({ task, entry, onOpen }) {
   return html`<${Section} title="After" count=${rows.length}>
     <${Card} class="phone-rows-card"><ul class="phone-rows phone-task-deps">
       ${rows.map((row) => html`<${TaskRow} key=${row.id} row=${row} attr=${{ 'data-task-dep': row.id }}
-        onTap=${row.open ? () => onOpen(row.id) : null} />`)}
+        onTap=${() => onOpen(row.id)} />`)}
     </ul><//>
   <//>`;
 }
@@ -153,7 +155,7 @@ export function TaskAfter({ task, entry, onOpen }) {
 // TaskEpic is the Epic section: for a task in one, the epic (a tap opens
 // it) with its progress; for an epic, its progress and its tasks, read with
 // the page's full read (`full`, which carries `children`).
-export function TaskEpic({ task, entry, full, onOpen }) {
+export function TaskEpic({ task, entry, full, failed = '', onOpen }) {
   if (isEpic(task)) {
     const progress = full?.progress || task.progress || {};
     const children = full ? childRows(full.children || []) : null;
@@ -162,7 +164,7 @@ export function TaskEpic({ task, entry, full, onOpen }) {
         <${EpicProgress} epic=${{ progress }} large=${true} />
         <span class="phone-task-ref-sub">${progressParts(progress).join(' · ')}</span>
       </div>
-      ${children === null ? html`<p class="ui-empty">Loading…</p>`
+      ${children === null ? html`<p class="ui-empty">${failed ? 'Could not read its tasks.' : 'Loading…'}</p>`
         : !children.length ? html`<p class="ui-empty">No tasks in it yet.</p>`
         : html`<${Card} class="phone-rows-card"><ul class="phone-rows phone-task-children">
           ${children.map((row) => html`<${TaskRow} key=${row.id} row=${row} attr=${{ 'data-task-child': row.id }} onTap=${() => onOpen(row.id)} />`)}

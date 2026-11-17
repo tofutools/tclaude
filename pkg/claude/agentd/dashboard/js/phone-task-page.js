@@ -154,7 +154,7 @@ export function TaskPage({ id, group, source, state, api, onClose, onMove, onOpe
     <//>
 
     <${TaskRefs} task=${task} />
-    <${TaskEpic} task=${task} entry=${entry} full=${read.task} onOpen=${onOpenTask} />
+    <${TaskEpic} task=${task} entry=${entry} full=${read.task} failed=${read.failed} onOpen=${onOpenTask} />
     <${TaskAfter} task=${task} entry=${entry} onOpen=${onOpenTask} />
 
     <${Section} title="Activity" count=${entries.length}>
