@@ -215,19 +215,21 @@ func TestSelfUpdateScheduleRunsOncePerWindowThenSetupAfterRestart(t *testing.T) 
 	}}, 200)
 	agentd.SelfUpdateScheduleTickForTest(window)
 	var jobID string
-	fedEventuallyWithin(t, "scheduled job to restart", 5*time.Second, func() bool {
+	// The job turns "restarting" before the service's Finished hook records
+	// the scheduled run's outcome, so wait for both.
+	fedEventuallyWithin(t, "scheduled job to restart and record its outcome", 5*time.Second, func() bool {
 		j := svc.Status().Job
-		if j != nil && j.State == "restarting" {
-			jobID = j.ID
-			return true
+		if j == nil || j.State != "restarting" {
+			return false
 		}
-		return false
+		jobID = j.ID
+		last := getSettings(t, f).LastScheduledRun
+		return last != nil && last.JobID == jobID && last.Outcome == "restarting"
 	})
 	job := svc.Status().Job
 	require.Equal(t, "scheduler", job.Actor)
 	require.Equal(t, "release", job.Method)
 	require.Equal(t, "pending", job.PostSetup.State)
-	require.Equal(t, "restarting", getSettings(t, f).LastScheduledRun.Outcome)
 
 	// The same window occurrence never runs twice.
 	agentd.SelfUpdateScheduleTickForTest(window.Add(30 * time.Minute))
