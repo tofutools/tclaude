@@ -30,6 +30,9 @@ type AgentReport struct {
 	Verdict string
 	// Performer is the stable agent id that reported, recorded as evidence.
 	Performer string
+	// Outputs are the outputs a successful report carries; the run keeps
+	// those a rule decision reads.
+	Outputs map[string]string
 }
 
 // RecordAgentReport durably applies one performer's report to its outstanding
@@ -67,6 +70,8 @@ func RecordAgentReport(run *Run, actor string, report AgentReport) error {
 		Performer   string                    `json:"performer,omitempty"`
 		Note        string                    `json:"note,omitempty"`
 	}{Observation: observation, Attempt: command.Attempt, Performer: report.Performer, Note: report.Note}
+	// The outputs are on the dispatch row already; the row stays small.
+	payload.Observation.Outputs = nil
 	// A failed agent check or review sends its compound's work back, exactly
 	// as a failed program gate does.
 	causal := append([]db.ProcessRunEvent{event("agent_reported", &command, actor, payload)},
@@ -124,6 +129,9 @@ func agentObservation(run *Run, report AgentReport) (engine.ProgramObservation, 
 	}
 	observation := engine.ProgramObservation{
 		CommandID: command.ID, NodeID: command.NodeID, Outcome: report.Outcome, Verdict: report.Verdict,
+	}
+	if report.Outcome == engine.ProgramSucceeded {
+		observation.Outputs = report.Outputs
 	}
 	if report.Outcome == engine.ProgramFailed {
 		observation.ExitCode = 1

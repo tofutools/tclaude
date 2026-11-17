@@ -1141,7 +1141,7 @@ func applyRecordedProcessReport(row db.ProcessAgentDispatch) error {
 	report := executor.AgentReport{
 		CommandID: row.CommandID, NodeID: row.NodeID, Attempt: row.Attempt,
 		Outcome: engine.ProgramOutcome(row.ReportOutcome), Note: row.ReportNote, Verdict: row.ReportVerdict,
-		Performer: row.AgentID,
+		Performer: row.AgentID, Outputs: row.ReportOutputs,
 	}
 	actor := "agent:" + row.AgentID
 	if row.AgentID == "" {

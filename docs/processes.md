@@ -890,7 +890,7 @@ name and needs the same permission.
 
 - **Sequential task chains** starting at any executable node kind — top-level
   `start` names the entry node, and a separate `start`-typed node is optional.
-- **Exclusive decisions** with human or agent deciders: the verdict selects
+- **Exclusive decisions** with human, agent or rule deciders: the verdict selects
   exactly one authored outcome edge and closes the alternatives. Authored
   decisions open once — unless they are in a loop body — and need no
   `--attempt`. An agent decider reports its verdict instead of a person
@@ -1241,6 +1241,81 @@ again. An agent that cannot decide reports `failed`, which fails the decision
 like any failed agent step. Nobody can decide in an agent's place with
 `tclaude process decide`; reassigning or recording an outcome works as for any
 agent step.
+
+### Rule decisions
+
+A decision with `performer.kind: rule` decides itself. It has cases, each a
+condition and the outcome it picks, and an `else`. As soon as the decision is
+ready the engine takes the outcome of the first case whose condition holds,
+or the `else` outcome when none does. No agent or person is involved. Use it
+for the branches a process must take the same way every time: "merge only if
+merging is enabled and CI passed".
+
+```yaml
+params:
+  merge: {type: string, default: "no"}
+nodes:
+  ci:
+    type: task
+    mayFail: true
+    performer: {kind: program, run: make test}
+    next: {next: gate}
+  gate:
+    type: decision
+    performer:
+      kind: rule
+      cases:
+        - {when: 'steps.ci.result == failed', then: fix}
+        - {when: 'params.merge == yes and steps.ci.exitCode == 0', then: merge}
+      else: hold
+    next: {fix: build, merge: merge, hold: ask-owner, give-up: gave-up}
+    loops:
+      fix: {maxIterations: 3, onExhausted: give-up}
+```
+
+A condition compares what the rule reads with a value. Comparisons are joined
+with `and`, `or` and `not`, and grouped with parentheses. A rule reads:
+
+| Operand | What it is |
+|---|---|
+| `params.<name>` | a param of the run, as the run was started |
+| `steps.<id>.result` | `succeeded`, `failed` or `skipped`, from that step's last attempt |
+| `steps.<id>.exitCode` | a command step's exit code |
+| `outputs.<name>` | an output a step reported (see `captures`) |
+
+The comparisons are `==`, `!=`, `<`, `<=`, `>` and `>=`. The last four compare
+numbers. A value is a quoted string, a number or a bare word such as `yes` or
+`succeeded`. A boolean param (`type: boolean`) compares to `true` or `false`,
+however its value is spelled. On its own, `params.auto_merge` means it is true,
+so a case can read `params.auto_merge and steps.ci.result == succeeded`. A
+param the run was started without reads as its default. Something with no value, such as an output not yet reported or
+the exit code of a step that never ran, makes its comparison false, whatever
+the comparison.
+
+Templates are checked when you save them:
+
+- A condition must parse.
+- A param must be declared, and a boolean param compares to `true` or
+  `false` only.
+- An output must be one a step captures.
+- A step must be a task that runs before the decision. Only a command step has
+  an exit code.
+- Every outcome a rule names must be one of the decision's outcomes.
+- A rule needs an `else`.
+- A rule's loop needs `onExhausted`, because once its rounds run out nobody is
+  there to choose otherwise.
+
+Each choice is recorded in the run's events as a `decision_recorded` row by
+the actor `rule`. The row holds the outcome, the case that held (`-1` for
+`else`), the condition as written, and every value the rule read. The run view
+puts the same on the decision node as `rule.choice`.
+
+**A step that may fail.** A task with `mayFail: true` does not fail the run
+when its last attempt fails, after any retries. It goes on along its route
+with result `failed`, for a rule decision after it to branch on. In the
+example above, CI failing sends the work back to `build` for at most three
+rounds and then gives up. CI passing merges only when the run's `merge` param
+is `yes`.
 
 ### Agreement gates
 

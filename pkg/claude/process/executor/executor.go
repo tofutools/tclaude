@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 	"sync"
@@ -649,6 +650,48 @@ func gateEvidence(definition *engine.Definition, before, after engine.Checkpoint
 	return events
 }
 
+// RuleActor attributes a rule decision's choice: the engine made it, by the
+// decision's own cases, with nobody asked.
+const RuleActor = "rule"
+
+// ruleEvidence records every rule decision this commit evaluated, as the
+// decision_recorded row a person's or agent's verdict leaves: the outcome, the
+// case that held and every value the rule read, then what it did to a loop.
+func ruleEvidence(definition *engine.Definition, before, after engine.Checkpoint) []db.ProcessRunEvent {
+	var events []db.ProcessRunEvent
+	for _, nodeID := range slices.Sorted(maps.Keys(after.Rules)) {
+		choice := after.Rules[nodeID]
+		if before.Rules[nodeID].Count == choice.Count {
+			continue
+		}
+		payload := decisionEvidencePayload{Verdict: choice.Outcome, Rule: &ruleEvidencePayload{Case: choice.Case, Read: choice.Read}}
+		if when, ok := definition.RuleCase(nodeID, choice.Case); ok {
+			payload.Rule.When = when
+		}
+		loopStep, looped := definition.LoopStepOf(nodeID, choice.Outcome, before, after)
+		route := choice.Outcome
+		if looped && loopStep.Exhausted {
+			route = loopStep.Loop.OnExhausted
+		}
+		if chosen, ok := definition.DecisionEdge(nodeID, route); ok {
+			payload.ChosenEdge = &chosen
+		}
+		events = append(events, eventForNode("decision_recorded", nodeID, RuleActor, payload))
+		if looped {
+			events = append(events, loopEvidence("", loopStep))
+		}
+	}
+	return events
+}
+
+// ruleEvidencePayload is what a rule decision's row adds: the case that held
+// (-1 and no When for else) and the values it read, by operand.
+type ruleEvidencePayload struct {
+	Case int               `json:"case"`
+	When string            `json:"when,omitempty"`
+	Read map[string]string `json:"read,omitempty"`
+}
+
 // gateEvidencePayload is the body of a gate_settled row.
 type gateEvidencePayload struct {
 	Gate       string             `json:"gate"`
@@ -677,6 +720,8 @@ type decisionEvidencePayload struct {
 	Evidence   string             `json:"evidence,omitempty"`
 	ChosenEdge *engine.ChosenEdge `json:"chosenEdge,omitempty"`
 	Attempt    int                `json:"attempt,omitempty"`
+	// Rule is set on a rule decision's row (ruleEvidence).
+	Rule *ruleEvidencePayload `json:"rule,omitempty"`
 }
 
 // ResolveBlocked durably applies one operator resolution to a parked branch.
@@ -1061,6 +1106,7 @@ func commitEvidence(definition *engine.Definition, before, after engine.Checkpoi
 	// A gate the votes settled in this commit is an input of its own: it is
 	// what the advance went on from.
 	input = append(slices.Clone(input), gateEvidence(definition, before, after)...)
+	input = append(input, ruleEvidence(definition, before, after)...)
 	blocked := blockedEvidence(before, after)
 	awaited := awaitedEvidence(definition, before, after)
 	joins := joinEvidence(definition, before, after,

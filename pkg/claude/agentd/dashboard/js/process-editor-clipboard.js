@@ -17,7 +17,7 @@ export const PROCESS_CLIPBOARD_MAX_OUTCOME = 512;
 export const PROCESS_CLIPBOARD_MAX_COORDINATE = 1_000_000;
 
 const PROCESS_NODE_TYPES = new Set(['task', 'decision', 'parallel', 'wait', 'start', 'end', 'subprocess']);
-const PROCESS_PERFORMER_KINDS = new Set(['human', 'agent', 'program']);
+const PROCESS_PERFORMER_KINDS = new Set(['human', 'agent', 'program', 'rule']);
 const NODE_ID = /^[a-z0-9][a-z0-9._-]*$/;
 const MAX_JSON_DEPTH = 32;
 const MAX_JSON_ITEMS = 32_768;
@@ -25,7 +25,7 @@ const PROTOTYPE_KEYS = new Set(['__proto__', 'prototype', 'constructor']);
 const NODE_FIELDS = new Set([
   'type', 'join', 'name', 'description', 'doc', 'performer', 'plan', 'checks',
   'review', 'retry', 'patience', 'wait', 'next', 'loops', 'result', 'captures', 'deciders', 'agree', 'metadata',
-  'subprocess',
+  'subprocess', 'mayFail',
 ]);
 const LOOP_FIELDS = new Set(['maxIterations', 'onExhausted']);
 const STEP_FIELDS = new Set([
@@ -34,8 +34,9 @@ const STEP_FIELDS = new Set([
 const PERFORMER_FIELDS = new Set([
   'kind', 'profile', 'prompt', 'ask', 'choices', 'choiceOutcomes', 'assignee',
   'role', 'anyone', 'lead', 'sameAs', 'differentFrom', 'fallback', 'spawn', 'model', 'effort', 'run',
-  'args', 'timeout', 'contact',
+  'args', 'timeout', 'contact', 'cases', 'else',
 ]);
+const RULE_CASE_FIELDS = new Set(['when', 'then']);
 const FALLBACK_FIELDS = new Set(['action', 'profile']);
 const CONTACT_FIELDS = new Set(['cadence', 'budget', 'escalationTarget']);
 const RETRY_FIELDS = new Set(['maxAttempts', 'backoff', 'onFail']);
@@ -126,6 +127,14 @@ function validatePerformer(value) {
   if (Object.hasOwn(value, 'args')) validateStringList(value.args);
   if (Object.hasOwn(value, 'choiceOutcomes')) validateStringMap(value.choiceOutcomes);
   if (Object.hasOwn(value, 'contact')) validateContact(value.contact);
+  validateOptionalStrings(value, ['else']);
+  if (Object.hasOwn(value, 'cases')) {
+    if (!Array.isArray(value.cases)) wireShapeReject();
+    for (const ruleCase of value.cases) {
+      validateWireRecord(ruleCase, RULE_CASE_FIELDS);
+      validateOptionalStrings(ruleCase, ['when', 'then']);
+    }
+  }
 }
 
 function validateStep(value) {
@@ -145,6 +154,7 @@ export function validateProcessEditNode(value) {
   validateWireRecord(value, NODE_FIELDS);
   if (!PROCESS_NODE_TYPES.has(value.type)) wireShapeReject();
   validateOptionalStrings(value, ['join', 'name', 'description', 'doc', 'result', 'agree', 'patience']);
+  if (Object.hasOwn(value, 'mayFail') && typeof value.mayFail !== 'boolean') wireShapeReject();
   if (Object.hasOwn(value, 'performer')) validatePerformer(value.performer);
   if (Object.hasOwn(value, 'deciders')) {
     if (!Array.isArray(value.deciders)) wireShapeReject();

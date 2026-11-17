@@ -137,6 +137,14 @@ func paramRefsPresent(expression string, params map[string]string) bool {
 // formatParamDefault renders a declared default the same way whether the
 // template came from YAML (ints) or a cold JSON reload (float64): a whole
 // number must not turn into exponent notation such as "1e+06".
+// ParamDefault is a param's default as a run binds it, and whether it has one.
+func ParamDefault(param Param) (string, bool) {
+	if param.Default == nil {
+		return "", false
+	}
+	return formatParamDefault(param.Default), true
+}
+
 func formatParamDefault(value any) string {
 	switch v := value.(type) {
 	case float64:

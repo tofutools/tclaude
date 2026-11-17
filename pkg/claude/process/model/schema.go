@@ -10,9 +10,10 @@ import (
 var (
 	templateFields   = stringSet("apiVersion", "kind", "id", "name", "description", "doc", "params", "fallback", "overseer", "patience", "start", "nodes", "layout")
 	paramFields      = stringSet("type", "name", "description", "doc", "required", "default")
-	nodeFields       = stringSet("type", "join", "name", "description", "doc", "performer", "plan", "checks", "review", "retry", "patience", "wait", "next", "loops", "result", "captures", "deciders", "agree", "subprocess", "metadata")
+	nodeFields       = stringSet("type", "join", "name", "description", "doc", "performer", "plan", "checks", "review", "retry", "patience", "wait", "next", "loops", "result", "captures", "deciders", "agree", "subprocess", "metadata", "mayFail")
 	stepFields       = stringSet("id", "name", "description", "doc", "performer", "approval", "approvalRetry", "retry")
-	performerFields  = stringSet("kind", "profile", "prompt", "ask", "choices", "choiceOutcomes", "assignee", "role", "anyone", "lead", "sameAs", "differentFrom", "fallback", "spawn", "model", "effort", "run", "args", "timeout", "contact")
+	performerFields  = stringSet("kind", "profile", "prompt", "ask", "choices", "choiceOutcomes", "assignee", "role", "anyone", "lead", "sameAs", "differentFrom", "fallback", "spawn", "model", "effort", "run", "args", "timeout", "contact", "cases", "else")
+	ruleCaseFields   = stringSet("when", "then")
 	fallbackFields   = stringSet("action", "profile")
 	contactFields    = stringSet("cadence", "budget", "escalationTarget")
 	retryFields      = stringSet("maxAttempts", "backoff", "onFail")
@@ -51,6 +52,8 @@ const (
 	schemaSubprocess
 	schemaLoopMap
 	schemaLoop
+	schemaRuleCases
+	schemaRuleCase
 	schemaCount
 )
 
@@ -139,6 +142,8 @@ func (w *schemaWalk) inspect(node *yaml.Node, schema schemaID) Diagnostics {
 		diagnostics = w.inspectMapValues(node, schemaLoop)
 	case schemaChecks:
 		diagnostics = w.inspectSequence(node, schemaStep)
+	case schemaRuleCases:
+		diagnostics = w.inspectSequence(node, schemaRuleCase)
 	case schemaNext:
 		diagnostics = w.inspectNext(node)
 	default:
@@ -322,6 +327,8 @@ func schemaAllowedFields(schema schemaID) map[string]struct{} {
 		return waitFields
 	case schemaLoop:
 		return loopFields
+	case schemaRuleCase:
+		return ruleCaseFields
 	default:
 		return nil
 	}
@@ -386,6 +393,8 @@ func schemaChild(schema schemaID, key string) (schemaID, bool) {
 			return schemaContact, true
 		case "fallback":
 			return schemaFallback, true
+		case "cases":
+			return schemaRuleCases, true
 		}
 	}
 	return 0, false
