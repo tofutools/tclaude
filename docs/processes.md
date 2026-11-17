@@ -1264,14 +1264,18 @@ with `and`, `or` and `not`, and grouped with parentheses. A rule reads:
 
 The comparisons are `==`, `!=`, `<`, `<=`, `>` and `>=`. The last four compare
 numbers. A value is a quoted string, a number or a bare word such as `yes` or
-`succeeded`. Something with no value, such as an output not yet reported or
+`succeeded`. A boolean param (`type: boolean`) compares to `true` or `false`,
+however its value is spelled. On its own, `params.auto_merge` means it is true,
+so a case can read `params.auto_merge and steps.ci.result == succeeded`. A
+param the run was started without reads as its default. Something with no value, such as an output not yet reported or
 the exit code of a step that never ran, makes its comparison false, whatever
 the comparison.
 
 Templates are checked when you save them:
 
 - A condition must parse.
-- A param must be declared.
+- A param must be declared, and a boolean param compares to `true` or
+  `false` only.
 - An output must be one a step captures.
 - A step must be a task that runs before the decision. Only a command step has
   an exit code.

@@ -72,6 +72,9 @@ func prepareRule(nodeID string, performer model.Performer, scope *model.Template
 			case model.OperandParam:
 				if value, ok := params[operand.Name]; ok {
 					rule.params[operand.Name] = value
+				} else if value, ok := model.ParamDefault(scope.Params[operand.Name]); ok {
+					// A run started without the param reads its default.
+					rule.params[operand.Name] = value
 				}
 			case model.OperandOutput:
 				owner, ok := captures[operand.Name]

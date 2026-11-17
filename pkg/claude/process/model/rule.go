@@ -69,6 +69,26 @@ type Condition struct {
 	children []*Condition
 	operand  Operand
 	value    string
+	// bare is a lone operand, read as `== true`: `params.auto_merge`.
+	bare bool
+}
+
+// Comparison is one comparison of a condition, as written.
+type Comparison struct {
+	Operand Operand
+	Op      string
+	Value   string
+	// Bare is a lone operand with no comparison, which means == true.
+	Bare bool
+}
+
+// Comparisons are the condition's comparisons, in the order written.
+func (c *Condition) Comparisons() []Comparison {
+	var out []Comparison
+	c.walk(func(leaf *Condition) {
+		out = append(out, Comparison{Operand: leaf.operand, Op: leaf.op, Value: leaf.value, Bare: leaf.bare})
+	})
+	return out
 }
 
 var comparisonOps = []string{"==", "!=", "<=", ">=", "<", ">"}
@@ -135,6 +155,13 @@ func (c *Condition) Eval(read func(Operand) (string, bool)) bool {
 }
 
 func compare(got, op, want string) bool {
+	// true and false compare as booleans, so a boolean param reads the same
+	// however its value was spelled (true, True, 1).
+	if wantBool, err := strconv.ParseBool(want); err == nil && (strings.EqualFold(want, "true") || strings.EqualFold(want, "false")) {
+		if gotBool, err := strconv.ParseBool(strings.TrimSpace(got)); err == nil && (op == "==" || op == "!=") {
+			return (gotBool == wantBool) == (op == "==")
+		}
+	}
 	gotNum, gotErr := strconv.ParseFloat(strings.TrimSpace(got), 64)
 	wantNum, wantErr := strconv.ParseFloat(want, 64)
 	numeric := gotErr == nil && wantErr == nil
@@ -299,7 +326,11 @@ func (p *conditionParser) primary() (*Condition, error) {
 		return nil, err
 	}
 	opToken, ok := p.peek()
-	if !ok || opToken.quoted || !slices.Contains(comparisonOps, opToken.text) {
+	if !ok || (!opToken.quoted && (opToken.text == ")" || strings.EqualFold(opToken.text, "and") || strings.EqualFold(opToken.text, "or"))) {
+		// A lone operand means it is true: params.auto_merge.
+		return &Condition{op: "==", operand: operand, value: "true", bare: true}, nil
+	}
+	if opToken.quoted || !slices.Contains(comparisonOps, opToken.text) {
 		return nil, fmt.Errorf("%s needs a comparison, such as %s == \"yes\"", token.text, token.text)
 	}
 	p.at++
@@ -397,6 +428,19 @@ func validateRules(tmpl *Template, edges []Edge) Diagnostics {
 			if err != nil {
 				add("invalid_rule_condition", casePath+".when", err.Error())
 				continue
+			}
+			for _, comparison := range cond.Comparisons() {
+				operand := comparison.Operand
+				param, isParam := tmpl.Params[operand.Name]
+				boolean := operand.Kind == OperandParam && isParam && (param.Type == "boolean" || param.Type == "bool")
+				switch {
+				case comparison.Bare && !boolean:
+					add("invalid_rule_condition", casePath+".when", fmt.Sprintf("%s on its own means it is true, which only a boolean param can be; compare it, such as %s == yes", operand, operand))
+				case boolean && !comparison.Bare:
+					if _, err := strconv.ParseBool(comparison.Value); err != nil || (comparison.Op != "==" && comparison.Op != "!=") {
+						add("invalid_rule_condition", casePath+".when", fmt.Sprintf("%s is a boolean param: compare it with == or != to true or false", operand))
+					}
+				}
 			}
 			for _, operand := range cond.Operands() {
 				switch operand.Kind {

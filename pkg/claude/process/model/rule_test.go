@@ -7,7 +7,7 @@ import (
 )
 
 func TestConditionEvaluates(t *testing.T) {
-	values := map[string]string{"params.merge": "yes", "steps.ci.result": "succeeded", "steps.ci.exitCode": "0", "outputs.score": "7.5"}
+	values := map[string]string{"params.on": "True", "params.off": "0", "params.merge": "yes", "steps.ci.result": "succeeded", "steps.ci.exitCode": "0", "outputs.score": "7.5"}
 	read := func(operand Operand) (string, bool) {
 		value, ok := values[operand.String()]
 		return value, ok
@@ -20,6 +20,10 @@ func TestConditionEvaluates(t *testing.T) {
 		`steps.ci.exitCode == 0.0`:                                true,
 		`outputs.missing == ""`:                                   false,
 		`not outputs.missing == x`:                                true,
+		`params.on`:                                               true,
+		`params.on == TRUE and not params.off`:                    true,
+		`params.off != false`:                                     false,
+		`params.on and (params.off or params.merge == yes)`:       true,
 		`params.merge == 'yes' AND NOT steps.ci.result == failed`: true,
 	} {
 		cond, err := ParseCondition(text)
@@ -31,7 +35,7 @@ func TestConditionEvaluates(t *testing.T) {
 func TestConditionRefusesWhatItCannotRead(t *testing.T) {
 	for text, says := range map[string]string{
 		``:                        "empty",
-		`params.merge`:            "needs a comparison",
+		`params.merge yes`:        "needs a comparison",
 		`params.merge ==`:         "needs a value",
 		`steps.ci == ok`:          "not something a rule can read",
 		`steps.ci.output == ok`:   "not something a rule can read",
@@ -152,4 +156,19 @@ nodes:
   end: {type: end}
 `
 	require.Empty(t, mustParse(t, source))
+}
+
+func TestRuleBooleanParams(t *testing.T) {
+	valid := func(when string) map[string]string {
+		rule := &Performer{Kind: PerformerRule, Cases: []RuleCase{{When: when, Then: "merge"}}, Else: "stop"}
+		tmpl := ruleTemplate(rule, nil)
+		tmpl.Params["auto_merge"] = Param{Type: "boolean", Default: false}
+		return loopErrorCodes(tmpl)
+	}
+	require.Empty(t, valid(`params.auto_merge`))
+	require.Empty(t, valid(`params.auto_merge == true and not params.auto_merge == FALSE`))
+	require.Contains(t, valid(`params.auto_merge == yes`), "invalid_rule_condition", "a boolean compares to true or false")
+	require.Contains(t, valid(`params.auto_merge > 0`), "invalid_rule_condition")
+	require.Contains(t, valid(`params.merge`), "invalid_rule_condition", "only a boolean param stands alone")
+	require.Contains(t, valid(`steps.ci.result`), "invalid_rule_condition")
 }

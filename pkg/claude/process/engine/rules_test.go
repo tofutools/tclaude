@@ -127,3 +127,28 @@ func TestARuleCheckpointRoundTrips(t *testing.T) {
 	require.Equal(t, checkpoint.Rules, decoded.Rules)
 	require.Equal(t, checkpoint.Steps, decoded.Steps)
 }
+
+func TestARunWithoutTheParamReadsItsDefault(t *testing.T) {
+	tmpl := &model.Template{APIVersion: model.APIVersion, Kind: model.Kind, ID: "default-rule", Start: "start",
+		Params: map[string]model.Param{"auto_merge": {Type: "boolean", Default: false}},
+		Nodes: map[string]model.Node{
+			"start": {Type: model.NodeTypeStart, Next: model.Next{model.DefaultOutcome: "gate"}},
+			"gate": {Type: model.NodeTypeDecision, Performer: &model.Performer{Kind: model.PerformerRule,
+				Cases: []model.RuleCase{{When: `params.auto_merge`, Then: "merge"}}, Else: "ask"},
+				Next: model.Next{"merge": "merge", "ask": "end"}},
+			"merge": ruleProgram("end"),
+			"end":   {Type: model.NodeTypeEnd},
+		}}
+	for params, want := range map[string]string{"": "ask", "true": "merge", "False": "ask"} {
+		bound := map[string]string{}
+		if params != "" {
+			bound["auto_merge"] = params
+		}
+		definition := mustPrepare(t, tmpl, bound)
+		checkpoint, err := Initialize("run-default", definition)
+		require.NoError(t, err)
+		checkpoint, err = AdvanceUntilQuiescent(checkpoint, definition)
+		require.NoError(t, err)
+		require.Equal(t, want, checkpoint.Rules["gate"].Outcome, "auto_merge=%q", params)
+	}
+}
