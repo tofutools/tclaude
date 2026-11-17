@@ -115,7 +115,7 @@ test('Interrupt sends Esc to a working Claude Code agent, and says why it cannot
 
   // steward is a Claude Code agent between turns: greyed, a tap explains, no key.
   const total = escSent();
-  await page.getByRole('button', { name: 'steward: more' }).first().click();
+  await page.getByRole('button', { name: 'steward: more', exact: true }).first().click();
   await expect(sheet).toHaveAttribute('aria-label', 'steward');
   await expect(interrupt).toHaveAttribute('aria-disabled', 'true');
   // A finger still taps it (Playwright would wait for aria-disabled to go).

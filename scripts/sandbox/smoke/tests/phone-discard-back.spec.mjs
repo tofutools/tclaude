@@ -219,7 +219,7 @@ const UNGUARDED = [
     name: 'Terminal: › Type into the shell',
     open: async (page) => {
       await views(page).getByRole('button', { name: /Agents/ }).click();
-      await page.getByRole('button', { name: 'steward: more' }).first().click();
+      await page.getByRole('button', { name: 'steward: more', exact: true }).first().click();
       await sheet(page).locator('[data-act="shell"]').first().click();
       await page.locator('.phone-term-type').click();
     },

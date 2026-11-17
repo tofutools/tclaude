@@ -44,8 +44,9 @@
    in Board ›'s size and weight beside it. */
 :root[data-layout="phone"] .phone-agents-spawn-link { flex: none; min-height: var(--phone-tap); font-size: 13px; font-weight: 600; text-transform: none; letter-spacing: 0; }
 
-/* A group's header: the caret (a 44px zone left of the name) folds its
-   section, the name and count open the group's page; Board › is its own.
+/* A group's header: a tap anywhere on it (the caret, the name, the count)
+   folds its section; a hold or its ⋯ opens the group's page; ＋ Agent and
+   Board › are their own.
    Under it, folded too, the state summary: a dot in each pill's colour and
    its count, lined up under the name. */
 :root[data-layout="phone"] .phone-agents-head { align-items: center; gap: 8px; margin-bottom: 0; }
@@ -171,7 +172,7 @@
 :root[data-layout="phone"] .phone-agents-view-order { display: flex; align-items: center; gap: 10px; min-height: 44px; color: var(--ui-text-strong); font-size: 15px; }
 :root[data-layout="phone"] .phone-agents-view-order small { color: var(--ui-muted-text); font-size: 12.5px; }
 
-/* A group's caret is its own tap target, the name another (its page).
+/* A group's caret folds it, as its name does (the caret is the arrow).
    A subgroup indents on a guide line; a group with nothing online is dimmed. */
 :root[data-layout="phone"] .phone-agents-caret-btn {
   flex: none; align-self: stretch; display: inline-flex; align-items: center; justify-content: center;

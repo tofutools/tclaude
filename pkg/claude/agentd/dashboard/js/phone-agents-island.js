@@ -284,8 +284,8 @@ function GroupHead({ node, folded, onFold, onOpen, onSpawn }) {
     ${node.empty && html`<${Tag}>empty<//>`}${node.archived && html`<${Tag}>archived<//>`}`;
   return html`<h2 class=${`phone-section-head ui-eyebrow phone-agents-head${holding ? ' phone-holding' : ''}`}>
     ${canFold
-      ? html`<button data-ui-exempt type="button" class="phone-agents-caret-btn" aria-expanded=${folded ? 'false' : 'true'}
-          aria-label=${`${folded ? 'Unfold' : 'Fold'} ${node.name}`} tabindex="-1" ...${handlers} onClick=${onFold}><${Chevron} /></button>`
+      ? html`<button data-ui-exempt type="button" class="phone-agents-caret-btn phone-holdable" aria-expanded=${folded ? 'false' : 'true'}
+          aria-label=${`${folded ? 'Unfold' : 'Fold'} ${node.name}`} aria-hidden="true" tabindex="-1" ...${handlers} onClick=${onFold}><${Chevron} /></button>`
       : html`<span class="phone-agents-caret-btn" aria-hidden="true"></span>`}
     <button data-ui-exempt type="button" class="phone-agents-fold phone-holdable" ...${handlers}
       aria-expanded=${canFold ? (folded ? 'false' : 'true') : undefined}
@@ -294,7 +294,7 @@ function GroupHead({ node, folded, onFold, onOpen, onSpawn }) {
       aria-label=${`New agent in ${node.name}`} aria-haspopup="dialog" onClick=${() => onSpawn(node.name)}>＋ Agent</button>`}
     ${node.group && !node.archived && html`<button data-ui-exempt type="button" class="phone-link phone-agents-board"
       aria-label=${`${node.name}'s board`} onClick=${() => openBoardGroup(node.name)}>Board ›</button>`}
-    ${openPage && html`<${IconButton} icon="⋯" label=${`${node.name}: more`} class="phone-agents-more" onClick=${openPage} />`}
+    ${openPage && html`<${IconButton} icon="⋯" label=${`Group ${node.name}: more`} class="phone-agents-more" onClick=${openPage} />`}
   </h2>
   <${Summary} g=${node} />`;
 }

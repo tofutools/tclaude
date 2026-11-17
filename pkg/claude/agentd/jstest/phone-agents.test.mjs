@@ -201,7 +201,7 @@ test('the chips filter by any number of groups; All shows every one', async (t) 
   assert.deepEqual(pressed(), ['All']);
 });
 
-test('a group\'s caret folds it, remembered in the prefs; its state summary shows folded too; its name opens its page', async (t) => {
+test('a group\'s caret or name folds it, remembered in the prefs; its state summary shows folded too; its ⋯ opens its page', async (t) => {
   const prefs = memPrefs({ 'tclaude.dash.phone.tree.fold.steward': '1' });
   const { c, tap, titles, prefs: kept, calls, page } = await setup(t, { prefs });
   const head = (name) => c.querySelector(`[aria-label="${name}"] .phone-agents-caret-btn`);
@@ -233,7 +233,7 @@ test('a group\'s caret folds it, remembered in the prefs; its state summary show
   await tap(nameOf('steward'));
   assert.deepEqual(titles(), ['steward']);
   // Its ⋯ opens the group's page (its menu).
-  await tap(c.querySelector('[aria-label="steward: more"]'));
+  await tap(c.querySelector('[aria-label="Group steward: more"]'));
   assert.equal(page.phonePage.value.title, 'steward');
   assert.ok(c.querySelector('.phone-group-page'));
   await tap(c.querySelector('.phone-group-page') && { click: () => page.phonePage.value.onBack() });
@@ -594,11 +594,32 @@ test('a group header: a tap folds it; a touch and hold opens its page and does n
   assert.equal(head().classList.contains('phone-holding'), false);
 
   // Held still: the page opens, and the lift's click does not fold it back.
-  await pointer(nameOf(), 'pointerdown');
+  const held = nameOf();
+  await pointer(held, 'pointerdown');
   await harness.act(() => t.mock.timers.tick(HOLD_MS));
   assert.equal(page.phonePage.value?.title, 'webshop', 'the hold opens its page');
+  await pointer(held, 'pointerup');
+  await harness.act(() => held.click());
+  assert.equal(page.phonePage.value?.title, 'webshop', 'the page stays open');
   await harness.act(() => page.phonePage.value.onBack());
-  assert.equal(titles().includes('payments-fix'), false, 'still folded: the hold did not fold or unfold it');
+  assert.equal(titles().includes('payments-fix'), false, 'still folded: the lift did not unfold it');
+  // A hold on the caret does the same.
+  const caret = c.querySelector('[aria-label="webshop"] .phone-agents-caret-btn');
+  await pointer(caret, 'pointerdown');
+  await harness.act(() => t.mock.timers.tick(HOLD_MS));
+  assert.equal(page.phonePage.value?.title, 'webshop');
+  await pointer(caret, 'pointerup');
+  await harness.act(() => caret.click());
+  await harness.act(() => page.phonePage.value.onBack());
+  assert.equal(titles().includes('payments-fix'), false, 'the caret\'s lift did not unfold it');
+  // Ungrouped has no page: no ⋯, and no hold.
+  assert.equal(c.querySelector('[aria-label="Group Ungrouped: more"]'), null);
+  const loose = c.querySelector('[aria-label="Ungrouped"] .phone-agents-fold');
+  await pointer(loose, 'pointerdown');
+  assert.equal(c.querySelector('[aria-label="Ungrouped"] > h2').classList.contains('phone-holding'), false);
+  await harness.act(() => t.mock.timers.tick(HOLD_MS));
+  assert.equal(page.phonePage.value, null);
+  await pointer(loose, 'pointerup');
 
   // Board › and ＋ Agent are their own taps, not a fold.
   await harness.act(() => c.querySelector('[aria-label="webshop\'s board"]').click());
