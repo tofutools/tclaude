@@ -258,8 +258,12 @@ func Amend(checkpoint Checkpoint, oldDef *Definition, current, amended *model.Te
 		if index == 0 || node.parent >= 0 || node.scope >= 0 || next.Nodes[node.id] != NodePending {
 			continue
 		}
+		// A decision-first loop's body step waits on its decision instead.
+		if len(node.incoming) == 0 && dormantLoopNode(newDef, index) {
+			continue
+		}
 		waiting := false
-		for _, edgeIndex := range node.incoming {
+		for _, edgeIndex := range candidateEdges(next, newDef, index) {
 			edge := newDef.edges[edgeIndex]
 			if next.Edges[edge.from][edge.outcome] == EdgeUnresolved {
 				waiting = true

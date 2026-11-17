@@ -487,14 +487,39 @@ func namespacedNext(next model.Next, prefix string) model.Next {
 // invalid definition rather than looping. It is also where the sole-structural-
 // entry requirement fails closed: the template's start must be the graph's only
 // source node, whatever kind it is.
+//
+// A decision-first loop orders the other way round: its decision comes before
+// the work it sends back for, so its bounded edge orders and the edges from its
+// body back into the decision do not.
 func topologicalOrder(tmpl *model.Template) ([]string, error) {
 	remaining := make(map[string]int, len(tmpl.Nodes))
 	for nodeID := range tmpl.Nodes {
 		remaining[nodeID] = 0
 	}
-	for _, node := range tmpl.Nodes {
+	ordering := map[[2]string]bool{}
+	skipped := map[[2]string]bool{}
+	for _, loop := range model.Loops(tmpl, model.NormalizeEdges(tmpl)) {
+		if !loop.DecisionFirst {
+			continue
+		}
+		ordering[[2]string{loop.From, loop.Outcome}] = true
+		for _, id := range loop.Body {
+			for outcome, target := range tmpl.Nodes[id].Next {
+				if target == loop.From && id != loop.From {
+					skipped[[2]string{id, outcome}] = true
+				}
+			}
+		}
+	}
+	orders := func(nodeID, outcome string) bool {
+		if _, bounded := tmpl.Nodes[nodeID].Loops[outcome]; bounded {
+			return ordering[[2]string{nodeID, outcome}]
+		}
+		return !skipped[[2]string{nodeID, outcome}]
+	}
+	for nodeID, node := range tmpl.Nodes {
 		for outcome, target := range node.Next {
-			if _, bounded := node.Loops[outcome]; bounded {
+			if !orders(nodeID, outcome) {
 				continue
 			}
 			if _, ok := remaining[target]; ok {
@@ -519,7 +544,7 @@ func topologicalOrder(tmpl *model.Template) ([]string, error) {
 		order = append(order, current)
 		released := []string{}
 		for _, outcome := range sortedOutcomes(tmpl.Nodes[current].Next) {
-			if _, bounded := tmpl.Nodes[current].Loops[outcome]; bounded {
+			if !orders(current, outcome) {
 				continue
 			}
 			target := tmpl.Nodes[current].Next[outcome]
@@ -1179,7 +1204,10 @@ func classifyCheckpoint(checkpoint Checkpoint, definition *Definition) error {
 	// and activation requires a fully settled candidate set.
 	activeIndex, doomedIndex, doneEndIndex := -1, -1, -1
 	for index, node := range definition.nodes {
-		in := countDispositions(checkpoint, definition, node.incoming)
+		in := countDispositions(checkpoint, definition, candidateEdges(checkpoint, definition, index))
+		// A decision-first loop's body node waits on its decision, not on an
+		// edge, when nothing but the loop's own edge leads to it.
+		dormant := len(node.incoming) == 0 && dormantLoopNode(definition, index)
 		out := countDispositions(checkpoint, definition, node.outgoing)
 		status := checkpoint.Nodes[node.id]
 		// The prepared order puts the entry node first, and it is the one node
@@ -1191,7 +1219,7 @@ func classifyCheckpoint(checkpoint Checkpoint, definition *Definition) error {
 			if entry {
 				return invalid("entry node cannot be pending")
 			}
-			if in.unresolved == 0 {
+			if in.unresolved == 0 && !dormant {
 				return invalid("pending node %q has a settled candidate set and must be ready or skipped", node.id)
 			}
 			// Settlement always resolves a target's whole candidate set in the
@@ -1207,7 +1235,7 @@ func classifyCheckpoint(checkpoint Checkpoint, definition *Definition) error {
 				return invalid("nodes %q and %q are both active", definition.nodes[activeIndex].id, node.id)
 			}
 			activeIndex = index
-			if !entry && (in.unresolved > 0 || in.arrived != 1) {
+			if !entry && !dormant && (in.unresolved > 0 || in.arrived != 1) {
 				return invalid("active node %q requires a settled candidate set with exactly one arrival", node.id)
 			}
 			if out.unresolved != len(node.outgoing) {
@@ -1222,7 +1250,7 @@ func classifyCheckpoint(checkpoint Checkpoint, definition *Definition) error {
 				}
 			}
 		case NodeDone:
-			if !entry && (in.unresolved > 0 || in.arrived != 1) {
+			if !entry && !dormant && (in.unresolved > 0 || in.arrived != 1) {
 				return invalid("done node %q requires a settled candidate set with exactly one arrival", node.id)
 			}
 			switch node.kind {
@@ -1242,7 +1270,7 @@ func classifyCheckpoint(checkpoint Checkpoint, definition *Definition) error {
 				doneEndIndex = index
 			}
 		case NodeSkipped:
-			if len(node.incoming) == 0 || in.notTaken != len(node.incoming) {
+			if !dormant && (len(node.incoming) == 0 || in.notTaken != in.unresolved+in.notTaken+in.arrived+in.arrivedLate) {
 				return invalid("skipped node %q requires every incoming edge to be not taken", node.id)
 			}
 			if out.notTaken+deferredOutgoing(checkpoint, definition, node) != len(node.outgoing) {
@@ -1256,7 +1284,7 @@ func classifyCheckpoint(checkpoint Checkpoint, definition *Definition) error {
 			if !node.runsCommand() {
 				return invalid("only a program task may fail or be canceled; got %q", node.id)
 			}
-			if !entry && (in.unresolved > 0 || in.arrived != 1) {
+			if !entry && !dormant && (in.unresolved > 0 || in.arrived != 1) {
 				return invalid("%s node %q requires a settled candidate set with exactly one arrival", status, node.id)
 			}
 			if out.unresolved != len(node.outgoing) {
@@ -1272,7 +1300,7 @@ func classifyCheckpoint(checkpoint Checkpoint, definition *Definition) error {
 			if node.kind != definitionTask {
 				return invalid("only a program task may block; got %q", node.id)
 			}
-			if !entry && (in.unresolved > 0 || in.arrived != 1) {
+			if !entry && !dormant && (in.unresolved > 0 || in.arrived != 1) {
 				return invalid("blocked node %q requires a settled candidate set with exactly one arrival", node.id)
 			}
 			if out.unresolved != len(node.outgoing) {
