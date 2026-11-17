@@ -8,6 +8,7 @@ import (
 	"mime"
 	"net/http"
 	"strings"
+	"sync"
 	"sync/atomic"
 
 	"github.com/google/uuid"
@@ -32,12 +33,19 @@ import (
 // dashboardAssetsFS addresses its files as "dashboard.html", "js/...".
 var dashboardAssetsFS fs.FS = dashboard.FS
 
-// dashboardIndexHTML is dashboard.html, read once at init — the page
+// dashboardIndexHTML is dashboard.html, built once on first use — the page
 // handleDashboardRoot serves at "/". injectBootPreload splices in the
 // modulepreload block (the shared links, and the script adding the layout's
 // own) + module-total for the boot progress bar, so the boot import graph is
 // fetched in parallel rather than as a discover-one-at-a-time waterfall.
-var dashboardIndexHTML = versionPWARefs(versionStaticRefs(injectAssetsVersion(injectBootPreload(mustReadFS(dashboardAssetsFS, "dashboard.html"), dashboardAssetsFS))), dashboardAssetsFS)
+//
+// Lazy, not a package var: crawling the boot import graph costs ~300 ms and
+// ~100 MB of allocation, and every process linking this package (each
+// tclaude CLI call, hook and status-line run, and the hub exec guardian
+// re-exec) would pay it at init without ever serving the page.
+var dashboardIndexHTML = sync.OnceValue(func() []byte {
+	return versionPWARefs(versionStaticRefs(injectAssetsVersion(injectBootPreload(mustReadFS(dashboardAssetsFS, "dashboard.html"), dashboardAssetsFS))), dashboardAssetsFS)
+})
 
 func mustReadFS(fsys fs.FS, name string) []byte {
 	b, err := fs.ReadFile(fsys, name)
@@ -293,7 +301,7 @@ func handleDashboardRoot(w http.ResponseWriter, r *http.Request) {
 	if dashboardPreAuthed(r) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Header().Set("Cache-Control", "no-store")
-		_, _ = w.Write(dashboardIndexHTML)
+		_, _ = w.Write(dashboardIndexHTML())
 		return
 	}
 	if dashboardSessionToken == "" {
@@ -342,7 +350,7 @@ func handleDashboardRoot(w http.ResponseWriter, r *http.Request) {
 		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Header().Set("Cache-Control", "no-store")
-		_, _ = w.Write(dashboardIndexHTML)
+		_, _ = w.Write(dashboardIndexHTML())
 		return
 	}
 

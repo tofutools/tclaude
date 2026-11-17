@@ -23,7 +23,7 @@ func TestDashboardAssetsVersion_ShapeAndDeterminism(t *testing.T) {
 }
 
 func TestDashboardIndexHTML_StampedWithAssetsVersion(t *testing.T) {
-	html := string(dashboardIndexHTML)
+	html := string(dashboardIndexHTML())
 	meta := fmt.Sprintf(`<meta name="tclaude-assets-version" content="%s">`, dashboardAssetsVersion)
 	if !strings.Contains(html, meta) {
 		t.Errorf("served dashboard HTML missing the assets-version meta stamp %q", meta)

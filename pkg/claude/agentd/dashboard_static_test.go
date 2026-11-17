@@ -192,7 +192,7 @@ func TestDashboardStatic_Gzip(t *testing.T) {
 // assets (links, scripts, the import map, the boot preloads) under the
 // versioned prefix only.
 func TestDashboardPages_NameTheVersionedPrefix(t *testing.T) {
-	for name, page := range map[string][]byte{"dashboard.html": dashboardIndexHTML, "terminals.html": terminalsPageHTML} {
+	for name, page := range map[string][]byte{"dashboard.html": dashboardIndexHTML(), "terminals.html": terminalsPageHTML} {
 		html := string(page)
 		if strings.Contains(strings.ReplaceAll(html, `"`+dashboardStaticBase, ""), `"/static/`) {
 			t.Errorf("%s still names a bare \"/static/ asset", name)

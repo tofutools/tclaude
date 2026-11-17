@@ -158,7 +158,7 @@ func TestDashboardTerminals_SoloServesPopout(t *testing.T) {
 // out of the ordinary dashboard response. The standalone popout is already a
 // terminal surface, so it intentionally retains the eager script tag.
 func TestDashboardTerminals_XtermCoreIsLazy(t *testing.T) {
-	dashboard := unversionedStatic(string(dashboardIndexHTML))
+	dashboard := unversionedStatic(string(dashboardIndexHTML()))
 	popout := unversionedStatic(string(terminalsPageHTML))
 	const core = `<script src="/static/third_party/xterm/xterm.min.js"></script>`
 	if strings.Contains(dashboard, core) {

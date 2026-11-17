@@ -35,6 +35,13 @@ func newFlow(t *testing.T) *testharness.Flow {
 	// acknowledgement deadlines retain their production values. Federation
 	// fixtures stop their runtimes before this earlier cleanup restores cadence.
 	t.Cleanup(agentd.SetFederationPollIntervalForTest(50 * time.Millisecond))
+	// An OpenCode spawn answers inline when its background launch finishes
+	// within a short grace, and goes Pending (no conv-id yet) otherwise. A
+	// flow test's launch is simulated, so which way it goes is only scheduler
+	// luck: on a loaded CI runner it missed the 750 ms grace and SpawnHarness
+	// got no conv-id. Pin the inline path by default; a test of the Pending
+	// path shrinks the grace itself (with a blocked runtime seam).
+	t.Cleanup(agentd.SetOpenCodeAsyncSpawnResponseGraceForTest(time.Minute))
 	agentd.ResetDeliveryDebounceForTest()
 
 	// The pending approval registry is a package global; reset it so a prior

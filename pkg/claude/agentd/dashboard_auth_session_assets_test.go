@@ -6,7 +6,7 @@ import (
 )
 
 func TestDashboardAuthSessionWrapperLoadsBeforeApp(t *testing.T) {
-	html := unversionedStatic(string(dashboardIndexHTML))
+	html := unversionedStatic(string(dashboardIndexHTML()))
 	wrapper := `<script src="/static/js/auth-session.js"></script>`
 	app := `<script type="module" src="/static/js/dashboard.js"></script>`
 	wrapperAt, appAt := strings.Index(html, wrapper), strings.Index(html, app)

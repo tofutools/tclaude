@@ -10,10 +10,15 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
+
+// hubExecLiveness bounds a wait on a hub exec job, which crosses a real
+// subprocess boundary. It only keeps a broken run from hanging the test.
+const hubExecLiveness = 30 * time.Second
 
 func TestDashboardHubExecTwoLocksOutputAuditAndRevocation(t *testing.T) {
 	fh := newFedHarness(t)
@@ -56,14 +61,20 @@ func TestDashboardHubExecTwoLocksOutputAuditAndRevocation(t *testing.T) {
 	}
 	// Poll the same production job surface the dashboard uses. Output is available
 	// before the process completes, and the full script is durably audited first.
-	script := "printf hub-secret-output; printf err-secret >&2; sleep 30"
-	job := must("POST", "run", map[string]any{"script": script, "timeout_seconds": 60})
+	// The job runs through a guardian re-exec of this test binary and /bin/sh:
+	// a real subprocess boundary, so the waits below are liveness guards
+	// (well outside normal operation, which is well under a second) that
+	// report the job's last state, not latency assertions. The script sleeps
+	// past them so the job is still running when its output is checked, and
+	// the config change below cancels it.
+	script := "printf hub-secret-output; printf err-secret >&2; sleep 300"
+	job := must("POST", "run", map[string]any{"script": script, "timeout_seconds": 600})
 	id := job["id"].(string)
 	var live map[string]any
-	require.Eventually(t, func() bool {
+	require.EventuallyWithT(t, func(c *assert.CollectT) {
 		live = must("GET", "run/jobs/"+id, nil)
-		return live["stdout_tail"] == "hub-secret-output"
-	}, 5*time.Second, 100*time.Millisecond)
+		assert.Equal(c, "hub-secret-output", live["stdout_tail"], "job never printed; last job state: %v", live)
+	}, hubExecLiveness, 50*time.Millisecond)
 	require.Equal(t, "running", live["state"])
 	require.NotNil(t, live["duration_ms"])
 	chunk := must("GET", "run/jobs/"+id+"/logs?stream=stdout&offset=0", nil)
@@ -111,7 +122,10 @@ func TestDashboardHubExecTwoLocksOutputAuditAndRevocation(t *testing.T) {
 	require.Equal(t, "hub_exec_required", result.Code)
 	// Changing the HOST config cancels an already-running process group.
 	require.NoError(t, os.WriteFile(config, []byte(`{"accept_remote_scripts":false}`), 0600))
-	require.Eventually(t, func() bool { job = must("GET", "run/jobs/"+id, nil); return job["state"] == "cancelled" }, 6*time.Second, 100*time.Millisecond)
+	require.EventuallyWithT(t, func(c *assert.CollectT) {
+		job = must("GET", "run/jobs/"+id, nil)
+		assert.Equal(c, "cancelled", job["state"], "config change never cancelled the job; last job state: %v", job)
+	}, hubExecLiveness, 50*time.Millisecond)
 	require.Equal(t, float64(130), job["exit_code"])
 	audit = must("GET", "audit?max_entries=200", nil)
 	raw, _ = json.Marshal(audit)
