@@ -363,3 +363,24 @@ func TestDecisionFirstLoopsLeadingIntoEachOtherAreRefused(t *testing.T) {
 		t.Fatalf("errors = %v", loopErrorCodes(tmpl))
 	}
 }
+
+// A task's route out of a loop is named in plain words: the step, the route,
+// where it goes, the decision that may lead out instead, and the two fixes.
+func TestLoopExitSaysWhichRouteAndHowToFixIt(t *testing.T) {
+	tmpl := loopTestTemplate(func(nodes map[string]Node) {
+		review := nodes["review"]
+		review.Next = Next{DefaultOutcome: "decide", "fail": "escalated"}
+		nodes["review"] = review
+	})
+	var message string
+	for _, diagnostic := range Validate(tmpl, NormalizeEdges(tmpl)) {
+		if diagnostic.Code == "loop_exit" {
+			message = diagnostic.Message
+		}
+	}
+	want := `step "review" is inside the loop that "decide" sends back to "implement", but its "fail" route goes to "escalated", outside the loop. ` +
+		`Only a decision may lead out of a loop: point "fail" at the decision "decide" instead (or remove it: a step whose fail has no route fails the run)`
+	if message != want {
+		t.Fatalf("loop_exit message =\n%s\nwant\n%s", message, want)
+	}
+}

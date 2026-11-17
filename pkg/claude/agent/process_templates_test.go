@@ -40,7 +40,7 @@ func TestRunProcessTemplatesLsUsesSharedRESTSurface(t *testing.T) {
 	require.Equal(t, rcOK, rc, "stderr=%q", stderr.String())
 	require.Len(t, calls, 1)
 	assert.Equal(t, http.MethodGet, calls[0].method)
-	assert.Equal(t, "/v1/process/templates", calls[0].path)
+	assert.Equal(t, "/v1/process/templates?all=1", calls[0].path, "group drafts are listed by default")
 	assert.Contains(t, stdout.String(), "demo")
 	assert.Contains(t, stdout.String(), "versions=2")
 	assert.Contains(t, stdout.String(), "actor=agent:agt_writer")
@@ -79,7 +79,7 @@ func TestRunProcessTemplatesLsJSONForwardsTheFullDaemonListing(t *testing.T) {
 
 	require.Equal(t, rcOK, rc, "stderr=%q", stderr.String())
 	require.Len(t, calls, 1)
-	assert.Equal(t, "/v1/process/templates", calls[0].path)
+	assert.Equal(t, "/v1/process/templates?all=1", calls[0].path)
 	assert.Empty(t, stderr.String(), "--json must keep stderr clean on success")
 
 	// Field-for-field equality against the daemon payload, so a field added to
@@ -134,6 +134,34 @@ func TestRunProcessTemplatesLsJSONOmitsAbsentAttribution(t *testing.T) {
 	entry := raw["templates"].([]any)[1].(map[string]any)["latestVersion"].(map[string]any)
 	assert.NotContains(t, entry, "actor")
 	assert.NotContains(t, entry, "authoredAt")
+}
+
+// A group draft is what an agent asked from the editor works on, so ls lists
+// it by default, marked, in the table and in --json ("listed": false), and
+// --library alone leaves it out.
+func TestRunProcessTemplatesLsListsGroupDraftsMarked(t *testing.T) {
+	var calls []capturedReq
+	stubDaemon(t, &calls, ok(fullDaemonTemplateListing))
+	var stdout, stderr bytes.Buffer
+	require.Equal(t, rcOK, runProcessTemplatesLs(&processTemplatesLsParams{}, &stdout, &stderr), "stderr=%q", stderr.String())
+	lines := strings.Split(strings.TrimSpace(stdout.String()), "\n")
+	var demo, other string
+	for _, line := range lines {
+		if strings.HasPrefix(line, "demo\t") {
+			demo = line
+		}
+		if strings.HasPrefix(line, "other\t") {
+			other = line
+		}
+	}
+	assert.NotContains(t, demo, "draft", "a library template is not marked")
+	assert.Contains(t, other, "draft (saved to a group, not in the library)")
+
+	calls = nil
+	stdout.Reset()
+	require.Equal(t, rcOK, runProcessTemplatesLs(&processTemplatesLsParams{Library: true}, &stdout, &stderr))
+	require.Len(t, calls, 1)
+	assert.Equal(t, "/v1/process/templates", calls[0].path, "--library asks for the library only")
 }
 
 func TestRunProcessTemplatesLsAllIncludesUnpublished(t *testing.T) {
@@ -247,7 +275,7 @@ func TestProcessTemplateReadCommandsPassAskHuman(t *testing.T) {
 			run: func(stdout, stderr *bytes.Buffer) int {
 				return runProcessTemplatesLs(&processTemplatesLsParams{AskHuman: "45s"}, stdout, stderr)
 			},
-			wantPath: "/v1/process/templates",
+			wantPath: "/v1/process/templates?all=1",
 		},
 		"show": {
 			response: `{"source":"","sourceHash":"src","semanticHash":"sem","currentRef":"demo@sha256:sem"}`,

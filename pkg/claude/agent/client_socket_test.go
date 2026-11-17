@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -14,8 +15,8 @@ import (
 
 // A socket override short-circuits every fallback, so a stale or mistyped one
 // makes a running daemon look absent. The error has to name the path it dialled
-// and where that path came from, or the operator goes hunting a daemon that is
-// already up.
+// and where that path came from, and must never steer an agent off the pin (a
+// sandboxed agent that unset it would reach the operator's real daemon).
 func TestDaemonUnreachableMsgNamesTheSocketOverride(t *testing.T) {
 	t.Run("no override keeps the plain not-running message", func(t *testing.T) {
 		t.Setenv(agentipc.SocketEnv, "")
@@ -38,10 +39,14 @@ func TestDaemonUnreachableMsgNamesTheSocketOverride(t *testing.T) {
 		msg := daemonUnreachableMsg()
 		require.Contains(t, msg, dead, "names the path actually dialled")
 		require.Contains(t, msg, agentipc.SocketEnv, "names where that path came from")
-		require.Contains(t, msg, canonical, "names the socket that IS live")
-		require.Contains(t, msg, "Unset", "names the fix")
+		require.NotContains(t, msg, canonical,
+			"never points at another live daemon: from a sandbox that is the operator's real one")
+		require.NotContains(t, strings.ToLower(msg), "unset "+strings.ToLower(agentipc.SocketEnv),
+			"never suggests unsetting the pin")
+		require.Contains(t, msg, "do not unset or change it", "says the pin is deliberate")
+		require.Contains(t, msg, "tell the operator", "an agent hands it to the operator")
 		require.NotContains(t, msg, "is not running",
-			"a daemon is running; saying otherwise is what sent the operator hunting")
+			"a daemon may be running; saying otherwise sends the operator hunting")
 	})
 
 	t.Run("override points at a dead path and nothing else is live", func(t *testing.T) {
