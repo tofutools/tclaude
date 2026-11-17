@@ -84,5 +84,19 @@
 :root[data-layout="phone"] .phone-task-q-rec { color: var(--ui-muted-text); font-size: 11.5px; }
 :root[data-layout="phone"] .phone-task-q-answer { flex-basis: 100%; margin-top: 4px; padding: 6px 8px; border-left: 2px solid var(--ui-line); }
 :root[data-layout="phone"] .phone-task-q-answer p { margin: 2px 0 0; font-size: 13px; }
+/* Who worked on the task (js/phone-task-parts.js): a row per agent, a tap
+   from its terminal (or its menu), with what it did; an actor's name in the
+   Activity is the same jump. */
+:root[data-layout="phone"] .phone-task-people { list-style: none; margin: 0; padding: 0; }
+:root[data-layout="phone"] .phone-task-person { display: flex; align-items: center; gap: 4px; border-bottom: 1px solid var(--phone-tile); }
+:root[data-layout="phone"] .phone-task-person-open { flex: 1; min-width: 0; }
+:root[data-layout="phone"] .phone-task-person-roles { display: block; color: var(--ui-muted-text); font-size: 12px; overflow-wrap: anywhere; }
+:root[data-layout="phone"] .phone-task-who-link { padding: 0; border: 0; background: none; color: var(--phone-accent); font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
+:root[data-layout="phone"] .phone-task-comment-kind { padding: 0 6px; border-radius: 8px; background: var(--phone-tile); color: var(--ui-muted-text); font-size: 11px; }
+/* The task's files and a comment's (the desktop's tiles, groups-taskboard-files.js),
+   three to a row on a phone. */
+:root[data-layout="phone"] .phone-task-files.tb-files { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+:root[data-layout="phone"] .phone-task-files .tb-file-thumb { height: 72px; }
+:root[data-layout="phone"] .phone-task-comment-files { flex-basis: 100%; margin-top: 4px; }
 :root[data-layout="phone"] .phone-task-comment-box { display: flex; flex-direction: column; gap: 8px; margin-top: 16px; }
 :root[data-layout="phone"] .phone-task-comment-box .phone-btn { align-self: flex-end; }

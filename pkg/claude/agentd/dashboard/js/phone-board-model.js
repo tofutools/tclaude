@@ -233,3 +233,57 @@ export function sectionPeers(entry, task) {
   const id = sectionOf(task);
   return columnSections(entry, key).find((section) => section.id === id)?.tasks || [];
 }
+
+// agentOfActor is the agent id an actor names ("agent:<id>"), or ''.
+export function agentOfActor(actor) {
+  const text = String(actor || '');
+  return text.startsWith('agent:') ? text.slice('agent:'.length) : '';
+}
+
+// PERSON_ROLE says what an activity entry's actor did, for the task page's
+// People: the entries that are someone working on the task.
+const PERSON_ROLE = Object.freeze({
+  created: 'created it', taken: 'took it', started: 'started it', assigned: 'assigned it',
+  blocked: 'blocked it', done: 'closed it', dropped: 'dropped it', reopened: 'reopened it',
+  edited: 'edited it', comment: 'commented',
+});
+
+// roleOf is what one activity entry says its actor did, '' for none. A
+// report says its outcome ("reported done", "reported failed"); a question
+// is "asked".
+function roleOf(entry) {
+  if (entry.kind === 'reported') {
+    const outcome = String(entry.detail || '').split(':')[0].trim();
+    return outcome ? `reported ${outcome}` : 'reported';
+  }
+  if (entry.comment?.question) return 'asked';
+  return PERSON_ROLE[entry.kind] || '';
+}
+
+// taskPeople is who worked on a task, for its phone page: the assignee
+// first, then each agent the activity names, the one heard from last
+// first. [{ agentId, roles: [...], at }]. Only agents: the operator is
+// "you", and is not someone to jump to.
+export function taskPeople(task, entries = []) {
+  const people = new Map();
+  const note = (agentId, role, at = '') => {
+    if (!agentId) return;
+    const person = people.get(agentId) || { agentId, roles: [], at: '' };
+    if (role && !person.roles.includes(role)) person.roles.push(role);
+    if (at && at > person.at) person.at = at;
+    people.set(agentId, person);
+  };
+  const assignee = task?.assignee?.agent_id && !task.assignee.operator ? task.assignee.agent_id : '';
+  for (const entry of entries || []) {
+    const actor = entry.comment ? entry.comment.author : entry.actor;
+    note(agentOfActor(actor), roleOf(entry), entry.at || entry.comment?.at || '');
+  }
+  note(agentOfActor(task?.created_by), 'created it', task?.created_at || '');
+  const list = [...people.values()].filter((person) => person.agentId !== assignee)
+    .sort((a, b) => (b.at || '').localeCompare(a.at || ''));
+  if (assignee) {
+    const own = people.get(assignee) || { agentId: assignee, roles: [], at: '' };
+    list.unshift({ ...own, roles: [task.status === 'done' ? 'did it' : 'assignee', ...own.roles] });
+  }
+  return list;
+}

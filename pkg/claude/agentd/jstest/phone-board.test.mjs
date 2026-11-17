@@ -87,7 +87,12 @@ test('Move offers the columns a task can go to, and its place among its section'
   assert.deepEqual(m.positionMoves([ready, coupon], coupon), { top: { before: 'tk_ready', stage: 'next' }, up: { before: 'tk_ready', stage: 'next' }, down: null });
 });
 
-async function setupView(t, { activity = null, task = null } = {}) {
+// withTask is a board with extra fields on its tk_ready.
+function withTask(b, extra) {
+  return { ...b, tasks: b.tasks.map((task) => (task.id === 'tk_ready' ? { ...task, ...extra } : task)) };
+}
+
+async function setupView(t, { actions = {}, activity = null, task = null, row = {} } = {}) {
   const harness = await createPreactHarness(t);
   const [{ createDashboardState }, boardMod, sheetMod, pageMod] = await Promise.all([
     harness.importDashboardModule('js/snapshot-store.js'),
@@ -106,7 +111,7 @@ async function setupView(t, { activity = null, task = null } = {}) {
   let refreshes = 0;
   const source = {
     attach: () => () => {}, status: signal('ready'), error: signal(''),
-    context: signal({ groups: [board()] }),
+    context: signal({ groups: [withTask(board(), row)] }),
     refresh() { refreshes += 1; return Promise.resolve(); },
   };
   const record = (name) => async (...args) => { writes.push([name, ...args]); return {}; };
@@ -122,7 +127,7 @@ async function setupView(t, { activity = null, task = null } = {}) {
   t.after(() => { boardMod.boardTask.value = null; sheetMod.closePhoneSheet(); pageMod.phonePage.value = null; pageMod.phoneBar.value = null; });
   const { html } = harness;
   const mounted = await harness.mount(html`<div>
-    <${boardMod.BoardView} source=${source} state=${state} actions=${{}} api=${api} />
+    <${boardMod.BoardView} source=${source} state=${state} actions=${actions} api=${api} />
     <${sheetMod.PhoneSheetHost} />
   </div>`);
   const c = mounted.container;
@@ -343,4 +348,62 @@ test("a task's page: its id with copy, who made and holds it, changes in words, 
   assert.equal(q.querySelector('.phone-task-q-title').textContent, 'Which carrier?');
   assert.deepEqual([...q.querySelectorAll('.phone-task-q-opts li')].map((li) => li.textContent.trim()), ['● DHL recommended', '○ UPS']);
   assert.ok(q.querySelector('[data-answer-of="1"]').textContent.includes('you'), 'who answered');
+});
+
+test("a task's page names who worked on it, each a tap from their terminal or menu", async (t) => {
+  const GONE = 'agt_00000000000000000000000000000009';
+  const opened = [];
+  const actions = {
+    openTerminal: (agent) => opened.push(['terminal', agent.agentId]),
+    agentMenu: (agent) => opened.push(['menu', agent.agentId]),
+  };
+  const activity = [
+    { id: 1, at: '2026-11-14T00:00:00Z', actor: 'human:operator', actor_name: 'operator', kind: 'created' },
+    { id: 2, at: '2026-11-14T00:01:00Z', actor: `agent:${AGENT}`, actor_name: 'checkout-ui', kind: 'taken' },
+    { id: 3, at: '2026-11-14T00:02:00Z', actor: `agent:${GONE}`, actor_name: 'reviewer', kind: 'comment',
+      comment: { id: 3, author: `agent:${GONE}`, author_name: 'reviewer', body: 'Looks fine.', at: '2026-11-14T00:02:00Z' } },
+    { id: 4, at: '2026-11-14T00:03:00Z', actor: `agent:${AGENT}`, actor_name: 'checkout-ui', kind: 'reported', detail: 'done: shipped' },
+  ];
+  const { c, tap, settle, card } = await setupView(t, { actions, activity: async () => ({ events: activity }) });
+  await tap(card('tk_ready').querySelector('.phone-board-open'));
+  await settle();
+  await settle();
+  const people = [...c.querySelectorAll('.phone-task-person')];
+  assert.deepEqual(people.map((li) => li.dataset.person), [AGENT, GONE, LEAD], 'the assignee first, then the rest, the latest first');
+  assert.match(people[2].textContent, /created it/, 'who made the task');
+  assert.match(people[0].textContent, /assignee · took it · reported done/);
+  assert.match(people[1].textContent, /commented/);
+  assert.match(people[1].textContent, /offline/, 'an agent the snapshot does not list is offline');
+  await tap(people[0].querySelector('.phone-task-person-open'));
+  await tap(people[1].querySelector('.phone-task-person-open'));
+  assert.deepEqual(opened, [['terminal', AGENT], ['menu', GONE]], 'online: its terminal; offline: its menu');
+  // An actor in the Activity is the same jump; the operator is plain text.
+  const names = [...c.querySelectorAll('.phone-task-activity .phone-task-who')];
+  assert.equal(names[0].tagName, 'SPAN', 'you are not a link');
+  await tap(c.querySelector(`.phone-task-activity .phone-task-who-link[data-person="${AGENT}"]`));
+  assert.deepEqual(opened.at(-1), ['terminal', AGENT]);
+});
+
+test("a task's page lists its files, and a comment its kind, edits and own files", async (t) => {
+  const file = (id, name) => ({ id, name, size: 2048, content_type: 'text/plain', added_by: 'human:operator' });
+  const activity = [
+    { id: 1, at: '2026-11-14T00:01:00Z', actor: `agent:${AGENT}`, kind: 'comment',
+      comment: { id: 1, kind: 'report_note', author: `agent:${AGENT}`, author_name: 'checkout-ui', body: 'Shipped, log attached.',
+        at: '2026-11-14T00:01:00Z', edited_at: '2026-11-14T00:05:00Z', attachments: [file('a2', 'ci.log')] } },
+    { id: 2, at: '2026-11-14T00:02:00Z', actor: 'human:operator', kind: 'comment',
+      comment: { id: 2, author: 'human:operator', body: 'gone', at: '2026-11-14T00:02:00Z', deleted_at: '2026-11-14T00:03:00Z' } },
+  ];
+  const { c, tap, settle, card } = await setupView(t, { activity: async () => ({ events: activity }), row: { attachments: [file('a1', 'notes.txt')] } });
+  await tap(card('tk_ready').querySelector('.phone-board-open'));
+  await settle();
+  await settle();
+  const files = c.querySelector('[aria-label="Files"]');
+  assert.ok(files, 'a Files section');
+  assert.match(files.textContent, /notes\.txt/);
+  const items = [...c.querySelectorAll('.phone-task-activity > li')];
+  assert.equal(items[0].querySelector('[data-comment-kind]')?.textContent, 'report');
+  assert.match(items[0].textContent, /edited/);
+  assert.match(items[0].querySelector('.phone-task-comment-files').textContent, /ci\.log/, "the comment's own file");
+  assert.match(items[1].textContent, /deleted/);
+  assert.doesNotMatch(items[1].textContent, /gone/, "a deleted comment's words are not shown");
 });
