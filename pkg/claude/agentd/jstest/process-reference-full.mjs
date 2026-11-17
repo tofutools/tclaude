@@ -156,23 +156,29 @@ function giveUp(e, from) {
 
 // shipIt readies the PR after `from` (leaving it on `outcome`) and merges it
 // if the run allows it; it returns the end.
-function shipIt(e, from, outcome) {
-  const ready = agentStep(e, from, 'Ready the PR', 'Mark the PR ready for review and notify the operator with a short summary.', LEAD);
+function shipIt(e, from, outcome, { ci = false } = {}) {
+  const ready = agentStep(e, from, 'Ready the PR', ci ? 'Mark the PR ready for review and notify the operator with a short summary.'
+    : 'Once CI on the PR passes (have it fixed until it does), mark the PR ready for review and notify the operator with a short summary.', LEAD);
   e.label(from, 'pass', outcome);
-  const ci = e.node(ready, 'task', 'CI');
-  e.kind(ci, 'program');
-  e.field(ci, 'run', 'gh');
-  e.field(ci, 'args', ['pr', 'checks', '--watch']);
-  e.failure(ci, 'go-on');
-  const merge = e.node(ci, 'decision', 'Merge');
-  const mergePR = agentStep(e, merge, 'Merge the PR', 'Merge the PR now that CI passed.', LEAD);
+  let before = ready;
+  if (ci) {
+    before = e.node(ready, 'task', 'CI');
+    e.kind(before, 'program');
+    e.field(before, 'run', 'gh');
+    e.field(before, 'args', ['pr', 'checks', '--watch']);
+    e.failure(before, 'go-on');
+  }
+  const merge = e.node(before, 'decision', 'Merge');
+  const mergePR = agentStep(e, merge, 'Merge the PR', ci ? 'Merge the PR now that CI passed.' : 'Merge the PR.', LEAD);
   e.label(merge, 'pass', 'merge');
   const end = e.node(mergePR, 'end');
   e.connect(merge, 'leave', end);
-  // CI succeeded (the seed) and auto_merge is true → merge, else leave.
+  // With ci: CI succeeded (the seed) and auto_merge → merge. Without: auto_merge alone.
   e.rule(merge);
-  e.ruleAnd(merge, 0);
-  e.ruleRow(merge, 0, 1, { operand: 'params.auto_merge' });
+  if (ci) {
+    e.ruleAnd(merge, 0);
+    e.ruleRow(merge, 0, 1, { operand: 'params.auto_merge' });
+  } else e.ruleRow(merge, 0, 0, { operand: 'params.auto_merge' });
   return { ready, end };
 }
 
@@ -186,7 +192,7 @@ export function fullSimple() {
   const decided = discussAndDecide(e);
   const provision = agentStep(e, decided, 'Provision an implementor', 'Bring in an implementor for the idea and brief it.', LEAD);
   e.label(decided, 'pass', 'decided');
-  const build = agentStep(e, provision, 'Build the feature', 'Build the agreed idea on a branch and open a draft PR.', { role: 'implementor' });
+  const build = agentStep(e, provision, 'Build the feature', 'Build the agreed idea on a branch and open a draft PR. Keep at it until CI on the PR passes.', { role: 'implementor' });
   const review = agentStep(e, build, 'Cold review', 'Review the PR cold, as someone who did not build it. List what you find.', { anyone: true, differentFrom: [build] });
   const decide = agentDecision(e, review, 'Iterate or move on', 'Does the review warrant another round of changes, or does it move ahead?', LEAD);
   e.connect(decide, 'iterate', build);
@@ -236,7 +242,7 @@ export function fullAdvanced() {
   e.label(minors, 'pass', 'fix-minors');
   const conform = agentDecision(e, fix, 'Meets the criteria', 'Does the implementation, as reviewed, meet the acceptance criteria?', LEAD);
   e.connect(minors, 'proceed', conform);
-  const { ready } = shipIt(e, conform, 'meets');
+  const { ready } = shipIt(e, conform, 'meets', { ci: true });
   // Off the criteria: amend them if the operator allowed it, else rework.
   const allowed = e.node(conform, 'decision', 'Amending allowed');
   e.label(conform, 'pass', 'misses');

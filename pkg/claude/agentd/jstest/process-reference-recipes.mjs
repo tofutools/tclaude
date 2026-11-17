@@ -172,24 +172,34 @@ function discussAndDecide(e) {
 }
 
 // shipIt is how both processes close: the lead readies the PR and tells the
-// operator, CI runs (it may fail: the run goes on, for the rule to see), and
-// a rule merges only when the run allows it and CI passed. The params must
-// be declared first: a rule reads only declared params.
-function shipIt(e, at) {
+// operator, and a rule merges it only when the run allows it. Whether CI is
+// a step of its own is the designer's choice (tk_82f97468), and the examples
+// show one style each. With ci, CI is a command step that may fail (the run
+// goes on, for the rule to see) and the rule also needs it passed; without,
+// the agents keep at it until CI passes inside their steps, and the rule
+// reads only auto_merge. The params must be declared first: a rule reads
+// only declared params.
+function shipIt(e, at, { ci = false } = {}) {
   const ready = e.step('after', at, 'agent', {
     name: 'Ready the PR', who: LEAD,
-    text: 'Mark the PR ready for review and notify the operator with a short summary.',
+    text: ci ? 'Mark the PR ready for review and notify the operator with a short summary.'
+      : 'Once CI on the PR passes (have it fixed until it does), mark the PR ready for review and notify the operator with a short summary.',
   });
-  const ci = e.step('after', ready, 'command', { name: 'CI', text: 'gh pr checks --watch' });
-  e.failure(ci, 'go-on');
-  const merge = e.step('after', ci, 'decide', { name: 'Merge' });
+  let before = ready;
+  if (ci) {
+    before = e.step('after', ready, 'command', { name: 'CI', text: 'gh pr checks --watch' });
+    e.failure(before, 'go-on');
+  }
+  const merge = e.step('after', before, 'decide', { name: 'Merge' });
   e.rename(merge, 'yes', 'merge');
   e.rename(merge, 'no', 'leave');
-  // A new rule starts on the step just before it: CI succeeded.
+  // A new rule starts on the step just before it: with ci, CI succeeded.
   e.rule(merge);
-  e.ruleAnd(merge, 0);
-  e.ruleRow(merge, 0, 1, { operand: 'params.auto_merge' });
-  e.step('after', merge, 'agent', { name: 'Merge the PR', who: LEAD, text: 'Merge the PR now that CI passed.' });
+  if (ci) {
+    e.ruleAnd(merge, 0);
+    e.ruleRow(merge, 0, 1, { operand: 'params.auto_merge' });
+  } else e.ruleRow(merge, 0, 0, { operand: 'params.auto_merge' });
+  e.step('after', merge, 'agent', { name: 'Merge the PR', who: LEAD, text: ci ? 'Merge the PR now that CI passed.' : 'Merge the PR.' });
   return merge;
 }
 
@@ -202,7 +212,7 @@ export function simple() {
     name: 'Provision an implementor', who: LEAD, text: 'Bring in an implementor for the idea and brief it.',
   });
   const build = e.step('after', provision, 'agent', {
-    name: 'Build the feature', who: IMPLEMENTOR, text: 'Build the agreed idea on a branch and open a draft PR.',
+    name: 'Build the feature', who: IMPLEMENTOR, text: 'Build the agreed idea on a branch and open a draft PR. Keep at it until CI on the PR passes.',
   });
   const review = e.step('after', build, 'agent', {
     name: 'Cold review', who: ANYONE, constraint: { mode: 'different', steps: [build] },
@@ -281,7 +291,7 @@ function advancedWith(reviews) {
     name: 'Meets the criteria', who: LEAD, text: 'Does the implementation, as reviewed, meet the acceptance criteria?',
   });
   e.rename(conform, 'yes', 'meets');
-  shipIt(e, conform);
+  shipIt(e, conform, { ci: true });
   const ready = nodeNamed(e.view, 'Ready the PR');
   e.rename(conform, 'no', 'misses');
   // Missing the criteria still ends in a ready PR, once amended.

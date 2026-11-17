@@ -66,7 +66,7 @@
       "name": "Build the feature",
       "performer": {
        "kind": "agent",
-       "prompt": "Build the agreed idea on a branch and open a draft PR.",
+       "prompt": "Build the agreed idea on a branch and open a draft PR. Keep at it until CI on the PR passes.",
        "role": "implementor"
       }
      },
@@ -107,23 +107,9 @@
       "name": "Ready the PR",
       "performer": {
        "kind": "agent",
-       "prompt": "Mark the PR ready for review and notify the operator with a short summary.",
+       "prompt": "Once CI on the PR passes (have it fixed until it does), mark the PR ready for review and notify the operator with a short summary.",
        "lead": true
       }
-     },
-     "ci": {
-      "type": "task",
-      "name": "CI",
-      "performer": {
-       "kind": "program",
-       "run": "gh",
-       "args": [
-        "pr",
-        "checks",
-        "--watch"
-       ]
-      },
-      "mayFail": true
      },
      "merge": {
       "type": "decision",
@@ -132,7 +118,7 @@
        "kind": "rule",
        "cases": [
         {
-         "when": "steps.ci.result == succeeded and params.auto_merge == true",
+         "when": "params.auto_merge == true",
          "then": "merge"
         }
        ],
@@ -144,7 +130,7 @@
       "name": "Merge the PR",
       "performer": {
        "kind": "agent",
-       "prompt": "Merge the PR now that CI passed.",
+       "prompt": "Merge the PR.",
        "lead": true
       }
      }
@@ -208,11 +194,6 @@
     },
     {
      "from": "ready-the-pr",
-     "outcome": "next",
-     "to": "ci"
-    },
-    {
-     "from": "ci",
      "outcome": "next",
      "to": "merge"
     },
@@ -1251,7 +1232,7 @@
       "type": "task",
       "performer": {
        "kind": "agent",
-       "prompt": "Build the agreed idea on a branch and open a draft PR.",
+       "prompt": "Build the agreed idea on a branch and open a draft PR. Keep at it until CI on the PR passes.",
        "role": "implementor"
       },
       "name": "Build the feature"
@@ -1292,24 +1273,10 @@
       "type": "task",
       "performer": {
        "kind": "agent",
-       "prompt": "Mark the PR ready for review and notify the operator with a short summary.",
+       "prompt": "Once CI on the PR passes (have it fixed until it does), mark the PR ready for review and notify the operator with a short summary.",
        "lead": true
       },
       "name": "Ready the PR"
-     },
-     "task-6": {
-      "type": "task",
-      "performer": {
-       "kind": "program",
-       "run": "gh",
-       "args": [
-        "pr",
-        "checks",
-        "--watch"
-       ]
-      },
-      "name": "CI",
-      "mayFail": true
      },
      "decision-3": {
       "type": "decision",
@@ -1318,18 +1285,18 @@
        "kind": "rule",
        "cases": [
         {
-         "when": "steps.task-6.result == succeeded and params.auto_merge == true",
+         "when": "params.auto_merge == true",
          "then": "merge"
         }
        ],
        "else": "leave"
       }
      },
-     "task-7": {
+     "task-6": {
       "type": "task",
       "performer": {
        "kind": "agent",
-       "prompt": "Merge the PR now that CI passed.",
+       "prompt": "Merge the PR.",
        "lead": true
       },
       "name": "Merge the PR"
@@ -1399,20 +1366,15 @@
     {
      "from": "task-5",
      "outcome": "pass",
-     "to": "task-6"
-    },
-    {
-     "from": "task-6",
-     "outcome": "pass",
      "to": "decision-3"
     },
     {
      "from": "decision-3",
      "outcome": "merge",
-     "to": "task-7"
+     "to": "task-6"
     },
     {
-     "from": "task-7",
+     "from": "task-6",
      "outcome": "pass",
      "to": "end-2"
     },

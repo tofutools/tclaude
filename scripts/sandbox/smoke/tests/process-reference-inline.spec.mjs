@@ -144,7 +144,7 @@ test('the simple reference process clicks together inline into what its recipe b
   await handle(decided, 'after', 'agent');
   const provision = await fill({ name: 'Provision an implementor', text: 'Bring in an implementor for the idea and brief it.', who: ['lead'] });
   await handle(provision, 'after', 'agent');
-  const build = await fill({ name: 'Build the feature', text: 'Build the agreed idea on a branch and open a draft PR.', who: ['role:implementor', 'role:dev', 'anyone'] });
+  const build = await fill({ name: 'Build the feature', text: 'Build the agreed idea on a branch and open a draft PR. Keep at it until CI on the PR passes.', who: ['role:implementor', 'role:dev', 'anyone'] });
   // One cold reviewer, not the one who built it.
   await handle(build, 'after', 'agent');
   const review = await fill({ name: 'Cold review', text: 'Review the PR cold, as someone who did not build it. List what you find.', who: ['anyone'] });
@@ -173,26 +173,22 @@ test('the simple reference process clicks together inline into what its recipe b
   await dialog.getByRole('button', { name: 'Apply' }).click();
   await expect(dialog).toHaveCount(0);
   await expect(editor.locator('[data-mini-param="auto_merge"]')).toHaveText('auto_merge: boolean = false');
-  // PR ready and notify; CI runs and may fail; a rule merges if allowed.
+  // PR ready and notify once CI passes (inside the step: example 2 has no
+  // CI step), then a rule merges if allowed.
   await select(decide);
   await handle(decide, 'after', 'agent');
-  const ready = await fill({ name: 'Ready the PR', text: 'Mark the PR ready for review and notify the operator with a short summary.', who: ['lead'] });
-  await handle(ready, 'after', 'command');
-  const ci = await fill({ name: 'CI', text: 'gh pr checks --watch' });
-  await inspector.locator(`[data-mini-failure="${ci}"] select`).selectOption('go-on');
-  await handle(ci, 'after', 'decide');
+  const ready = await fill({ name: 'Ready the PR', text: 'Once CI on the PR passes (have it fixed until it does), mark the PR ready for review and notify the operator with a short summary.', who: ['lead'] });
+  await handle(ready, 'after', 'decide');
   const merge = await fill({ name: 'Merge' });
   await rename('yes', 'merge');
   await rename('no', 'leave');
   await inspector.locator('.gq-who-select').selectOption('rule');
-  const rule = inspector.locator(`[data-mini-rule="${merge}"]`);
+  const rule = inspector.locator(`[data-mini-rule]`);
   await expect(rule).toBeVisible();
-  await rule.locator('[data-mini-rule-row="0.0"] select').first().selectOption(`steps.${ci}.result`);
-  await rule.locator('[data-mini-rule-and="0"]').click();
-  await rule.locator('[data-mini-rule-row="0.1"] select').first().selectOption('params.auto_merge');
+  await rule.locator('[data-mini-rule-row="0.0"] select').first().selectOption('params.auto_merge');
   await expect(rule.locator('[data-mini-rule-words]')).toContainText('auto_merge');
   await handle(merge, 'after', 'agent');
-  await fill({ name: 'Merge the PR', text: 'Merge the PR now that CI passed.', who: ['lead'] });
+  await fill({ name: 'Merge the PR', text: 'Merge the PR.', who: ['lead'] });
   await select(merge);
   // ⑂ on an answer's row offers a step on that answer (not used here).
   await inspector.locator('[data-mini-answer-step="leave"]').click();

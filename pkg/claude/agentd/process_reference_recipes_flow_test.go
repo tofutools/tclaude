@@ -20,9 +20,10 @@ import (
 // tk_c324d5a4: the operator's two reference implementation processes, as
 // the inline editor builds them (jstest/process-reference-recipes.mjs), run
 // through the daemon along their main paths. Agents report and the operator
-// decides exactly as they would; a script says what each one answers. The
-// CI step is a command, stubbed to pass or fail; the settings gates are
-// rules, so the run's params and CI's result alone route them.
+// decides exactly as they would; a script says what each one answers.
+// Example 2 keeps CI inside the agents' steps; example 1 has a CI command
+// step, stubbed to pass or fail. The settings gates are rules, so the
+// run's params (and example 1's CI result) alone route them.
 
 // referenceCrew is the group a reference run works in: a lead, an
 // implementor, and four reviewers free to take any review.
@@ -58,15 +59,18 @@ func startReferenceRun(t *testing.T, f *testharness.Flow, root, runID, key strin
 	tmpl, err := agentd.ReferenceRecipeTemplateForTest(key)
 	require.NoError(t, err)
 	putProcessRuntimeTemplate(t, root, tmpl)
-	t.Cleanup(agentd.SetProcessProgramPerformForTest(func(_ context.Context, dispatch *executor.Dispatch) (executor.Result, error) {
-		command := dispatch.Command()
-		require.Equal(t, "ci", command.NodeID, "the only command is CI")
-		exit := 0
-		if ci == engine.ProgramFailed {
-			exit = 1
-		}
-		return processObservation(command, ci, exit), nil
-	}))
+	// A process with no CI step (example 2) runs no command: ci is "".
+	if ci != "" {
+		t.Cleanup(agentd.SetProcessProgramPerformForTest(func(_ context.Context, dispatch *executor.Dispatch) (executor.Result, error) {
+			command := dispatch.Command()
+			require.Equal(t, "ci", command.NodeID, "the only command is CI")
+			exit := 0
+			if ci == engine.ProgramFailed {
+				exit = 1
+			}
+			return processObservation(command, ci, exit), nil
+		}))
+	}
 	created := processRuntimeRequest(t, f, http.MethodPost, "/v1/process/runs", map[string]any{
 		"id": runID, "templateId": tmpl.ID, "group": "crew", "params": params, "authorizeProgramProfiles": []string{""},
 	})
@@ -190,24 +194,22 @@ func visitsTo(visits []visit, node string) []visit {
 
 // Scenario (example 2): the operator decides the idea on the second pass;
 // the implementor builds, a cold reviewer who is not the implementor
-// reviews, and the lead sends it round once more before moving on. CI runs;
-// the Merge rule merges only with auto-merge on and CI passed, else the PR
-// is left for the operator.
+// reviews, and the lead sends it round once more before moving on. CI is
+// the agents' to get green inside their steps; the Merge rule merges only
+// with auto-merge on, else the PR is left for the operator.
 func TestReferenceSimple_IterateOnceThenShip(t *testing.T) {
 	for _, tc := range []struct {
 		autoMerge bool
-		ci        engine.ProgramOutcome
 		merged    bool
 	}{
-		{true, engine.ProgramSucceeded, true},
-		{false, engine.ProgramSucceeded, false},
-		{true, engine.ProgramFailed, false},
+		{true, true},
+		{false, false},
 	} {
-		t.Run(fmt.Sprintf("auto_merge=%v,ci=%s", tc.autoMerge, tc.ci), func(t *testing.T) {
+		t.Run(fmt.Sprintf("auto_merge=%v", tc.autoMerge), func(t *testing.T) {
 			f, root := processRuntimeFlow(t)
 			crew := haveReferenceCrew(t, f)
 			const runID = "run_reference_simple"
-			startReferenceRun(t, f, root, runID, "simple", map[string]string{"idea": "dark mode", "auto_merge": fmt.Sprint(tc.autoMerge)}, tc.ci)
+			startReferenceRun(t, f, root, runID, "simple", map[string]string{"idea": "dark mode", "auto_merge": fmt.Sprint(tc.autoMerge)}, "")
 			visits, status := drive(t, f, crew, runID, script{
 				"idea-decided":       {"not-yet", "decided"},
 				"iterate-or-move-on": {"iterate", "move-on"},
@@ -231,7 +233,7 @@ func TestReferenceSimple_IterateOnceThenShip(t *testing.T) {
 				want = "merge"
 			}
 			assert.Equal(t, []string{want}, ruleVerdicts(t, f, runID))
-			assert.Equal(t, tc.merged, len(visitsTo(visits, "merge-the-pr")) == 1, "merged only with auto-merge on and CI passed")
+			assert.Equal(t, tc.merged, len(visitsTo(visits, "merge-the-pr")) == 1, "merged only with auto-merge on")
 		})
 	}
 }
@@ -240,31 +242,42 @@ func TestReferenceSimple_IterateOnceThenShip(t *testing.T) {
 // implementor and no two the same, approve together; the lead proceeds
 // without fixing minors, the work meets the criteria, and it merges.
 func TestReferenceAdvanced_AllApproveAndShip(t *testing.T) {
-	f, root := processRuntimeFlow(t)
-	crew := haveReferenceCrew(t, f)
-	const runID = "run_reference_all_approve"
-	startReferenceRun(t, f, root, runID, "advanced", map[string]string{"idea": "dark mode", "allow_amend": "false", "auto_merge": "true"}, engine.ProgramSucceeded)
-	visits, status := drive(t, f, crew, runID, script{
-		"idea-decided":          {"decided"},
-		"fix-minors-or-proceed": {"proceed"},
-		"meets-the-criteria":    {"meets"},
-	})
-	require.Equal(t, engine.RunCompleted, status, "%v", nodesOf(visits))
-	reviewers := map[string]bool{}
-	for k := 1; k <= 4; k++ {
-		votes := visitsTo(visits, fmt.Sprintf("review.vote.%d", k))
-		require.Len(t, votes, 1, "vote %d", k)
-		assert.NotEqual(t, crew.implementor, votes[0].agent, "a reviewer did not implement it")
-		reviewers[votes[0].agent] = true
+	// CI is a step that may fail here: failing, the run goes on and the
+	// Merge rule leaves the PR for the operator even with auto-merge on.
+	for _, ci := range []engine.ProgramOutcome{engine.ProgramSucceeded, engine.ProgramFailed} {
+		t.Run("ci="+string(ci), func(t *testing.T) {
+			f, root := processRuntimeFlow(t)
+			crew := haveReferenceCrew(t, f)
+			const runID = "run_reference_all_approve"
+			startReferenceRun(t, f, root, runID, "advanced", map[string]string{"idea": "dark mode", "allow_amend": "false", "auto_merge": "true"}, ci)
+			visits, status := drive(t, f, crew, runID, script{
+				"idea-decided":          {"decided"},
+				"fix-minors-or-proceed": {"proceed"},
+				"meets-the-criteria":    {"meets"},
+			})
+			require.Equal(t, engine.RunCompleted, status, "%v", nodesOf(visits))
+			reviewers := map[string]bool{}
+			for k := 1; k <= 4; k++ {
+				votes := visitsTo(visits, fmt.Sprintf("review.vote.%d", k))
+				require.Len(t, votes, 1, "vote %d", k)
+				assert.NotEqual(t, crew.implementor, votes[0].agent, "a reviewer did not implement it")
+				reviewers[votes[0].agent] = true
+			}
+			assert.Len(t, reviewers, 4, "four different reviewers")
+			assert.Equal(t, []string{
+				"discuss-the-idea", "idea-decided", "define-acceptance-criteria", "provision-an-implementor", "implement",
+			}, nodesOf(visits)[:5])
+			assert.Empty(t, visitsTo(visits, "fix-the-minors"))
+			assert.Empty(t, visitsTo(visits, "amend-the-criteria"))
+			if ci == engine.ProgramSucceeded {
+				assert.Equal(t, []string{"merge"}, ruleVerdicts(t, f, runID))
+				assert.Len(t, visitsTo(visits, "merge-the-pr"), 1)
+			} else {
+				assert.Equal(t, []string{"leave"}, ruleVerdicts(t, f, runID), "CI failed: the run went on, and the rule left it")
+				assert.Empty(t, visitsTo(visits, "merge-the-pr"))
+			}
+		})
 	}
-	assert.Len(t, reviewers, 4, "four different reviewers")
-	assert.Equal(t, []string{
-		"discuss-the-idea", "idea-decided", "define-acceptance-criteria", "provision-an-implementor", "implement",
-	}, nodesOf(visits)[:5])
-	assert.Empty(t, visitsTo(visits, "fix-the-minors"))
-	assert.Empty(t, visitsTo(visits, "amend-the-criteria"))
-	assert.Equal(t, []string{"merge"}, ruleVerdicts(t, f, runID))
-	assert.Len(t, visitsTo(visits, "merge-the-pr"), 1)
 }
 
 // Scenario (example 1): the security reviewer asks for changes. The work goes
