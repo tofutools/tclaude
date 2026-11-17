@@ -784,3 +784,15 @@ func deleteHumanMessagesWithAttachments(where, joinWhere string, args []any) (in
 	}
 	return int(n), paths, nil
 }
+
+// HasHumanMessageForProcessNode reports whether the operator already has a
+// message about one step of a process run.
+func HasHumanMessageForProcessNode(runID, nodeID string) (bool, error) {
+	d, err := Open()
+	if err != nil {
+		return false, err
+	}
+	var n int
+	err = d.QueryRow(`SELECT COUNT(*) FROM human_messages WHERE process_run_id = ? AND process_node_id = ?`, runID, nodeID).Scan(&n)
+	return n > 0, err
+}

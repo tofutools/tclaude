@@ -59,6 +59,11 @@ func notifyProcessRunFailed(runID string) {
 			}
 		}
 	}
+	// A card the operator already holds on this step (a refused worker
+	// spawn, say) tells them what stopped it; a second would only repeat it.
+	if told, err := db.HasHumanMessageForProcessNode(runID, failure.NodeID); err == nil && told {
+		return
+	}
 	if overseer.operator() || view.Scope.Owner == processOwnerOperator {
 		m := &db.HumanMessage{
 			FromTitle: "Process oversight", GroupName: view.Scope.Group,
