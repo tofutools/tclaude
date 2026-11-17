@@ -512,6 +512,33 @@ function GroupRuns({ group, roster, context, filter, wizard, api, runApi = runDe
   const editing = !!quick;
   const people = groupRoster({ members }, busy);
   const say = notify || defaultNotify;
+  // A process that leaves the group while it is open here (dropped on the
+  // bin, removed, or deleted in another tab, on another node or from the
+  // CLI, as the live context shows) closes its editor and its start form:
+  // nothing is left editing, or starting, what is gone. Only one seen in the
+  // group's list first: a new draft is open before the list catches up.
+  const openId = quick?.process?.templateId || quick?.saved?.templateId || '';
+  const startId = starting?.templateId || '';
+  const seenListed = useRef(new Set());
+  const listedKey = entry ? savedProcesses.map((saved) => saved.templateId).join('\n') : null;
+  useEffect(() => {
+    if (listedKey === null) return;
+    const listed = new Set(savedProcesses.map((saved) => saved.templateId));
+    const gone = (id) => !!id && seenListed.current.has(id) && !listed.has(id);
+    if (gone(openId)) {
+      setQuick(null);
+      say(`${quick?.process?.name || openId} is no longer in ${group.name}; its editor closed`);
+    }
+    if (gone(startId)) setStarting(false);
+    seenListed.current = new Set([openId, startId].filter((id) => id && listed.has(id)));
+  }, [listedKey, openId, startId]);
+  // gone closes the inline editor of a template deleted outright, which its
+  // own read of the template finds.
+  const templateGone = (templateId, name) => {
+    setQuick((current) => ((current?.process?.templateId || current?.saved?.templateId) === templateId ? null : current));
+    if (startId === templateId) setStarting(false);
+    say(`${name || templateId} was deleted; its editor closed`);
+  };
   // New process stores an untitled draft of the group's (pinned, not in the
   // library) and opens it here as a graph: one click from ＋, no name asked.
   // A second click while it is stored makes nothing more.
@@ -611,7 +638,7 @@ function GroupRuns({ group, roster, context, filter, wizard, api, runApi = runDe
         view=${quick.view} stored=${quick.stored || quick.view} changed=${!!quick.changed} api=${api} source=${source} wizard=${wizard}
         draft=${!!quick.draft} untouched=${!!quick.untouched} scribes=${scribes}
         otherNames=${savedProcesses.filter((saved) => saved.templateId !== quick.process?.templateId).map((saved) => saved.name)}
-        notify=${say} onClose=${() => setQuick(null)} onSteps=${toSteps} onRun=${runSaved}
+        notify=${say} onClose=${() => setQuick(null)} onSteps=${toSteps} onRun=${runSaved} onGone=${templateGone}
         onDiscard=${(templateId, options) => { setQuick(null); void discardDraft(templateId, options); }}
         onAbandon=${(templateId, options) => void discardDraft(templateId, options)}
         onImport=${pickPwf}

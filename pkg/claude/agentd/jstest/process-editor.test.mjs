@@ -1310,6 +1310,36 @@ function conflictResponse() {
   };
 }
 
+test('a template deleted while open is not saved back unless asked', async () => {
+  const previousFetch = globalThis.fetch;
+  const posts = [];
+  // The head is gone: the CAS refusal names no current version.
+  globalThis.fetch = async (path, init) => {
+    posts.push(JSON.parse(init.body));
+    return posts.length === 1
+      ? { ok: false, status: 409, statusText: 'Conflict', json: async () => ({ code: 'process_template_conflict', error: 'head changed' }) }
+      : { ok: true, status: 200, json: async () => ({ sourceHash: 'again', semanticHash: 'again', diagnostics: [] }) };
+  };
+  try {
+    for (const [choice, saves] of [['leave', 1], ['force', 2]]) {
+      posts.length = 0;
+      const editor = saveEditor('alpha');
+      editor.model.sourceHash = 'opened';
+      const asked = [];
+      editor.choiceModal = async (dialog) => { asked.push(dialog); return choice; };
+      await ProcessTemplateEditor.prototype.save.call(editor);
+      assert.equal(asked[0].title, 'Template was deleted');
+      assert.equal(asked[0].choices.find((c) => c.primary).key, 'leave', 'leaving it deleted is the default');
+      assert.equal(posts.length, saves, `${choice}: ${saves} save request(s)`);
+      if (choice === 'leave') assert.match(editor.lastStatus.message, /was deleted; nothing was saved/);
+      else assert.equal(posts[1].sourceHash, '', 'saved again only on the explicit choice, as a new template');
+    }
+  } finally {
+    if (previousFetch === undefined) delete globalThis.fetch;
+    else globalThis.fetch = previousFetch;
+  }
+});
+
 test('destroy while conflict choice is pending prevents force retry', async () => {
   const previousFetch = globalThis.fetch;
   let fetches = 0;

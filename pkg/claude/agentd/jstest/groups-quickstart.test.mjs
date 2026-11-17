@@ -1022,6 +1022,35 @@ test('the problems line names the step, selects it on a click, and its node is o
   assert.ok(card.querySelector('[data-mini-inspector="review"]'), 'a click selects the step');
 });
 
+// withoutShip is SAVED_CONTEXT once ship-feature has left the group: dropped
+// on the bin, removed, or deleted elsewhere and refreshed in live.
+const withoutShip = () => ({
+  ...SAVED_CONTEXT,
+  groups: [{ ...SAVED_CONTEXT.groups[0], processes: SAVED_CONTEXT.groups[0].processes.filter((p) => p.templateId !== 'tmpl_ship') }],
+});
+
+test('a process that leaves the group closes its open editor, which saves nothing more', async (t) => {
+  const { api, card, node, click, setValue, notes, source, settle, harness } = await openMini(t);
+  await click(node('review'));
+  await setValue(card().querySelector('[data-mini-inspector="review"] [data-mini-name]'), 'Security review', 'change');
+  await harness.act(() => { source.context.value = withoutShip(); });
+  await settle();
+  assert.equal(card(), null, 'the editor closed');
+  assert.match(notes.at(-1).message, /ship-feature is no longer in webshop; its editor closed/);
+  assert.equal(api.calls.save.length, 0, 'its edit was not saved back');
+});
+
+test('a save that finds the template deleted closes the editor instead of saving it back', async (t) => {
+  const { api, card, node, click, setValue, notes } = await openMini(t);
+  api.saveTemplate = async (id, view, options) => { api.calls.save.push({ id, view, options }); throw Object.assign(new Error('no such process template'), { status: 404 }); };
+  await click(node('review'));
+  await setValue(card().querySelector('[data-mini-inspector="review"] [data-mini-name]'), 'Security review', 'change');
+  await click(card().querySelector('[data-mini-save]'));
+  assert.equal(api.calls.save.length, 1);
+  assert.equal(card(), null, 'the editor closed');
+  assert.match(notes.at(-1).message, /ship-feature was deleted; its editor closed/);
+});
+
 test('the inspector edits a step; Save writes a new version against the opened hash', async (t) => {
   const { api, card, node, click, setValue, notes, root } = await openMini(t);
   await click(node('review'));

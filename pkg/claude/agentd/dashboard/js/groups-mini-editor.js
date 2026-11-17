@@ -469,7 +469,7 @@ function StructureMenu({ view, menu, onRun, onWrap, onClose }) {
 export function MiniGraphEditor({
   group, roster, groupInfo = null, process, view, stored = view, changed = false, api, source, wizard = false,
   notify = defaultNotify, onClose, onSteps, draft: isDraft = false, untouched = false, onRun = null, onDiscard = null, onAbandon = null, otherNames = [],
-  onImport = null, onDescribe = null, scribes = [],
+  onImport = null, onDescribe = null, scribes = [], onGone = null,
 }) {
   const model = useRef(null);
   if (!model.current) {
@@ -506,6 +506,8 @@ export function MiniGraphEditor({
   const refused = useRef(0);
   const mounted = useRef(true);
   useEffect(() => () => { mounted.current = false; }, []);
+  // goneRef: the template was deleted while open; nothing saves it again.
+  const goneRef = useRef(false);
   const cardRef = useRef(null);
   // incoming is a newer version that changes what the operator is editing too,
   // waiting for their choice; notice is the last one merged, with its undo.
@@ -598,6 +600,7 @@ export function MiniGraphEditor({
   const undo = () => { if (model.current.undo()) { setRev(model.current.rev); setSelected(''); setNotice(null); } };
   const stepsList = viewToStepList(draft);
   const save = async ({ quiet = false } = {}) => {
+    if (goneRef.current) return false;
     // A click during an autosave waits for it, rather than being dropped.
     if (inflight.current) {
       const ok = await inflight.current;
@@ -620,6 +623,8 @@ export function MiniGraphEditor({
       return true;
     } catch (cause) {
       done(false);
+      // Deleted while open: close, never save it back into being.
+      if (cause?.status === 404) { gone(); return false; }
       // Someone (an agent, most often) saved a newer version: merge it in and
       // save again, rather than leave the operator's edit stuck.
       if (/head changed/.test(cause.message) && live && refused.current < MAX_REFUSED) {
@@ -638,6 +643,14 @@ export function MiniGraphEditor({
   };
   // live: this editor follows its template's head (an api that can read it).
   const live = typeof api.getTemplateHead === 'function';
+  // gone: the template was deleted while open (its head reads 404). The
+  // editor closes, and nothing saves it back into being.
+  const gone = () => {
+    if (!mounted.current) return;
+    goneRef.current = true;
+    if (onGone) onGone(process.templateId, name);
+    else setError(`${name} was deleted. Close the editor.`);
+  };
   // adopt merges theirs, a newer saved version, into the draft as one
   // undoable edit; a version that also changes what the operator changed
   // waits for their choice ('theirs' or 'mine').
@@ -679,7 +692,8 @@ export function MiniGraphEditor({
     try {
       const theirs = await api.getTemplateHead(process.templateId);
       if (!inflight.current && model.current.sourceHash === at && theirs?.sourceHash && theirs.sourceHash !== at) adopt(theirs);
-    } catch {
+    } catch (cause) {
+      if (cause?.status === 404) { gone(); return; }
       // The next read tries again; a save waiting on this merge says why it stopped.
       if (force && mounted.current) setError(`${name} was saved elsewhere, and the newer version could not be read. Close it and reopen it.`);
     } finally {
@@ -791,7 +805,7 @@ export function MiniGraphEditor({
   const leaving = useRef(false);
   const abandon = useRef(null);
   abandon.current = (options) => {
-    if (leaving.current || !droppable || !onAbandon) return;
+    if (leaving.current || goneRef.current || !droppable || !onAbandon) return;
     leaving.current = true;
     onAbandon(process.templateId, dropOptions(options));
   };

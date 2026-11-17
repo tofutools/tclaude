@@ -391,6 +391,7 @@ export async function observeFloatingHeads(fetchImpl = globalThis.fetch) {
     const heads = (await response.json())?.heads || [];
     for (const [id, { editor }] of floating) {
       const head = heads.find((candidate) => candidate.id === id);
+      if (!head && editor?.model?.template?.id === id) editor.observeTemplateDeleted?.();
       if (head?.ref && head?.sourceHash && editor?.model?.template?.id === id) editor.observeExternalHead?.(head);
     }
     return true;
