@@ -364,7 +364,11 @@ test('a dialog\'s Discard? raised by Back is no step of its own; the dialog step
   assert.equal(routes.overlayParams().phone, '1');
 
   // A further Back while it asks is Keep, and the dialog steps Forward again.
-  await back();
+  // Until it lands the address is off the dialog's entry, so the entry Back
+  // landed on is not rewritten as the dialog's.
+  let read;
+  await harness.act(async () => { routes.restoreOverlays({}); read = routes.overlayParams().phone; await tick(); });
+  assert.equal(read, '', 'the entry Back landed on stays the page\'s');
   assert.equal(form.asking(), false);
   assert.equal(form.open(), true, 'kept, the dialog stays');
   assert.deepEqual(steps, ['forward', 'forward']);

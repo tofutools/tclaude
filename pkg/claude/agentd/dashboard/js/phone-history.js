@@ -141,11 +141,14 @@ export function installPhoneHistory({ view, tab = () => null, doc = globalThis.d
         const question = quiet.has(top);
         const back = { retaken: false };
         asking = back;
+        // Either way the address has left the form's entry until the close
+        // lands (closing). A question is not counted, so closing it changes
+        // no step.
         depth = counted() - (question ? 0 : 1);
-        closing += question ? 0 : 1;
+        closing += 1;
         void closeTopBackLayer().then((closed) => {
           if (asking === back) asking = null;
-          if (!back.retaken && !question) closing -= 1;
+          if (!back.retaken) closing -= 1;
           if (back.retaken || (closed && !question)) return;
           depth = counted();
           retakeStep();
