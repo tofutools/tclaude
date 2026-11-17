@@ -155,7 +155,7 @@ const GUARDED = [
       await booted(page);
       // The seeded run's gate; phone-automations approves it, so after that
       // smoke on the same sandbox there is none left to write a note on.
-      const run = page.getByRole('region', { name: 'Waiting on you' }).locator('.phone-run-open', { hasText: 'Release train' });
+      const run = page.getByRole('group', { name: 'Waiting on you' }).locator('.phone-run-open', { hasText: 'Release train' });
       // The list must have loaded (the seeded runs are there either way), so
       // a skip means the gate was answered, never that the page broke.
       await expect(page.locator('.phone-run-open', { hasText: 'Release train' }).first()).toBeVisible();

@@ -188,4 +188,4 @@
    Dismiss) under the message. */
 :root[data-layout="phone"] .phone-mail-decision { margin-top: 18px; }
 /* Decide opens its box: no space above it. */
-:root[data-layout="phone"] .phone-mail-decision .phone-sheet-head { margin-top: 0; }
+:root[data-layout="phone"] .phone-mail-decision .phone-sheet-subhead { margin-top: 0; }

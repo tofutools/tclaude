@@ -61,7 +61,7 @@ test('Section heads a block with its count; SheetHead is a sheet\'s sub-head', a
   assert.equal(section.querySelector('h2.phone-section-head').textContent, 'Trusted peers · 2');
   assert.equal(section.querySelector('p').textContent, 'a peer');
   const head = container.querySelector('h3');
-  assert.equal(head.className, 'ui-eyebrow phone-sheet-head extra');
+  assert.equal(head.className, 'ui-eyebrow phone-sheet-subhead extra');
   assert.equal(head.textContent, 'Move to');
 });
 

@@ -81,7 +81,7 @@ test('a run waiting on the operator shows on Now and is approved from Runs', asy
   await page.goto('/automations/processes');
   await booted(page);
   await expect(chips(page).getByRole('tab', { name: /Runs/ })).toHaveAttribute('aria-selected', 'true');
-  const run = page.getByRole('region', { name: 'Waiting on you' }).locator('.phone-run-open', { hasText: 'Release train' });
+  const run = page.getByRole('group', { name: 'Waiting on you' }).locator('.phone-run-open', { hasText: 'Release train' });
   await expect(run).toBeVisible();
   await expect(page.locator('.phone-desktop-only:visible')).toContainText('desktop only');
   await expectNoSideScroll(page, 'the runs list');

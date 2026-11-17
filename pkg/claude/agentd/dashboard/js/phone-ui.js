@@ -97,7 +97,7 @@ export function Section({ title, count = null, children, more = null, fold = nul
 // the same eyebrow as a Section's head, with one margin everywhere. A sheet
 // has its own title above, so it is an h3.
 export function SheetHead({ class: extra, children, ...rest }) {
-  return html`<h3 ...${rest} class=${join('ui-eyebrow phone-sheet-head', extra)}>${children}</h3>`;
+  return html`<h3 ...${rest} class=${join('ui-eyebrow phone-sheet-subhead', extra)}>${children}</h3>`;
 }
 
 // ChipRow is a row of rounded chips that scrolls sideways: one view's

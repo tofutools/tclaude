@@ -86,3 +86,5 @@
 :root[data-layout="phone"] .phone-run-page .pov-note { flex-basis: 100%; font-size: 14px; padding: 8px; }
 :root[data-layout="phone"] .phone-run-page .pov-raise textarea { font-size: 14px; }
 :root[data-layout="phone"] .phone-run-page .pov-log-list { font-size: 13px; }
+/* The Runs list's first section sits 8px under the chips. */
+:root[data-layout="phone"] .phone-runs > .phone-section:first-child { margin-top: 8px; }
