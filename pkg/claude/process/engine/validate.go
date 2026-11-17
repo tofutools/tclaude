@@ -90,10 +90,10 @@ type definitionNode struct {
 	// some rule reads, whose attempts the checkpoint records.
 	rule     *preparedRule
 	recorded bool
-	terminal      RunStatus // end nodes only
-	verdicts      []string  // decision nodes only: sorted authored outcome labels
-	outgoing      []int     // edge indices, sorted by outcome label
-	incoming      []int     // edge indices, in edge order
+	terminal RunStatus // end nodes only
+	verdicts []string  // decision nodes only: sorted authored outcome labels
+	outgoing []int     // edge indices, sorted by outcome label
+	incoming []int     // edge indices, in edge order
 	// joinAll marks a convergence node authored with join: all. Such a node
 	// activates once its complete candidate input set has settled with one or
 	// more arrivals, instead of the non-join exactly-one-arrival rule.
