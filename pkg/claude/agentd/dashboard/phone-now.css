@@ -15,7 +15,7 @@
 :root[data-layout="phone"] .phone-usage-bar { display: inline-block; width: 44px; height: 6px; border-radius: 3px; background: var(--phone-tile); overflow: hidden; }
 :root[data-layout="phone"] .phone-usage-bar b { display: block; height: 100%; }
 :root[data-layout="phone"] .phone-usage-pct { color: var(--ui-text-strong); }
-:root[data-layout="phone"] .phone-usage-go { margin-left: auto; font-size: 16px; }
+:root[data-layout="phone"] .phone-usage-go { margin-left: auto; font-size: var(--phone-row-chev); }
 
 /* A card's head: the avatar, who and one line of context, maybe a pill or a
    button at the end. */
@@ -58,7 +58,7 @@
 /* Working: one card of plain rows, each with its state pill. */
 :root[data-layout="phone"] .phone-rows-card { padding: 2px 12px; }
 :root[data-layout="phone"] .phone-rows { list-style: none; margin: 0; padding: 0; }
-:root[data-layout="phone"] .phone-rows > li + li { border-top: 1px solid var(--phone-tile); }
+:root[data-layout="phone"] .phone-rows > li + li { border-top: var(--phone-row-sep-soft); }
 :root[data-layout="phone"] .phone-row {
   display: flex; align-items: center; gap: 10px; width: 100%; min-height: var(--phone-tap); padding: 6px 0;
   background: none; border: 0; color: inherit; font: inherit; text-align: left; text-decoration: none; cursor: pointer;

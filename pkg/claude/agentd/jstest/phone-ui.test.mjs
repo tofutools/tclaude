@@ -78,6 +78,25 @@ test('a Card can be the list itself; any other tag stays a div', async (t) => {
   assert.equal(other.tagName, 'DIV');
 });
 
+test("RowMore is a row's muted ⋯: a sheet's popup by default, none when it goes to a page", async (t) => {
+  const { harness, mod } = await load(t, 'js/phone-ui.js');
+  const { html } = harness;
+  const taps = [];
+  const { container } = await harness.mount(html`<div>
+    <${mod.RowMore} label="lead: more" class="phone-agent-more" onClick=${() => taps.push('lead')} />
+    <${mod.RowMore} label="Group webshop: more" popup=${null} onClick=${() => taps.push('group')} />
+  </div>`);
+  const sheet = harness.getByRole(container, 'button', { name: 'lead: more' });
+  assert.equal(sheet.getAttribute('aria-haspopup'), 'dialog');
+  assert.equal(sheet.className, 'phone-ib phone-row-more phone-agent-more');
+  assert.equal(sheet.textContent, '⋯');
+  const page = harness.getByRole(container, 'button', { name: 'Group webshop: more' });
+  assert.equal(page.hasAttribute('aria-haspopup'), false);
+  await harness.act(() => sheet.click());
+  await harness.act(() => page.click());
+  assert.deepEqual(taps, ['lead', 'group']);
+});
+
 test('pillTone maps agent states onto the mock\'s pill colours', async (t) => {
   const { mod } = await load(t, 'js/phone-ui.js');
   assert.deepEqual(['asking', 'working', 'idle', 'offline', 'error', 'approval', 'key', 'mystery'].map(mod.pillTone),

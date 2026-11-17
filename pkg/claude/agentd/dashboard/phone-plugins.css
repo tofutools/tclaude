@@ -10,7 +10,7 @@
 }
 :root[data-layout="phone"] .phone-plugin-out { font-family: ui-monospace, monospace; }
 :root[data-layout="phone"] .phone-plugin-steps { list-style: none; margin: 8px 0 0; padding: 0; }
-:root[data-layout="phone"] .phone-plugin-step { min-height: var(--phone-tap); border-top: 1px solid var(--ui-line); padding: 4px 0; }
+:root[data-layout="phone"] .phone-plugin-step { min-height: var(--phone-tap); border-top: var(--phone-row-sep); padding: 4px 0; }
 :root[data-layout="phone"] .phone-plugin-act { flex: none; min-width: var(--phone-tap); }
 :root[data-layout="phone"] .phone-plugin-check { margin: 10px 0 0; }
 :root[data-layout="phone"] .phone-plugin-fold {

@@ -15,7 +15,7 @@
 
 /* A row: avatar, name and pill over the meta line, all one tap; ⋯ beside it
    opens the agent's sheet. */
-:root[data-layout="phone"] .phone-agent { display: flex; align-items: center; gap: 4px; }
+:root[data-layout="phone"] .phone-agent { display: flex; align-items: center; gap: var(--phone-row-gap); }
 :root[data-layout="phone"] .phone-agent-row {
   flex: 1; min-width: 0; display: flex; align-items: center; gap: 12px;
   min-height: 60px; padding: 10px 0; background: none; border: 0;
@@ -36,7 +36,6 @@
 :root[data-layout="phone"] .phone-agent-off .phone-agent-title { color: var(--ui-muted-text); font-weight: 500; }
 :root[data-layout="phone"] .phone-agent-pr.ci-passing { color: var(--ui-success-line); }
 :root[data-layout="phone"] .phone-agent-pr.ci-failing { color: var(--ui-danger-text); }
-:root[data-layout="phone"] .phone-agent-more { color: var(--ui-muted-text); }
 /* The context meter (context-meter.js) by the state pill, as on the desktop. */
 :root[data-layout="phone"] .phone-agent-line > .ctx-meter { flex: none; margin-right: 0; }
 :root[data-layout="phone"] .phone-agents-board { font-size: 13px; font-weight: 600; text-transform: none; letter-spacing: 0; }
@@ -122,11 +121,10 @@
   :root[data-layout="phone"] :is(.phone-holding .phone-holdable, .phone-holdable.phone-holding)::after { animation: none; transform: scaleX(1); }
 }
 /* Now's rows carry a ⋯ for the same menu. */
-:root[data-layout="phone"] .phone-now-agent { display: flex; align-items: center; gap: 2px; }
+:root[data-layout="phone"] .phone-now-agent { display: flex; align-items: center; gap: var(--phone-row-gap); }
 /* The row gives way to its ⋯: a long unbroken name ("session <uuid>") ellipsizes
    instead of pushing ⋯ off the screen. */
 :root[data-layout="phone"] .phone-now-agent > .phone-row { flex: 1; min-width: 0; }
-:root[data-layout="phone"] .phone-now-more { flex: none; color: var(--ui-muted-text); }
 
 /* An agent's menu (js/phone-agent-menu.js): four quick tiles, then the
    grouped entries, Retire apart at the end. The sheet scrolls when it is
@@ -162,7 +160,7 @@
 :root[data-layout="phone"] .phone-agents-seg-btn.on { background: var(--ui-pressed-bg); color: var(--ui-text-strong); box-shadow: 0 1px 2px rgba(0, 0, 0, .25); }
 :root[data-layout="phone"] .phone-agents-view-hint { margin: 6px 2px 0; }
 :root[data-layout="phone"] .phone-agents-view-switch {
-  display: flex; align-items: center; gap: 12px; min-height: 48px; border-bottom: 1px solid var(--phone-line);
+  display: flex; align-items: center; gap: 12px; min-height: 48px; border-bottom: var(--phone-row-sep);
   color: var(--ui-text-strong); font-size: 15px;
 }
 :root[data-layout="phone"] .phone-agents-view-text { flex: 1; min-width: 0; }
@@ -210,7 +208,7 @@
 }
 :root[data-layout="phone"] .phone-agents-subcard-head { display: flex; gap: 8px; font-weight: 600; color: var(--ui-text-strong); }
 :root[data-layout="phone"] .phone-agents-subcard .phone-agents-summary { margin: 0; }
-:root[data-layout="phone"] .phone-agents-chev { margin-left: auto; color: var(--ui-muted-text); }
+:root[data-layout="phone"] .phone-agents-chev { margin-left: auto; color: var(--ui-muted-text); font-size: var(--phone-row-chev); }
 :root[data-layout="phone"] .phone-agents-note,
 :root[data-layout="phone"] .phone-group-shell-where { margin: 4px 4px 8px; color: var(--ui-muted-text); font-size: 13px; }
 /* A row a link found (/groups?agent=, agent-route.js) glows: two slow pulses

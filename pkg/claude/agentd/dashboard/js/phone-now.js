@@ -22,7 +22,7 @@ import { usageStrip } from './phone-now-model.js';
 import { AskCard, PhoneApprovalCard, PhoneDecisionCard } from './phone-approval.js';
 import { ContextMeter } from './context-meter.js';
 import { Button } from './ui-components.js';
-import { Card, ChipRow, IconButton, Section, StatePill } from './phone-ui.js';
+import { Card, ChipRow, RowMore, Section, StatePill } from './phone-ui.js';
 import { useHold } from './phone-hold.js';
 import { relTime } from './helpers.js';
 import { processContext } from './process-context.js';
@@ -76,7 +76,7 @@ function NowRow({ agent, state, when, tone, onOpen, onMenu }) {
         ${when && html`<span class=${`phone-now-when${tone ? ` ${tone}` : ''}`}>${when}</span>`}</span>
       ${agent.ctxState && html`<${ContextMeter} state=${agent.ctxState} />`}<${StatePill} state=${state} />
     </button>
-    ${onMenu && html`<${IconButton} icon="⋯" label=${`${agent.name}: more`} aria-haspopup="dialog" class="phone-now-more" onClick=${() => onMenu(agent)} />`}
+    ${onMenu && html`<${RowMore} label=${`${agent.name}: more`} class="phone-now-more" onClick=${() => onMenu(agent)} />`}
   </div>`;
 }
 

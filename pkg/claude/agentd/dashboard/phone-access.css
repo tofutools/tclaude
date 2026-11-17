@@ -2,7 +2,7 @@
 :root[data-layout="phone"] .phone-access-chips { margin-bottom: 12px; }
 :root[data-layout="phone"] .phone-access-row {
   display: flex; align-items: center; gap: 10px; min-height: 52px; padding: 10px 0;
-  border-bottom: 1px solid var(--phone-line);
+  border-bottom: var(--phone-row-sep);
 }
 :root[data-layout="phone"] .phone-access-row .ui-btn { flex: none; }
 :root[data-layout="phone"] .phone-access-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
@@ -36,11 +36,11 @@
    long and how often, with Grant pinned at the bottom. */
 :root[data-layout="phone"] .phone-grant-agent {
   display: flex; align-items: center; gap: 10px; width: 100%; min-height: 56px; padding: 8px 0;
-  background: none; border: 0; border-bottom: 1px solid var(--phone-line); color: inherit; font: inherit; text-align: left; cursor: pointer;
+  background: none; border: 0; border-bottom: var(--phone-row-sep); color: inherit; font: inherit; text-align: left; cursor: pointer;
 }
 :root[data-layout="phone"] .phone-grant-dot { flex: none; width: 9px; height: 9px; border-radius: 50%; background: var(--ui-muted-text); opacity: .5; }
 :root[data-layout="phone"] .phone-grant-dot.on { background: var(--phone-ok); opacity: 1; }
-:root[data-layout="phone"] .phone-grant-more { color: var(--ui-muted-text); font-size: 20px; }
+:root[data-layout="phone"] .phone-grant-more { color: var(--ui-muted-text); font-size: var(--phone-row-chev); }
 :root[data-layout="phone"] .phone-grant-warn {
   margin: 0 0 12px; padding: 9px 12px; border: 1px solid #5a4210; border-radius: var(--phone-btn-r);
   background: rgba(210, 153, 34, 0.12); color: var(--ui-warn-text); font-size: 13px; line-height: 1.4;
@@ -52,7 +52,7 @@
 }
 :root[data-layout="phone"] .phone-grant-row {
   display: flex; align-items: center; gap: 12px; min-height: 52px; padding: 8px 0;
-  border-bottom: 1px solid var(--phone-line); cursor: pointer;
+  border-bottom: var(--phone-row-sep); cursor: pointer;
 }
 :root[data-layout="phone"] .phone-grant-row.refused { opacity: .6; cursor: default; }
 :root[data-layout="phone"] .phone-grant-box { flex: none; width: 22px; height: 22px; margin: 0; accent-color: var(--phone-accent-bg); }

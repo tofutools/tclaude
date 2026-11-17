@@ -13,7 +13,7 @@ import { h } from 'preact';
 import htm from 'htm';
 import { MarkdownDocument } from './markdown-document.js';
 import { StoredFiles, useMarkdownFiles } from './groups-taskboard-files.js';
-import { IconButton, Section, StatePill } from './phone-ui.js';
+import { RowMore, Section, StatePill } from './phone-ui.js';
 import { relTime } from './helpers.js';
 import { rowState } from './phone-shell-model.js';
 import { actorName, agentOfActor, taskPeople } from './phone-board-model.js';
@@ -80,7 +80,7 @@ export function PeopleSection({ task, entries, names, actions }) {
               ${roles && html`<span class="phone-task-person-roles">${roles}${person.at ? ` · ${relTime(person.at)}` : ''}</span>`}</span>
             <${StatePill} state=${state} />
           </button>
-          ${jump && typeof actions?.agentMenu === 'function' && html`<${IconButton} icon="⋯" label=${`${agent.name}: more`} aria-haspopup="dialog"
+          ${jump && typeof actions?.agentMenu === 'function' && html`<${RowMore} label=${`${agent.name}: more`}
             class="phone-task-person-more" onClick=${() => actions.agentMenu(agent)} />`}
         </li>`;
       })}

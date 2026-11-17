@@ -37,7 +37,7 @@ import { DiscardAsk, useDraftGuard } from './phone-draft-guard.js';
 import { AgentMenu } from './phone-agent-menu.js';
 import { useHold } from './phone-hold.js';
 import { usePhoneBar, usePhonePage } from './phone-page.js';
-import { Avatar, ButtonRow, Card, IconButton, Section, SheetHead, StatePill } from './phone-ui.js';
+import { Avatar, ButtonRow, Card, RowMore, Section, SheetHead, StatePill } from './phone-ui.js';
 import { ContextMeter } from './context-meter.js';
 import { dashPrefs } from './prefs.js';
 import { openBoardGroup } from './phone-board.js';
@@ -91,7 +91,7 @@ function AgentRow({ row, steward, onTap, onMore, under = null, last = false, kid
         ${row.detail && html`<span class="phone-agent-why">${row.detail}</span>`}
       </span>
     </button>
-    <${IconButton} icon="⋯" label=${`${row.name}: more`} aria-haspopup="dialog" class="phone-agent-more" onClick=${() => onMore(row)} />
+    <${RowMore} label=${`${row.name}: more`} class="phone-agent-more" onClick=${() => onMore(row)} />
   </li>`;
 }
 
@@ -294,7 +294,7 @@ function GroupHead({ node, folded, onFold, onOpen, onSpawn }) {
       aria-label=${`New agent in ${node.name}`} aria-haspopup="dialog" onClick=${() => onSpawn(node.name)}>＋ Agent</button>`}
     ${node.group && !node.archived && html`<button data-ui-exempt type="button" class="phone-link phone-agents-board"
       aria-label=${`${node.name}'s board`} onClick=${() => openBoardGroup(node.name)}>Board ›</button>`}
-    ${openPage && html`<${IconButton} icon="⋯" label=${`Group ${node.name}: more`} class="phone-agents-more" onClick=${openPage} />`}
+    ${openPage && html`<${RowMore} label=${`Group ${node.name}: more`} popup=${null} class="phone-agents-more" onClick=${openPage} />`}
   </h2>
   <${Summary} g=${node} />`;
 }

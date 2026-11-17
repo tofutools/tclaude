@@ -14,7 +14,7 @@ import { bucketOf, needsYou } from './collab-rail-model.js';
 import { collabItems, openRailItem, railAgent } from './collab-rail-actions.js';
 import { agentMenuOpener, useHold } from './phone-hold.js';
 import { openShellMenu } from './phone-now-shells.js';
-import { Avatar, Card, IconButton, Section, StatePill } from './phone-ui.js';
+import { Avatar, Card, RowMore, Section, StatePill } from './phone-ui.js';
 
 const html = htm.bind(h);
 
@@ -61,7 +61,7 @@ function SessionRow({ item, onOpen, onMenu, onShellMenu }) {
     </span>
     ${waiting ? html`<${StatePill} state="ask">needs you<//>` : state && html`<${StatePill} state=${state} />`}
     ${!menu && html`<span class="phone-session-chevron" aria-hidden="true">›</span>`}
-  </button>${menu && html`<${IconButton} icon="⋯" label=${`${item.title}: more`} aria-haspopup="dialog" class="phone-session-more" onClick=${menu} />`}</li>`;
+  </button>${menu && html`<${RowMore} label=${`${item.title}: more`} class="phone-session-more" onClick=${menu} />`}</li>`;
 }
 
 // PhoneSessions is the list. ctx (actions, snapshot, notify) is what
