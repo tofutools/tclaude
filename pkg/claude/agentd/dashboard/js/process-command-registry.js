@@ -33,7 +33,7 @@ export function buildProcessNodeTypeCommands({
       id: `process.create.${node.type}`,
       group: 'process-node-type',
       icon: node.type === 'decision' ? '◇' : node.type === 'wait' ? '◷' : node.type === 'end' ? '⏹' : '＋',
-      label: presented(`Create ${node.label.toLowerCase()} node`, `Conjure ${node.wizardLabel.toLowerCase()}`, wizard),
+      label: presented(`Create ${node.label.toLowerCase()} node${node.cantRunYet ? " (can't run yet)" : ''}`, `Conjure ${node.wizardLabel.toLowerCase()}${node.cantRunYet ? " (can't run yet)" : ''}`, wizard),
       hint: node.hint,
       keywords: `process graph node add insert create ${node.type} ${node.label} conjure rune sigil`,
       run: () => onCreate(node.type),

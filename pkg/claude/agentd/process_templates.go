@@ -649,6 +649,7 @@ func handleProcessValidate(w http.ResponseWriter, r *http.Request) {
 			diagnostics = append(diagnostics, templateRefDiagnostics(parsed.Template, processSubprocessResolver(r.Context(), fs))...)
 		}
 		diagnostics = append(diagnostics, spawnProfileDiagnostics(parsed.Template)...)
+		diagnostics = append(diagnostics, waitStepDiagnostics(parsed.Template)...)
 	}
 	writeProcessJSON(w, http.StatusOK, map[string]any{
 		"sourceHash": parsed.SourceHash, "semanticHash": parsed.SemanticHash,

@@ -300,10 +300,10 @@ function ExternalChange({ controller, view }) {
 }
 
 function Palette({ controller, hidden, snippets, view }) {
-  const card = (payload, label, hint, { custom = false, available = true, pending = false } = {}) => {
+  const card = (payload, label, hint, { custom = false, available = true, pending = false, cantRunYet = false } = {}) => {
     const canInsert = snippets.canInsert && available && !pending;
     return html`<div
-      key=${JSON.stringify(payload)} class=${`process-palette-card ui-card${custom ? ' is-custom' : ' is-built-in'}${available ? '' : ' is-unavailable'}`}
+      key=${JSON.stringify(payload)} class=${`process-palette-card ui-card${custom ? ' is-custom' : ' is-built-in'}${available ? '' : ' is-unavailable'}${cantRunYet ? ' is-cant-run' : ''}`}
       draggable=${canInsert ? 'true' : 'false'} title=${hint || ''} data-palette-item=${JSON.stringify(payload)}
     ><span class="process-palette-card-copy"><span class="process-palette-card-label">${label}</span><span class="process-palette-card-hint ui-hint">${hint || ''}</span></span>
       <span class="process-palette-card-actions">
@@ -320,7 +320,7 @@ function Palette({ controller, hidden, snippets, view }) {
     onDragEnd=${(event) => controller.paletteDragEnd(event)}>
     ${view && html`<${ScopeOutline} controller=${controller} view=${view} />`}
     <div class="ui-eyebrow process-palette-section">Primitives</div>
-    ${PALETTE_PRIMITIVES.map((item) => card({ kind: 'primitive', type: item.type }, item.label, item.hint))}
+    ${PALETTE_PRIMITIVES.map((item) => card({ kind: 'primitive', type: item.type }, item.cantRunYet ? `${item.label} · can't run yet` : item.label, item.hint, { cantRunYet: !!item.cantRunYet }))}
     ${!!view?.templateRefs?.length && html`<div class="ui-eyebrow process-palette-section" title="Drop onto the canvas, or onto a connector to splice it in">Templates</div>
     ${view.templateRefs.map((item) => card({ kind: 'template', id: item.id, name: item.name }, `▣ ${item.name}`, `Run template ${item.id} as a subprocess${item.versions ? ` · ${item.versions} version${item.versions === 1 ? '' : 's'}` : ''}`))}`}
     <div class="ui-eyebrow process-palette-section">Built-in snippets</div>
