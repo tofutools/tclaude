@@ -65,6 +65,14 @@ test('one chip row on every view: the same place, size, inset, gap and space und
       // The page under the chips starts at the gutter, as every page does.
       const left = await page.locator('.phone-auto-search').first().evaluate((el) => Math.round(el.getBoundingClientRect().left));
       expect(left, 'Automations starts at the gutter').toBe(16);
+      // So does an automation's own page.
+      await page.locator('.phone-auto-open').first().click();
+      const inner = page.locator('.phone-auto-page').first();
+      await expect(inner).toBeVisible();
+      const pageLeft = await inner.evaluate((el) => Math.round(el.getBoundingClientRect().left
+        + parseFloat(getComputedStyle(el).paddingLeft)));
+      expect(pageLeft, "an automation's page starts at the gutter").toBe(16);
+      if (process.env.SHOTS) await page.screenshot({ path: path.join(process.env.SHOTS, 'after-auto-page.png'), clip: { x: 0, y: 0, width: 390, height: 360 } });
     }
   }
   if (BEFORE) return;
