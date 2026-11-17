@@ -7,7 +7,7 @@
 
 import { h } from 'preact';
 import htm from 'htm';
-import { Card, Section, StatePill } from './phone-ui.js';
+import { Card, Empty, ErrorNote, errorText, Section, StatePill } from './phone-ui.js';
 import { prOfRef, refKey, refKindName, refsOf } from './groups-taskboard-card.js';
 import { EpicProgress, childWhere, isEpic, progressParts } from './groups-taskboard-epics.js';
 import { prReviewDecisionText } from './pr-review-model.js';
@@ -164,8 +164,8 @@ export function TaskEpic({ task, entry, full, failed = '', onOpen }) {
         <${EpicProgress} epic=${{ progress }} large=${true} />
         <span class="phone-task-ref-sub">${progressParts(progress).join(' · ')}</span>
       </div>
-      ${children === null ? html`<p class="ui-empty">${failed ? 'Could not read its tasks.' : 'Loading…'}</p>`
-        : !children.length ? html`<p class="ui-empty">No tasks in it yet.</p>`
+      ${children === null ? (failed ? html`<${ErrorNote}>${errorText('its tasks', failed)}<//>` : html`<${Empty}>Loading…<//>`)
+        : !children.length ? html`<${Empty}>No tasks in it yet.<//>`
         : html`<${Card} class="phone-rows-card"><ul class="phone-rows phone-task-children">
           ${children.map((row) => html`<${TaskRow} key=${row.id} row=${row} attr=${{ 'data-task-child': row.id }} onTap=${() => onOpen(row.id)} />`)}
         </ul><//>`}

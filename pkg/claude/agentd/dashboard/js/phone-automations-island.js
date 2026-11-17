@@ -35,7 +35,7 @@ import { usePhonePage } from './phone-page.js';
 import { RunPage, RunsList, gateItems, runRequest } from './phone-process-runs.js';
 import { DesktopOnlyNote, desktopSite } from './phone-desktop-only.js';
 import { Button, Input, Switch } from './ui-components.js';
-import { ChipRow, Section } from './phone-ui.js';
+import { ChipRow, Empty, ErrorNote, errorText, Section } from './phone-ui.js';
 
 const html = htm.bind(h);
 
@@ -246,9 +246,9 @@ function History({ load, render: renderItem, empty }) {
     try { setItems(await load()); } catch (cause) { setError(cause?.message || String(cause)); }
   };
   useEffect(() => { void fetchAgain(); }, []);
-  if (error) return html`<p class="ui-error-box" role="alert">${error} <${Button} size="sm" onClick=${fetchAgain}>Retry<//></p>`;
-  if (!items) return html`<p class="ui-empty phone-empty">Loading…</p>`;
-  if (!items.length) return html`<p class="ui-empty phone-empty">${empty}</p>`;
+  if (error) return html`<${ErrorNote} onRetry=${fetchAgain}>${errorText('its history', error)}<//>`;
+  if (!items) return html`<${Empty}>Loading…<//>`;
+  if (!items.length) return html`<${Empty}>${empty}<//>`;
   return html`<ul class="phone-auto-history">${items.map(renderItem)}</ul>`;
 }
 
@@ -370,20 +370,19 @@ export function PhoneJobsApp({ state, actions, activeTab = dashboardState.active
   const waiting = gateItems(context.context.value).length;
   let body;
   if (kind === 'trigger') {
-    if (triggers.error) body = html`<p class="ui-error-box" role="alert">${triggers.error} <${Button} size="sm" onClick=${triggers.reload}>Retry<//></p>`;
-    else if (!triggers.rules) body = html`<p class="ui-empty phone-empty">Loading triggers…</p>`;
-    else if (!triggers.rules.length) body = html`<p class="ui-empty phone-empty">No triggers.</p>`;
+    if (triggers.error) body = html`<${ErrorNote} onRetry=${triggers.reload}>${errorText('the triggers', triggers.error)}<//>`;
+    else if (!triggers.rules) body = html`<${Empty}>Loading triggers…<//>`;
+    else if (!triggers.rules.length) body = html`<${Empty}>No triggers.<//>`;
     else {
       body = html`<ul class="phone-list phone-auto-list">${triggers.rules.map((rule) => html`<${TriggerRow} key=${rule.id}
         rule=${rule} actions=${actions} open=${open} onChanged=${triggers.reload} />`)}</ul>`;
     }
   } else if (current.request.phase === 'error' && !current.request.hasLoaded) {
-    body = html`<p class="ui-error-box" role="alert">Could not load automations: ${current.request.error}
-      <${Button} size="sm" onClick=${() => void actions.refresh()}>Retry<//></p>`;
+    body = html`<${ErrorNote} onRetry=${() => void actions.refresh()}>${errorText('the automations', current.request.error)}<//>`;
   } else if (!current.request.hasLoaded) {
-    body = html`<p class="ui-empty phone-empty">Loading…</p>`;
+    body = html`<${Empty}>Loading…<//>`;
   } else if (!current.rows.length) {
-    body = html`<p class="ui-empty phone-empty">${current.query ? 'No automations match.' : 'Nothing here yet.'}</p>`;
+    body = html`<${Empty}>${current.query ? 'No automations match.' : 'Nothing here yet.'}<//>`;
   } else {
     body = html`<ul class="phone-list phone-auto-list">${current.rows.map((row) => (row.kind === 'cron'
       ? html`<${CronRow} key=${`cron-${row.cron?.id}`} job=${row.cron || {}} actions=${actions} open=${open} />`

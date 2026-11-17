@@ -18,7 +18,7 @@ import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { companionAgents } from './companion-model.js';
 import { phonePage, usePhonePage } from './phone-page.js';
-import { ButtonRow, Card, Section, StatePill } from './phone-ui.js';
+import { ButtonRow, Card, Empty, ErrorNote, errorText, Section, StatePill } from './phone-ui.js';
 import { Button } from './ui-components.js';
 import { MarkdownDocument } from './markdown-document.js';
 import { openQuestions } from './groups-taskboard-answer.js';
@@ -119,7 +119,9 @@ export function TaskPage({ id, group, source, state, api, actions = null, onClos
   }, []);
 
   if (!task) {
-    return html`<div class="phone-task-page"><p class="ui-empty phone-empty">${read.failed ? `Could not read the task: ${read.failed}` : 'Loading…'}</p></div>`;
+    return html`<div class="phone-task-page">${read.failed
+      ? html`<${ErrorNote} onRetry=${() => setVersion((v) => v + 1)}>${errorText('the task', read.failed)}<//>`
+      : html`<${Empty}>Loading…<//>`}</div>`;
   }
   const write = async (run, failText) => {
     const ok = await boardWrite(source, run, failText);
@@ -150,10 +152,10 @@ export function TaskPage({ id, group, source, state, api, actions = null, onClos
 
     <${Section} title="Brief">
       ${body === null
-        ? html`<p class="ui-empty">${read.failed ? 'Could not read the brief.' : 'Loading…'}</p>`
+        ? (read.failed ? html`<${ErrorNote}>${errorText('the brief', read.failed)}<//>` : html`<${Empty}>Loading…<//>`)
         : body.trim()
           ? html`<${TaskBrief} api=${api} task=${task} body=${body} />`
-          : html`<p class="ui-empty">No brief.</p>`}
+          : html`<${Empty}>No brief.<//>`}
     <//>
 
     <${TaskRefs} task=${task} />
@@ -166,7 +168,7 @@ export function TaskPage({ id, group, source, state, api, actions = null, onClos
 
     <${Section} title="Activity" count=${entries.length}>
       ${read.activity === null
-        ? html`<p class="ui-empty">${read.failed ? 'Could not read the activity.' : 'Loading…'}</p>`
+        ? (read.failed ? html`<${ErrorNote} onRetry=${() => setVersion((v) => v + 1)}>${errorText('the activity', read.failed)}<//>` : html`<${Empty}>Loading…<//>`)
         : html`<ol class="phone-task-activity">
           ${entries.map((ev, i) => (ev.comment?.question
             ? html`<${QuestionItem} key=${`q-${ev.comment.id}`} entry=${ev} nameOf=${nameOf} />`

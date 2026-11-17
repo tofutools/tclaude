@@ -94,7 +94,7 @@ test('nothing installed, and an unreadable registry', async (t) => {
   assert.match(c.textContent, /No plugins installed yet/);
   assert.equal(phoneBar.value, null, 'no Check all with nothing to check');
   await harness.act(() => { snapshot.value = { ...snapshot.value, plugins_error: 'bad json' }; });
-  assert.match(c.querySelector('[role=alert]').textContent, /unreadable: bad json/);
+  assert.match(c.querySelector('[role=alert]').textContent, /Could not read the plugin registry: bad json/);
 });
 
 test('a folded card opens on a tap and says how many steps and when they were checked', async (t) => {

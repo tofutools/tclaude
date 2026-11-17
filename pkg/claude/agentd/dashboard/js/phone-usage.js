@@ -20,7 +20,7 @@ import { COST_SPANS, costModelLabel, costProviderLabel, fmtExactUSD, fmtUSD, pro
 import { shortAgentId } from './helpers.js';
 import { formatUsageTime, usageProviderLabel, usageWindowScopeLabel } from './usage-history-model.js';
 import { Sparkline, spendDays, topCostAgents } from './usage-overview-charts.js';
-import { Card, ChipRow, Section } from './phone-ui.js';
+import { Card, ChipRow, Empty, ErrorNote, errorText, Section } from './phone-ui.js';
 
 const html = htm.bind(h);
 
@@ -162,9 +162,9 @@ function QuotaWindowCard({ item, wizard }) {
 export function PhoneQuota({ quota, summaries, wizard }) {
   const w = (plain, wizardly) => (wizard ? wizardly : plain);
   if (quota.request.phase === 'error' && !quota.request.hasLoaded) {
-    return html`<div role="alert" class="island-error">${w('Quota history failed to load', 'The reserves could not be read')}: ${quota.request.error}</div>`;
+    return html`<${ErrorNote}>${w(errorText('the quota history', quota.request.error), `The reserves could not be read: ${quota.request.error}`)}<//>`;
   }
-  if (!quota.request.hasLoaded) return html`<div class="phone-empty">Loading…</div>`;
+  if (!quota.request.hasLoaded) return html`<${Empty}>Loading…<//>`;
   const sorted = [...summaries].sort((a, b) => Number(b.atRisk) - Number(a.atRisk));
   return html`<div class="phone-usage-quota">
     ${quota.payload?.coverage_warnings?.length > 0 && html`<p class="phone-usage-warn" role="status">⚠ ${w(
@@ -172,7 +172,7 @@ export function PhoneQuota({ quota, summaries, wizard }) {
       'Some reserves may be misread (OpenCode channels unseen).')}</p>`}
     ${sorted.length
       ? sorted.map((item) => html`<${QuotaWindowCard} key=${item.key} item=${item} wizard=${wizard} />`)
-      : html`<div class="phone-empty">${w('No subscription usage samples yet.', 'No mana readings yet.')}</div>`}
+      : html`<${Empty}>${w('No subscription usage samples yet.', 'No mana readings yet.')}<//>`}
     <p class="phone-usage-foot">${w('History ranges and prediction choices are on the desktop.', 'The finer prophecies are read at the desktop.')}</p>
   </div>`;
 }
@@ -201,7 +201,7 @@ export function PhoneSpendChart({ costs, wizard }) {
   if (!bars.days.length) {
     return html`<${Card} class="phone-spend" role="group" aria-label=${title}>
       <div class="phone-spend-head"><strong>${title}</strong></div>
-      <div class="phone-empty">${w('No spend in this span.', 'The coffers are untouched.')}</div>
+      <${Empty}>${w('No spend in this span.', 'The coffers are untouched.')}<//>
     <//>`;
   }
   const shown = dayBreakdown(bars, pickedDay);
@@ -252,9 +252,9 @@ export function PhoneCosts({ costs, wizard, pickSpan, spanLabel }) {
     onSelect=${(key) => { if (key !== costs.span && key !== 'calmonth') pickSpan(key); }} items=${spanChips(costs)} />`;
   if (costs.request.phase === 'error' && !loaded) {
     return html`<div class="phone-usage-costs">${chips}
-      <div role="alert" class="island-error">${w('Costs failed to load', 'The ledger could not be read')}: ${costs.request.error}</div></div>`;
+      <${ErrorNote}>${w(errorText('the costs', costs.request.error), `The ledger could not be read: ${costs.request.error}`)}<//></div>`;
   }
-  if (!loaded) return html`<div class="phone-usage-costs">${chips}<div class="phone-empty">Loading…</div></div>`;
+  if (!loaded) return html`<div class="phone-usage-costs">${chips}<${Empty}>Loading…<//></div>`;
   const t = costTotals(costs);
   return html`<div class="phone-usage-costs">
     ${chips}
@@ -272,19 +272,19 @@ export function PhoneCosts({ costs, wizard, pickSpan, spanLabel }) {
       ${t.providers.length
         ? html`<${Card} as="ul" class="phone-cost-list">${t.providers.map((entry) => html`<${CostRow} key=${entry.key} name=${entry.key}
           sub=${`${entry.agentCount} agent${entry.agentCount === 1 ? '' : 's'}`} cost=${entry.cost} share=${entry.share} />`)}<//>`
-        : html`<div class="phone-empty">${w('No spend in this span.', 'The coffers are untouched.')}</div>`}
+        : html`<${Empty}>${w('No spend in this span.', 'The coffers are untouched.')}<//>`}
     <//>
     <${Section} title=${w('By model', 'By familiar')} count=${t.models.length}>
       ${t.models.length
         ? html`<${Card} as="ul" class="phone-cost-list">${t.models.map((entry) => html`<${CostRow} key=${entry.key} name=${entry.key}
           sub=${entry.subs.join(', ')} cost=${entry.cost} share=${entry.share} />`)}<//>`
-        : html`<div class="phone-empty">${w('No spend in this span.', 'The coffers are untouched.')}</div>`}
+        : html`<${Empty}>${w('No spend in this span.', 'The coffers are untouched.')}<//>`}
     <//>
     <${Section} title=${w('Top agents', 'Top spenders')} count=${t.top.length}>
       ${t.top.length
         ? html`<${Card} as="ul" class="phone-cost-list">${t.top.map((agent) => html`<${CostRow} key=${agent.key} name=${agent.title}
           sub=${shortAgentId(agent.agentID, agent.convID)} cost=${agent.cost} whatIf=${agent.whatIf} />`)}<//>`
-        : html`<div class="phone-empty">${w('No spend in this span.', 'The coffers are untouched.')}</div>`}
+        : html`<${Empty}>${w('No spend in this span.', 'The coffers are untouched.')}<//>`}
     <//>
     <p class="phone-usage-foot">${w('Running totals, months, filters and multipliers are on the desktop.', 'The full ledger is kept at the desktop.')}</p>
   </div>`;

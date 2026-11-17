@@ -18,7 +18,7 @@ import { createMessageAccessDialogActions } from './message-access-dialog-action
 import { loadSavedPrompts } from './saved-prompts-actions.js';
 import { openPhoneSheet, requestClosePhoneSheet, useSheetGuard } from './phone-sheet.js';
 import { Button } from './ui-components.js';
-import { ButtonRow } from './phone-ui.js';
+import { ButtonRow, ErrorNote, errorText } from './phone-ui.js';
 
 const html = htm.bind(h);
 
@@ -191,7 +191,7 @@ export function ComposeSheet({ agent = '', label = '', node = '', title = '', hi
         aria-expanded=${listing ? 'true' : 'false'} onClick=${() => setListing(!listing)}>Prompts ${listing ? '▴' : '▾'}</button>
     </div>
     ${listing && html`<div class="phone-compose-prompts">
-      ${prompts.error ? html`<p class="ui-error-box" role="alert">${prompts.error}</p>`
+      ${prompts.error ? html`<${ErrorNote}>${errorText('the saved prompts', prompts.error)}<//>`
         : !prompts.prompts ? html`<p class="ui-hint phone-compose-note">Loading…</p>`
           : !prompts.prompts.length ? html`<p class="ui-hint phone-compose-note">No saved prompts yet.</p>`
             : html`<ul class="phone-menu" aria-label="Saved prompts">${prompts.prompts.map((prompt) => html`<li key=${prompt.name}>
@@ -211,7 +211,7 @@ export function ComposeSheet({ agent = '', label = '', node = '', title = '', hi
           onClick=${() => setFiles((now) => now.filter((_, i) => i !== index))}>✕</button>
       </li>`)}
     </ul>`}
-    ${error && html`<p class="ui-error-box phone-compose-error" role="alert">${error}</p>`}
+    ${error && html`<${ErrorNote} class="phone-compose-error">${error}<//>`}
     ${confirming
       ? html`<div class="phone-compose-foot" role="alertdialog" aria-label="Discard this message?">
           <span class="phone-compose-ask">Discard this message?</span>

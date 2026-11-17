@@ -22,7 +22,7 @@ import { usageStrip } from './phone-now-model.js';
 import { AskCard, PhoneApprovalCard, PhoneDecisionCard } from './phone-approval.js';
 import { ContextMeter } from './context-meter.js';
 import { Button } from './ui-components.js';
-import { Card, ChipRow, RowMore, Section, StatePill } from './phone-ui.js';
+import { Card, ChipRow, Empty, RowMore, Section, StatePill } from './phone-ui.js';
 import { useHold } from './phone-hold.js';
 import { relTime } from './helpers.js';
 import { processContext } from './process-context.js';
@@ -160,7 +160,7 @@ export function NowView({ state, actions, fetchImpl = globalThis.fetch, processS
   // not the snapshot: Now keeps it fresh while it shows.
   const gates = gateItems(useProcessRuns(processSource).context);
   const snapshot = state.snapshot.value;
-  if (!snapshot) return html`<div class="ui-empty phone-empty">Loading…</div>`;
+  if (!snapshot) return html`<${Empty}>Loading…<//>`;
   const now = nowView(snapshot);
   const view = { ...now, needs: now.needs + gates.length };
   const agents = companionAgents(snapshot);
@@ -178,7 +178,7 @@ export function NowView({ state, actions, fetchImpl = globalThis.fetch, processS
     { key: 'problems', label: 'Problems', badge: problems.length, badgeTone: 'danger' },
   ];
   const needsYou = html`<${Section} title="Needs you" count=${view.needs}>
-      ${quiet && html`<p class="ui-empty phone-empty">Nothing needs you right now.</p>`}
+      ${quiet && html`<${Empty}>Nothing needs you right now.<//>`}
       ${view.approvals.map((request) => {
         const agent = agents.get(request.agent_id);
         return html`<${PhoneApprovalCard} key=${request.id} request=${request} fetchImpl=${fetchImpl} notify=${actions.notify}
@@ -194,7 +194,7 @@ export function NowView({ state, actions, fetchImpl = globalThis.fetch, processS
     <//>`;
   const rowsOr = (list, empty) => (list.length
     ? html`<${AgentRows} rows=${list} onOpen=${actions.openTerminal} onMenu=${actions.agentMenu} />`
-    : html`<p class="ui-empty phone-empty">${empty}</p>`);
+    : html`<${Empty}>${empty}<//>`);
   let body;
   if (chip === 'needs') body = needsYou;
   else if (chip === 'idle') {
@@ -222,7 +222,7 @@ export function NowView({ state, actions, fetchImpl = globalThis.fetch, processS
           aria-label="New agent" aria-haspopup="dialog" onClick=${() => actions.spawnAgent('')}>＋ Agent</button>`}
         <button data-ui-exempt type="button" class="phone-link" onClick=${() => actions.navigate('/')}>All agents ›</button></span>`}>
       ${rows.length === 0
-        ? html`<p class="ui-empty phone-empty">${list.all ? 'No agent is online.' : 'No agent is active right now.'}</p>`
+        ? html`<${Empty}>${list.all ? 'No agent is online.' : 'No agent is active right now.'}<//>`
         : html`<${AgentRows} rows=${rows} onOpen=${actions.openTerminal} onMenu=${actions.agentMenu} />`}
       ${list.total > FEW_ONLINE && html`<button data-ui-exempt type="button" class="phone-now-all" aria-expanded=${showAll ? 'true' : 'false'}
         onClick=${() => setShowAll(!showAll)}>${showAll ? 'Only the recent ones' : `Show all ${list.total} online`}

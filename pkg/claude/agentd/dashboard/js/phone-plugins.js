@@ -20,6 +20,7 @@ import { Card } from './phone-ui.js';
 import { usePhoneBar } from './phone-page.js';
 import { relTime } from './helpers.js';
 import { Button, Switch } from './ui-components.js';
+import { Empty, ErrorNote } from './phone-ui.js';
 
 const html = htm.bind(h);
 
@@ -123,13 +124,13 @@ export function PhonePlugins({ state, actions }) {
   // Check all is the app bar's (the mock's), while there is a plugin to check.
   usePhoneBar({ tab: 'plugins', actions: [{ key: 'check-all', label: 'Check all', text: checking ? 'Checking…' : 'Check all',
     disabled: checking, onClick: () => actions.checkAll(checkKey) }] }, current.request.hasLoaded && current.all.length > 0);
-  if (!current.request.hasLoaded) return html`<p class="ui-empty phone-empty">Loading…</p>`;
+  if (!current.request.hasLoaded) return html`<${Empty}>Loading…<//>`;
   if (current.registryError) {
-    return html`<p class="ui-error-box" role="alert">The plugin registry is unreadable: <code>${current.registryError}</code></p>`;
+    return html`<${ErrorNote}>Could not read the plugin registry: <code>${current.registryError}</code><//>`;
   }
   return html`<div class="phone-plugins">
     ${current.all.length === 0
-      ? html`<p class="ui-empty phone-empty">No plugins installed yet.</p>`
+      ? html`<${Empty}>No plugins installed yet.<//>`
       : current.all.map((plugin) => html`<${PluginCard} key=${plugin.name} plugin=${plugin} actions=${actions} busy=${current.busy} />`)}
     <${DesktopOnlyNote} what="Installing from the catalog and editing plugins are" />
   </div>`;

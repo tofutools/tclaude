@@ -17,7 +17,7 @@ import { DOCTOR_CATEGORIES } from './doctor-state.js';
 import { SandboxDefaultControl, copyFix } from './doctor-island.js';
 import { HarnessConfigRepairControl } from './harness-config-repair.js';
 import { usePhonePage } from './phone-page.js';
-import { Section } from './phone-ui.js';
+import { Empty, ErrorNote, errorText, Section } from './phone-ui.js';
 import { Button } from './ui-components.js';
 
 const html = htm.bind(h);
@@ -71,7 +71,7 @@ function CheckPage({ check, state, actions, notify, back }) {
   useEffect(() => { globalThis.scrollTo?.(0, 0); }, [check?.id]);
   if (!check) {
     return html`<div class="phone-doctor-page">
-      <p class="ui-empty phone-empty">✅ This check has cleared.</p>
+      <${Empty}>✅ This check has cleared.<//>
       <${Button} class="phone-btn phone-wide" onClick=${back}>Back to the Doctor<//>
     </div>`;
   }
@@ -111,8 +111,8 @@ export function PhoneDoctor({ state, actions, notify }) {
       <p class="phone-doctor-lede">${phase !== 'ready' ? '' : asking === 0 ? '✅ Nothing needs you.' : `${asking} need${asking === 1 ? 's' : ''} you`}</p>
       <${Button} class="phone-btn" disabled=${phase === 'loading'} onClick=${() => actions.load({ refresh: true })}>↻ Re-check<//>
     </div>
-    ${phase === 'error' && html`<div class="ui-error-box" role="alert">Could not load checks: ${state.error.value}</div>`}
-    ${phase === 'loading' && !checks.length && html`<p class="ui-empty phone-empty">Checking…</p>`}
+    ${phase === 'error' && html`<${ErrorNote}>${errorText('the checks', state.error.value)}<//>`}
+    ${phase === 'loading' && !checks.length && html`<${Empty}>Checking…<//>`}
     ${groups.map((group) => html`<${Section} key=${group.severity} title=${group.title} count=${group.checks.length}>
       <ul class="phone-list phone-doctor-list">${group.checks.map((check) => html`<${CheckRow} key=${check.id} check=${check} onOpen=${setOpenId} />`)}</ul>
     <//>`)}

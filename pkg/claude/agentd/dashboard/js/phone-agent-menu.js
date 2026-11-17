@@ -30,7 +30,7 @@ import { diagnosticsEnabled, setDiagnosticsEnabled } from './terminal-diagnostic
 import { contextFigure } from './context-meter.js';
 import htm from 'htm';
 import { agentGroups, findRow } from './phone-agents-model.js';
-import { SheetHead, StatePill } from './phone-ui.js';
+import { Empty, SheetHead, StatePill } from './phone-ui.js';
 import { harnessCanCompact, harnessCanRemoteControl } from './helpers.js';
 import { claudeAppOffer, pageCanToggleRemote } from './claude-app.js';
 import { agentShellEntries, openAgentShell } from './phone-open-shell.js';
@@ -108,7 +108,7 @@ export function menuModel(row, group, snapshot, { here = false, selectText = fal
 export function AgentMenu({ state, order, actions, agentKey, groupKey = '', here = false, selectText = null, close }) {
   const snapshot = state.snapshot.value;
   const found = findRow(agentGroups(snapshot, order), agentKey, groupKey);
-  if (!found) return html`<p class="ui-empty phone-empty">This agent is no longer listed.</p>`;
+  if (!found) return html`<${Empty}>This agent is no longer listed.<//>`;
   const { row, group } = found;
   const model = menuModel(row, group, snapshot, { here, selectText: !!selectText, diagnostics: diagnosticsEnabled() });
   const run = (key) => () => {

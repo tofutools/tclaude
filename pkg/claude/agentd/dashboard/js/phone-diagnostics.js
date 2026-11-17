@@ -17,6 +17,7 @@ import { useAuditFeed } from './audit-island.js';
 import { fieldsText, fmtAbsTime, levelKey } from './logs-model.js';
 import { useLogsFeed } from './logs-island.js';
 import { Button, Input, Select } from './ui-components.js';
+import { Empty, ErrorNote, errorText } from './phone-ui.js';
 
 const html = htm.bind(h);
 
@@ -34,9 +35,9 @@ const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 // Placeholder is what a list shows instead of rows: loading, a failure, or
 // nothing to show.
 function Placeholder({ current, what, empty }) {
-  if (current.request.phase === 'loading' && !current.rows.length) return html`<p class="ui-empty phone-empty">Loading ${what}…</p>`;
-  if (current.request.phase === 'error') return html`<p class="ui-error-box" role="alert">Failed to load ${what}: ${current.request.error}</p>`;
-  if (!current.rows.length) return html`<p class="ui-empty phone-empty">${empty}</p>`;
+  if (current.request.phase === 'loading' && !current.rows.length) return html`<${Empty}>Loading ${what}…<//>`;
+  if (current.request.phase === 'error') return html`<${ErrorNote}>${errorText(what, current.request.error)}<//>`;
+  if (!current.rows.length) return html`<${Empty}>${empty}<//>`;
   return null;
 }
 

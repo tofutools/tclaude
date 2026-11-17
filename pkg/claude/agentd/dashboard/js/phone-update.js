@@ -39,6 +39,7 @@ import { featureState } from './peer-view-limits.js';
 import { shellToast } from './shell-state.js';
 import { writeClipboard } from './insecure-origin.js';
 import { setLayoutOverride } from './layout.js';
+import { ErrorNote } from './phone-ui.js';
 import {
   UpdateJobView, accessText, applyConfirm, createNodeUpdateActions, installedText, methodText, savedMethod, updateNowRefusal, useNodeUpdate, versionView,
 } from './node-update.js';
@@ -139,7 +140,7 @@ export function UpdateSheet({ close, navigate, actions = defaultActions(), timer
   const refusal = updateNowRefusal(method, status);
   const running = methodText(method, status);
   const head = html`<h2 class="phone-update-title">Update tclaude</h2>`;
-  if (error) return html`<div class="phone-update" data-update="error-read">${head}<p class="ui-error" role="alert">${accessText(error, node)}</p>
+  if (error) return html`<div class="phone-update" data-update="error-read">${head}<${ErrorNote}>${accessText(error, node)}<//>
     <${Button} class="phone-btn" onClick=${close}>Close<//></div>`;
   if (!status) return html`<div class="phone-update" data-update="loading">${head}<p class="phone-update-note">Reading the version…</p></div>`;
 
