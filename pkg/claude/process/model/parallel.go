@@ -75,7 +75,9 @@ func signaturesEqual(a, b scopeSignature) bool {
 	return true
 }
 
-func validateParallelScopePlan(tmpl *Template, edges []Edge) Diagnostics {
+// topLevel says the graph is the template's own: only there does an end end
+// the run (a subprocess body's ends complete its subprocess node instead).
+func validateParallelScopePlan(tmpl *Template, edges []Edge, topLevel bool) Diagnostics {
 	if tmpl == nil {
 		return nil
 	}
@@ -135,6 +137,11 @@ func validateParallelScopePlan(tmpl *Template, edges []Edge) Diagnostics {
 			reachable[nodeID] = true
 		}
 		if !reachable[nodeID] {
+			continue
+		}
+		// A failed or canceled end ends the whole run, so a track of a fork
+		// may stop there without reducing at the fork's join.
+		if topLevel && EndsRunEarly(tmpl.Nodes[nodeID]) {
 			continue
 		}
 

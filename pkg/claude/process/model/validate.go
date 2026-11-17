@@ -48,7 +48,7 @@ func validateScope(tmpl *Template, edges []Edge, diagnostics *templateDiagnostic
 	for _, validate := range []func() Diagnostics{
 		func() Diagnostics { return validateEdges(tmpl, edges) },
 		func() Diagnostics { return validateJoinAndDegree(tmpl, edges) },
-		func() Diagnostics { return validateParallelScopePlan(tmpl, edges) },
+		func() Diagnostics { return validateParallelScopePlan(tmpl, edges, depth == 0) },
 		func() Diagnostics { return validateOutcomeRouting(tmpl) },
 		func() Diagnostics { return validateLoopBudgets(tmpl) },
 		func() Diagnostics { return validateLoops(tmpl, edges) },
@@ -341,6 +341,20 @@ func validateCaptures(node Node, path string, diagnostics *templateDiagnosticCol
 		seen[name] = i
 	}
 	return true
+}
+
+// EndsRunEarly reports whether a node is an end whose result is failed or
+// canceled. Reaching one ends the run even while other tracks of a parallel
+// fork still have work: the run drains and finishes with that result.
+func EndsRunEarly(node Node) bool {
+	if node.Type != NodeTypeEnd {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(node.Result)) {
+	case "fail", "failed", "failure", "error", "cancel", "canceled", "cancelled":
+		return true
+	}
+	return false
 }
 
 func validateEndResult(result string, path string) Diagnostics {

@@ -940,6 +940,12 @@ func validateCheckpoint(checkpoint Checkpoint, definition *Definition) error {
 	if err := validateEdgeShape(checkpoint, definition); err != nil {
 		return err
 	}
+	if checkpoint.EndedEarly != "" {
+		end, ok := definitionNodeByID(definition, checkpoint.EndedEarly)
+		if !ok || !endsEarly(end) || checkpoint.Nodes[end.id] != NodeDone {
+			return invalid("endedEarly names %q, which is not a reached failed or canceled end node", checkpoint.EndedEarly)
+		}
+	}
 	if err := validateAttemptCeilings(checkpoint, definition); err != nil {
 		return err
 	}
@@ -1329,7 +1335,7 @@ func classifyCheckpoint(checkpoint Checkpoint, definition *Definition) error {
 		if doomedIndex >= 0 {
 			return invalid("running run cannot contain doomed node %q", definition.nodes[doomedIndex].id)
 		}
-		if doneEndIndex >= 0 {
+		if doneEndIndex >= 0 && checkpoint.EndedEarly == "" {
 			return invalid("running run cannot contain done end node %q", definition.nodes[doneEndIndex].id)
 		}
 		if activeIndex < 0 {
@@ -1367,7 +1373,7 @@ func classifyCheckpoint(checkpoint Checkpoint, definition *Definition) error {
 		if activeIndex >= 0 {
 			return invalid("terminal run cannot have active node %q", definition.nodes[activeIndex].id)
 		}
-		if doneEndIndex >= 0 {
+		if doneEndIndex >= 0 && checkpoint.EndedEarly == "" {
 			if doomedIndex >= 0 {
 				return invalid("terminal run cannot have both a done end and a failed or canceled task")
 			}
@@ -1385,10 +1391,10 @@ func classifyCheckpoint(checkpoint Checkpoint, definition *Definition) error {
 		if checkpoint.Status != RunFailed && checkpoint.Status != RunCanceled {
 			return invalid("terminal run status %q requires a done end node", checkpoint.Status)
 		}
-		if doomedIndex < 0 {
+		if doomedIndex < 0 && checkpoint.EndedEarly == "" {
 			return invalid("doomed run must contain one failed or canceled task, or a failed end result")
 		}
-		if got := doomStatus(checkpoint); got != checkpoint.Status {
+		if got := doomStatus(checkpoint, definition); got != checkpoint.Status {
 			return invalid("terminal run status %q disagrees with its doomed node, which implies %q", checkpoint.Status, got)
 		}
 	default:

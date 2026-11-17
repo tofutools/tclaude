@@ -134,6 +134,13 @@ type Checkpoint struct {
 	// it; the loop's round is that count plus one. Sparse: a run whose loops
 	// never went back encodes nothing. See loops.go.
 	Iterations map[string]map[string]int `json:"iterations,omitempty"`
+	// EndedEarly names a failed or canceled end node that was reached while
+	// other work in the run was still live, typically one track of a parallel
+	// fork giving up while its sibling tracks still run. It dooms the run like
+	// a failed node does: nothing more is planned, the human outboxes are
+	// dropped, and the run drains its in-flight commands before finishing with
+	// that end's result.
+	EndedEarly string `json:"endedEarly,omitempty"`
 	// Canceled records that someone gave the whole run up (TransitionRunCanceled),
 	// whatever its nodes were doing. It dooms the run like a canceled node does:
 	// nothing more is planned, the human outboxes are dropped, and the run
