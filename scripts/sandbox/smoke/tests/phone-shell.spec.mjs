@@ -121,7 +121,7 @@ test.describe('on a phone', () => {
     await terminal.getByRole('button', { name: 'Back' }).click();
     await expect(terminal).toBeHidden();
     // ＋ is the short spawn sheet, never the desktop form.
-    await page.getByRole('button', { name: 'New agent' }).click();
+    await page.getByRole('button', { name: 'New agent', exact: true }).click();
     const spawn = page.getByRole('dialog', { name: 'New agent' });
     await expect(spawn.getByLabel('Prompt')).toBeVisible();
     await expect(page.getByText('Spawn a new agent')).toHaveCount(0);

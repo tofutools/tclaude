@@ -8,6 +8,19 @@ async function setup(t) {
   return setupWith(t, await createPreactHarness(t));
 }
 
+// browser gives the harness window a history that can step Forward (forward()
+// counts the steps; land() is the popstate the step lands as) and, with
+// canGoForward, the Navigation API's word on whether anything is ahead.
+function browser(harness, { canGoForward } = {}) {
+  const win = harness.document.defaultView;
+  const steps = [];
+  win.location = { href: 'http://localhost/?terminal=a' };
+  win.history = { forward: () => steps.push('forward') };
+  if (canGoForward !== undefined) win.navigation = { canGoForward };
+  const land = () => win.dispatchEvent(new win.Event('popstate'));
+  return { steps, land };
+}
+
 async function setupWith(t, harness) {
   const [history, routes, { phonePage }, sheet] = await Promise.all([
     harness.importDashboardModule('js/phone-history.js'),
@@ -267,3 +280,67 @@ for (const guard of GUARDS) {
     assert.deepEqual(behind, [], 'and nothing ever stepped the page behind back');
   });
 }
+
+// Android's Back skips every entry of a page that added one after a Back
+// without a fresh tap (Chrome's history-manipulation intervention), so it left
+// the app from a kept draft (tk_3739e29d). A held Back steps Forward onto the
+// form's own entry instead: no new entry, ever.
+{
+  const guard = GUARDS[0];
+  test(`a kept draft in ${guard.name} steps Forward onto its own entry, never adds one`, async (t) => {
+    const harness = await createPreactHarness(t);
+    const { steps, land } = browser(harness);
+    const { routes, phonePage, sheet, announced, tick } = await setupWith(t, harness);
+    const behind = [];
+    phonePage.value = { title: 'reader', routed: true, onBack: () => behind.push('back') };
+    const form = await guard.mount(t, harness, sheet);
+    await tick();
+    announced.length = 0;
+
+    const back = () => harness.act(async () => { routes.restoreOverlays({}); await tick(); });
+    await back();
+    assert.equal(form.asking(), true, 'Back asks');
+    // Kept (a sheet's at once, a dialog's once its question is answered),
+    // the form steps Forward onto its own entry.
+    await harness.act(async () => { form.keep(); await tick(); });
+    assert.deepEqual(steps, ['forward'], 'kept, it steps Forward onto the form\'s entry');
+    assert.deepEqual(announced, [], 'recording no entry of its own');
+    await harness.act(async () => { land(); routes.restoreOverlays({ phone: '1' }); await tick(); });
+    await new Promise((resolve) => setTimeout(resolve, 450));
+    assert.deepEqual(announced, [], 'landed, nothing is recorded later either');
+
+    await back();
+    assert.equal(form.asking(), true, 'the next Back asks again');
+    assert.deepEqual(announced, []);
+    await harness.act(async () => { form.discard(); await tick(); });
+    assert.equal(form.open(), false);
+    assert.deepEqual(behind, [], 'and the page behind never moved');
+  });
+}
+
+test('a step Forward that never lands (nothing ahead) records the step as before', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { steps } = browser(harness);
+  const { routes, sheet, announced, tick } = await setupWith(t, harness);
+  const form = await GUARDS[0].mount(t, harness, sheet);
+  await tick();
+  announced.length = 0;
+  await harness.act(async () => { routes.restoreOverlays({}); await tick(); });
+  assert.deepEqual(steps, ['forward']);
+  assert.deepEqual(announced, []);
+  await new Promise((resolve) => setTimeout(resolve, 450));
+  assert.equal(form.open(), true);
+  assert.deepEqual(announced.map((detail) => detail.closed), [false], 'so the form still has its step');
+});
+
+test('with nothing ahead (the Navigation API says so) the step is recorded at once', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { steps } = browser(harness, { canGoForward: false });
+  const { routes, sheet, announced, tick } = await setupWith(t, harness);
+  await GUARDS[0].mount(t, harness, sheet);
+  await tick();
+  announced.length = 0;
+  await harness.act(async () => { routes.restoreOverlays({}); await tick(); });
+  assert.deepEqual(steps, []);
+  assert.deepEqual(announced.map((detail) => detail.closed), [false]);
+});

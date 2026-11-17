@@ -427,7 +427,50 @@ function stepBackTo(loc) {
   return true;
 }
 
+// stepOver is set while a step Forward is on its way, onto the entry an
+// overlay close just stepped back off: the navigations made meanwhile (a
+// sheet that opened another, or a terminal, as it closed) take that entry
+// over (replaceNext) instead of adding one. A page that adds an entry after a
+// Back, without a fresh tap, has every entry marked skippable by Chrome (its
+// history-manipulation intervention), and Android's Back then leaves the app
+// (tk_3739e29d).
+let stepOver = false;
+let replaceNext = false;
+
 function flushSteppingBack() {
+  const opens = (steppingBack || []).length || waitingPaths.length || (overlayAgain && !overlayAgain.closed);
+  const nav = window.navigation;
+  if (opens && !stepOver && (!nav || nav.canGoForward !== false)) {
+    // Still holding navigations (steppingBack) until the step lands.
+    stepOver = true;
+    history.forward();
+    setTimeout(() => { if (stepOver) { stepOver = false; runSteppedBack(); } }, 1000);
+    return;
+  }
+  stepOver = false;
+  runSteppedBack();
+}
+
+// landStepOver runs the held navigations on the entry the step Forward
+// landed on, the first taking it over. Should none take it, and it shows no
+// longer what is on screen, it is stepped back off again.
+function landStepOver() {
+  stepOver = false;
+  replaceNext = true;
+  runSteppedBack();
+  if (!replaceNext) return;
+  replaceNext = false;
+  const loc = withOverlays(current(stack));
+  if (locEquals(loc, current(stack))) {
+    history.replaceState(serializeStack(stack), '', urlFor(loc));
+    return;
+  }
+  steppingBack = [];
+  history.back();
+  setTimeout(() => { if (steppingBack) flushSteppingBack(); }, 1000);
+}
+
+function runSteppedBack() {
   const queued = steppingBack || [];
   steppingBack = null;
   for (const loc of queued) record(withOverlays(loc));
@@ -485,6 +528,12 @@ function urlFor(loc) {
 function record(loc) {
   if (!ROUTABLE_TABS.has(loc.tab)) return;
   if (steppingBack) { steppingBack.push(loc); return; }
+  if (replaceNext) {
+    replaceNext = false;
+    stack = replaceCurrent(stack, loc);
+    history.replaceState(serializeStack(stack), '', urlFor(loc));
+    return;
+  }
   const before = stack;
   stack = push(stack, loc);
   if (stack === before) return; // duplicate — no new entry
@@ -567,6 +616,12 @@ function onPopstate(e) {
   const loc = fromPath(window.location.pathname, window.location.search);
   const navIndex = e.state && Number.isInteger(e.state.navIndex) ? e.state.navIndex : -1;
   stack = resolvePopstate(stack, loc, navIndex);
+  // Our own step Forward onto the entry a close stepped back off: what was
+  // navigated to since takes it over (flushSteppingBack).
+  if (stepOver) {
+    landStepOver();
+    return;
+  }
   // Our own step back off a closed overlay: the screen already shows this
   // entry (or whatever was navigated to since, which is recorded now).
   if (steppingBack) {

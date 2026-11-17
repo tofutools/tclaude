@@ -117,6 +117,14 @@ export function AgentMenu({ state, order, actions, agentKey, groupKey = '', here
       actions.explain?.(tile.why);
       return;
     }
+    // Message's sheet takes this one's place as it opens (it loads first), so
+    // it keeps this sheet's history step. Closing first would step back, and
+    // the message sheet would then add an entry after a Back without a tap,
+    // which Android's Back skips with every other one (tk_3739e29d).
+    if (key === 'message') {
+      actions.message(row);
+      return;
+    }
     close();
     const shell = model.agent.find((entry) => entry.key === key && entry.target);
     if (shell) {

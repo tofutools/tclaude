@@ -65,6 +65,10 @@ export function keptView(tab) {
   return was && was.tab === tab ? was.view : null;
 }
 
+// RETAKE_SETTLE_MS is how long a step Forward (retakeStep) may take to land
+// before the step is recorded anew instead.
+export const RETAKE_SETTLE_MS = 400;
+
 // installPhoneHistory wires the layers and `view` (the shell's own-view
 // signal) to the router; `tab` reads the active tab. Returns the uninstall
 // function.
@@ -80,6 +84,30 @@ export function installPhoneHistory({ view, tab = () => null, doc = globalThis.d
     if (next && next !== sheetShown) sheetSeq = backSeq();
     sheetShown = next;
   });
+  // retakeStep gives a layer Back could not close (a draft kept, a form that
+  // stayed open) its history entry back: a step Forward, onto the entry Back
+  // just left, which is still there. Never a new entry: Chrome marks every
+  // entry of a page skippable when the page adds one after a Back without a
+  // fresh tap (its history-manipulation intervention), and Android's Back
+  // then skips them all and leaves the app (tk_3739e29d). When there is
+  // nothing ahead (the Navigation API says so, or the Forward never lands),
+  // the step is recorded anew, as before.
+  const win = doc?.defaultView;
+  let retaking = null;
+  const settled = () => { if (retaking) { clearTimeout(retaking); retaking = null; } };
+  const retakeStep = () => {
+    settled();
+    if (!win?.history?.forward || win.navigation?.canGoForward === false) {
+      announceOverlay({ doc });
+      return;
+    }
+    retaking = setTimeout(() => {
+      retaking = null;
+      if (layerDepth() > Number(new URL(win.location.href).searchParams.get('phone') || 0)) announceOverlay({ doc });
+    }, RETAKE_SETTLE_MS);
+    win.history.forward();
+  };
+  win?.addEventListener?.('popstate', settled);
   // closing counts the layers Back asked to close whose close has not landed
   // yet: the step back is taken, so they are no longer in the address.
   let closing = 0;
@@ -101,7 +129,7 @@ export function installPhoneHistory({ view, tab = () => null, doc = globalThis.d
           closing -= 1;
           if (closed) return;
           depth = layerDepth();
-          announceOverlay({ doc });
+          retakeStep();
         });
         return;
       }
@@ -130,12 +158,12 @@ export function installPhoneHistory({ view, tab = () => null, doc = globalThis.d
         restoring = false;
       }
       // A held sheet stays on screen, so it takes its entry back once this
-      // restore is done. It stops counting as closing as soon as the router
-      // has corrected the entry Back landed on (synchronously, after this
-      // restore), so a further Back finds it up and asks it again.
+      // restore is done (retakeStep). It stops counting as closing as soon as
+      // the router has corrected the entry Back landed on (synchronously,
+      // after this restore), so a further Back finds it up and asks it again.
       if (held) {
         queueMicrotask(() => { closing -= 1; });
-        setTimeout(() => announceOverlay({ doc }), 0);
+        setTimeout(retakeStep, 0);
       }
     },
   });
@@ -183,6 +211,8 @@ export function installPhoneHistory({ view, tab = () => null, doc = globalThis.d
   // Put what is on screen at boot (Now on a bare /) into the address.
   const cancelBoot = whenBooted(doc, () => announceOverlay({ replace: true, doc }));
   return () => {
+    settled();
+    win?.removeEventListener?.('popstate', settled);
     cancelBoot();
     clearTimeout(pending);
     stopLayers();
