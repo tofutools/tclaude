@@ -148,3 +148,62 @@ func TestEditorAgentDecision_ChangesGoBackThenTheRunFails(t *testing.T) {
 	}
 	assert.Equal(t, engine.RunFailed, showLoopRun(t, f, runID).Status, "out of rounds, the run fails")
 }
+
+// Scenario: the editor's ◇ decision step (fixture case
+// decision-three-way-agent: after implement, an agent decides between
+// small, large and skip). The decider is asked for exactly those answers,
+// and the one it reports picks the way on: skip ends the run, large goes on
+// to review.
+func TestEditorDecisionStep_TheAgentsNamedAnswerRoutes(t *testing.T) {
+	for _, tc := range []struct {
+		verdict string
+		check   func(t *testing.T, view loopRunView)
+	}{
+		{"skip", func(t *testing.T, view loopRunView) {
+			assert.Equal(t, engine.RunCompleted, view.Status, "skip goes straight to the end")
+		}},
+		{"large", func(t *testing.T, view loopRunView) {
+			assert.Equal(t, engine.RunRunning, view.Status)
+			require.Len(t, view.Commands, 1)
+			assert.Equal(t, "review", view.Commands[0].NodeID, "large goes on to review")
+		}},
+	} {
+		t.Run(tc.verdict, func(t *testing.T) {
+			f, root := processRuntimeFlow(t)
+			g := f.HaveGroup("crew")
+			const dev, reviewer = "gdev-1111-2222-3333-4444", "grev-1111-2222-3333-4444"
+			havePerformerAgent(t, f, "crew", dev, "alice", "dev", "idle")
+			havePerformerAgent(t, f, "crew", reviewer, "carol", "reviewer", "idle")
+			tmpl, err := agentd.MiniEditCaseTemplateForTest("decision-three-way-agent")
+			require.NoError(t, err)
+			// Who decides, as the editor's Who picker sets it.
+			decision := tmpl.Nodes["decision"]
+			require.Equal(t, model.NodeTypeDecision, decision.Type)
+			performer := *decision.Performer
+			performer.Role = "reviewer"
+			decision.Performer = &performer
+			tmpl.Nodes["decision"] = decision
+			// The starter's merge runs gh, a command a run must authorize; these
+			// runs stop before it, so an agent stands in.
+			merge := tmpl.Nodes["merge"]
+			merge.Performer = &model.Performer{Kind: model.PerformerAgent, Role: "dev", Prompt: "Merge the PR."}
+			tmpl.Nodes["merge"] = merge
+			const runID = "run_editor_decision_step"
+			startEditorRun(t, f, root, runID, tmpl, g)
+
+			reportLoopStep(t, f, dev, runID, "implement", 1)
+			inbox := processInbox(t, reviewer)
+			require.NotEmpty(t, inbox, "the decision goes to the agent its Who names")
+			body := inbox[len(inbox)-1].Body
+			for _, answer := range []string{"small", "large", "skip"} {
+				assert.Contains(t, body, answer, "the decider is offered %s", answer)
+			}
+			assert.Empty(t, showLoopRun(t, f, runID).AwaitingDecisions, "nobody is asked: the agent decides")
+
+			require.Equal(t, http.StatusOK, reportAs(t, f, reviewer, map[string]any{
+				"runId": runID, "nodeId": "decision", "attempt": 1, "outcome": "succeeded", "verdict": tc.verdict, "note": "because",
+			}).Code)
+			tc.check(t, showLoopRun(t, f, runID))
+		})
+	}
+}
