@@ -69,9 +69,11 @@ export const CARD_ACCENTS = Object.freeze(['key', 'ask', 'q']);
 
 // Card is the mock's panel: a rounded box, optionally with a coloured left
 // edge. A div: dashboard.css hides every <section> but the active tab's.
-export function Card({ accent = '', class: extra, children, ...rest }) {
+// as="ul" makes the box a list itself, for a list of rows in a card.
+export function Card({ accent = '', as = 'div', class: extra, children, ...rest }) {
   const edge = CARD_ACCENTS.includes(accent) ? accent : '';
-  return html`<div ...${rest} class=${join('phone-box', edge && `phone-box-${edge}`, extra)}>${children}</div>`;
+  const tag = as === 'ul' || as === 'ol' ? as : 'div';
+  return html`<${tag} ...${rest} class=${join('phone-box', edge && `phone-box-${edge}`, extra)}>${children}<//>`;
 }
 
 // Section is a titled block of a view: an eyebrow heading with an optional

@@ -60,7 +60,6 @@
 :root[data-layout="phone"] .phone-run-step.mine { font-weight: 600; color: var(--ui-text-strong); }
 :root[data-layout="phone"] .phone-run-step.mine .phone-run-step-meta { color: var(--ui-warn-text); }
 :root[data-layout="phone"] .phone-gate { margin: 8px 0 12px; }
-:root[data-layout="phone"] .phone-gate-card { padding: 10px; }
 :root[data-layout="phone"] .phone-gate-title { font-weight: 600; color: var(--ui-text-strong); }
 :root[data-layout="phone"] .phone-gate-prompt { margin: 4px 0 8px; color: var(--ui-text); font-size: 14px; }
 :root[data-layout="phone"] .phone-gate-since { margin: 0 0 8px; color: var(--ui-muted-text); font-size: 13px; }

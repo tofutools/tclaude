@@ -14,7 +14,7 @@ import { fleetAdminLocation, fleetAdminPage, setFleetAdminPage } from './fleet-a
 import { hubOffReason } from './fleet-model.js';
 import { relTime } from './helpers.js';
 import { DesktopOnlyNote, DesktopOnlyPage } from './phone-desktop-only.js';
-import { Section } from './phone-ui.js';
+import { Card, Section } from './phone-ui.js';
 
 const html = htm.bind(h);
 
@@ -38,13 +38,13 @@ function ThisNode({ node }) {
   const hub = node.hub;
   const text = HUB_TEXT[hub] || hub;
   const url = hub !== 'off' ? hostOf(node.details?.url) : '';
-  return html`<div class="phone-fleet-self ui-card" data-key="fleet-self">
+  return html`<${Card} class="phone-fleet-self" data-key="fleet-self">
     <div class="phone-fleet-name">${node.self.name} <span class="ui-tag">this node</span></div>
     <div class="phone-fleet-id" title=${node.self.id}>${node.self.id}</div>
     <div class=${`phone-fleet-hub hub-${hub}`} title=${hubOffReason(node) || undefined}>
       ${text}${url ? ` · ${url}` : ''}${hub === 'refused' && node.error ? ` (${node.error})` : ''}
     </div>
-  </div>`;
+  <//>`;
 }
 
 function Peer({ peer }) {

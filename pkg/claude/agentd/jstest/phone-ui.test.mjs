@@ -65,6 +65,19 @@ test('Section heads a block with its count; SheetHead is a sheet\'s sub-head', a
   assert.equal(head.textContent, 'Move to');
 });
 
+test('a Card can be the list itself; any other tag stays a div', async (t) => {
+  const { harness, mod } = await load(t, 'js/phone-ui.js');
+  const { html } = harness;
+  const { container } = await harness.mount(html`<div>
+    <${mod.Card} as="ul" class="rows"><li>one</li><//>
+    <${mod.Card} as="script">safe<//>
+  </div>`);
+  const [list, other] = container.querySelectorAll('.phone-box');
+  assert.equal(list.tagName, 'UL');
+  assert.equal(list.className, 'phone-box rows');
+  assert.equal(other.tagName, 'DIV');
+});
+
 test('pillTone maps agent states onto the mock\'s pill colours', async (t) => {
   const { mod } = await load(t, 'js/phone-ui.js');
   assert.deepEqual(['asking', 'working', 'idle', 'offline', 'error', 'approval', 'key', 'mystery'].map(mod.pillTone),

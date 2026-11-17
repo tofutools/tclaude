@@ -1,5 +1,5 @@
 /* Fleet (js/phone-fleet.js), read-only: this node, then its peers. */
-:root[data-layout="phone"] .phone-fleet-self { padding: 12px; margin-bottom: 16px; display: flex; flex-direction: column; gap: 4px; }
+:root[data-layout="phone"] .phone-fleet-self { display: flex; flex-direction: column; gap: 4px; }
 :root[data-layout="phone"] .phone-fleet-self .ui-tag { margin-left: 6px; font-weight: 400; vertical-align: 1px; }
 :root[data-layout="phone"] .phone-fleet-id { color: var(--ui-muted-text); font-family: ui-monospace, monospace; font-size: 12px; overflow-wrap: anywhere; }
 :root[data-layout="phone"] .phone-fleet-hub { color: var(--ui-muted-text); font-size: 13px; overflow-wrap: anywhere; }
