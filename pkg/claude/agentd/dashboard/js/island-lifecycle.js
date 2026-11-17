@@ -56,7 +56,7 @@ function releaseHosts(name, hosts) {
   }
 }
 
-export function renderIslandLoadFailure(host, { label, error, className = 'island-error' }) {
+export function renderIslandLoadFailure(host, { label, error, className = 'island-error ui-error-box' }) {
   host.replaceChildren();
   const failure = host.ownerDocument.createElement('div');
   failure.className = className;
