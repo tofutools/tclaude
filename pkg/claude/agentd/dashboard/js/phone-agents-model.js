@@ -9,6 +9,7 @@ import { isAwayPlaceholder } from './agent-presence.js';
 import { signal } from '@preact/signals';
 import { normalizeSpawnName } from './agent-spawn-model.js';
 import { buildGroupTree } from './groups-view-model.js';
+import { incompleteChecksText } from './pr-checks-hover.js';
 
 export const ALL = 'all';
 export const UNGROUPED = '-ungrouped';
@@ -56,10 +57,13 @@ export function agentPill(member, variant = memberVariant(member)) {
 }
 
 // ciState folds a PR's check summary ({ passed, failed, pending, skipped })
-// into one word: failing wins over running, running over passing.
+// into one word: failing wins over running, running over passing. A summary
+// read from only part of the checks (too many to read) is 'incomplete': no
+// verdict either way.
 export function ciState(checks) {
   if (!checks) return '';
   if (checks.failed) return 'failing';
+  if (checks.incomplete) return 'incomplete';
   if (checks.pending) return 'running';
   if (checks.passed) return 'passing';
   return '';
@@ -69,10 +73,10 @@ export function ciState(checks) {
 // agent started on.
 export function agentPR(member) {
   if (member.branch_pr_number && member.branch_pr_url) {
-    return { number: member.branch_pr_number, url: member.branch_pr_url, state: member.branch_pr_state || '', title: member.branch_pr_title || '', ci: ciState(member.branch_checks) };
+    return { number: member.branch_pr_number, url: member.branch_pr_url, state: member.branch_pr_state || '', title: member.branch_pr_title || '', ci: ciState(member.branch_checks), ciNote: incompleteChecksText(member.branch_checks) };
   }
   if (member.startup_pr_number && member.startup_pr_url) {
-    return { number: member.startup_pr_number, url: member.startup_pr_url, state: member.startup_pr_state || '', title: member.startup_pr_title || '', ci: ciState(member.startup_checks) };
+    return { number: member.startup_pr_number, url: member.startup_pr_url, state: member.startup_pr_state || '', title: member.startup_pr_title || '', ci: ciState(member.startup_checks), ciNote: incompleteChecksText(member.startup_checks) };
   }
   return null;
 }

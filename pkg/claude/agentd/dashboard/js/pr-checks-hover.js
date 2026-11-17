@@ -224,11 +224,28 @@ export function checkDenominator(summary) {
   return Math.max(0, (summary?.total || 0) - (summary?.skipped || 0));
 }
 
+// checksIncomplete reports a summary read from only part of the PR's checks
+// (prchecks.go: more than the daemon reads). Its state is never red from the
+// unread part, so unless a read check failed the badge shows "too many
+// checks, see GitHub" instead of a verdict.
+export function checksIncomplete(summary) {
+  return Boolean(summary?.incomplete) && summary?.state !== 'failing';
+}
+
+// incompleteChecksText says how much of an incomplete summary was read.
+export function incompleteChecksText(summary) {
+  if (!summary?.incomplete) return '';
+  const read = summary.read || summary.total || 0;
+  const of = summary.reported ? ` of ${summary.reported}` : '';
+  return `Too many checks: read ${read}${of}, so this result is incomplete. See GitHub for the rest`;
+}
+
 export function checkStateGlyph(state) {
   switch (state) {
     case 'passing': return '✓';
     case 'failing': return '✕';
     case 'pending': return '◐';
+    case 'incomplete': return '?';
     default: return '·';
   }
 }
@@ -341,6 +358,9 @@ function badgeTitle(summary, prNumber, url = '') {
     return `CI pipeline for ${who} — ${summaryLine(summary)}. Opens the pipeline on GitLab.`;
   }
   const who = prNumber ? `#${prNumber}` : 'this pull request';
+  if (summary?.incomplete) {
+    return `CI checks for ${who} — ${summaryLine(summary)}. ${incompleteChecksText(summary)}. Opens the checks on GitHub.`;
+  }
   return `CI checks for ${who} — ${summaryLine(summary)}. Opens the build on GitHub.`;
 }
 
@@ -362,7 +382,10 @@ export function prChecksPageURL(prURL) {
 
 // badgeHref: the run that explains the badge's state when the server could
 // name one (red -> the failing build), else the PR's checks page.
+// An incomplete summary has no run that explains it, so it opens the checks
+// page, which lists every check.
 export function badgeHref(summary, prURL) {
+  if (summary?.incomplete) return prChecksPageURL(prURL);
   return safeCheckURL(summary?.run_url) || prChecksPageURL(prURL);
 }
 
@@ -567,7 +590,7 @@ function PRChecksPanel({ url, prNumber, summary, panelID, headingID, state, pane
           <span class="theme-copy-wizard">${ref ? `${ref} · omens of the rite` : 'Omens of the rite'}</span>
         </a>
       </div>
-      <div class="ci-panel-summary">${summaryLine(live)}</div>
+      <div class="ci-panel-summary">${summaryLine(live)}${live?.incomplete ? ` · ${incompleteChecksText(live)}.` : ''}</div>
       ${checks.length ? html`
         <ul class="ci-checks">
           ${orderedChecks.map((check, index) => html`
@@ -613,8 +636,9 @@ export function PRChecksBadge({ url, prNumber, summary, prState = '', countText 
   const denominator = checkDenominator(summary);
   const panelID = `ci-panel-${instanceID.replace(/[^a-zA-Z0-9_-]+/g, '-')}`;
   const headingID = `${panelID}-heading`;
-  const stateName = summary.state || 'unknown';
+  const stateName = checksIncomplete(summary) ? 'incomplete' : (summary.state || 'unknown');
   const final = (prState === 'merged' || prState === 'closed') && stateName !== 'failing';
+  const more = summary.incomplete ? '+' : '';
 
   return html`
     <span
@@ -635,7 +659,7 @@ export function PRChecksBadge({ url, prNumber, summary, prState = '', countText 
         onKeyDown=${onTriggerKeyDown}
       >
         <span class="ci-glyph" aria-hidden="true">${checkStateGlyph(stateName)}</span>
-        <span class="ci-count">${countText || `${summary.passed}/${denominator}`}</span>
+        <span class="ci-count">${countText || `${summary.passed}/${denominator}${more}`}</span>
       </a>
       ${open ? html`
         <${PRChecksPanel} url=${url} prNumber=${prNumber} summary=${summary}

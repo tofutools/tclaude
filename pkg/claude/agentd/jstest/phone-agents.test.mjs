@@ -60,6 +60,10 @@ test('the model: groups in order, loudest first, offline apart, PR and checks', 
   assert.equal(model.ciState({ passed: 2, pending: 1 }), 'running');
   assert.equal(model.ciState({ passed: 2 }), 'passing');
   assert.equal(model.ciState(null), '');
+  assert.equal(model.ciState({ passed: 400, incomplete: true, state: 'pending' }), 'incomplete',
+    'too many checks to read is no verdict');
+  assert.equal(model.ciState({ passed: 399, failed: 1, incomplete: true }), 'failing',
+    'a check that was read and failed is still red');
   // The pill says what the agent waits on.
   assert.deepEqual(asking.pill, { text: 'approval', tone: 'key', badge: '🔑' });
   assert.deepEqual(model.agentPill({ online: true, state: { status: 'awaiting_input' } }), { text: 'asking', tone: 'ask', badge: '❓' });

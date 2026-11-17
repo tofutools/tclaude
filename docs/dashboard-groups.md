@@ -281,6 +281,10 @@ Subscription quota is not on the row; see
   GitHub (the pipelines tab, for a GitLab merge request). On merged and closed PRs it only shows when the final run failed,
   unless **CI on finished PRs** is on in
   [Config › Appearance](dashboard-config.md#appearance).
+  A re-run check counts once, by its newest run, as in `gh pr checks`. A PR
+  with more than 400 checks gets a dashed `? 400/400+` pill: agentd read only
+  part of the checks, so it gives no verdict unless one it read failed, and a
+  click opens the PR's checks on GitHub.
 - **Review pill**: a person icon on open, non-draft PRs. Green with a count is
   approved, red with a count is changes requested, amber means a review is
   required, grey means none yet. Only human reviews count. Hover for each

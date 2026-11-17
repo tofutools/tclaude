@@ -28,6 +28,7 @@ import { relTime } from './helpers.js';
 import { processContext } from './process-context.js';
 import { GateCard, gateItems, useProcessRuns } from './phone-process-runs.js';
 import { NowShells } from './phone-now-shells.js';
+import { checksIncomplete, incompleteChecksText } from './pr-checks-hover.js';
 
 // spawnable says whether the node has a group an agent can be spawned into
 // (one that is not archived), for Now's ＋ Agent.
@@ -140,7 +141,9 @@ function OpenPRs({ snapshot }) {
           <a href=${pr.url} target="_blank" rel="noopener" class="phone-row">
             <span class="phone-row-text"><span class="phone-pr-title">${pr.title || pr.url}</span></span>
             ${pr.draft && html`<${StatePill} tone="idle">draft<//>`}
-            ${pr.checks?.state && html`<${StatePill} tone=${CHECK_TONES[pr.checks.state] || 'idle'}>${pr.checks.state}<//>`}
+            ${pr.checks?.state && (checksIncomplete(pr.checks)
+              ? html`<${StatePill} tone="idle" title=${incompleteChecksText(pr.checks)}>too many checks<//>`
+              : html`<${StatePill} tone=${CHECK_TONES[pr.checks.state] || 'idle'}>${pr.checks.state}<//>`)}
           </a>
         </li>`)}
       </ul>

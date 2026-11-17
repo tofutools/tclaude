@@ -375,6 +375,10 @@ func handleGHProxyPRChecks(w http.ResponseWriter, r *http.Request) {
 		g.respondOrFail(w, r, "pr.checks", failure, err)
 		return
 	}
+	if failure, err := g.readRemainingCheckContexts(r.Context(), pr); failure != nil || err != nil {
+		g.respondOrFail(w, r, "pr.checks", failure, err)
+		return
+	}
 	out := ghPRChecksOut{Number: pr.Number, URL: pr.URL, Rollup: json.RawMessage("null")}
 	if rollup := projectCheckRollup(*pr); rollup != nil {
 		encoded, err := ghMarshal(rollup)
@@ -385,6 +389,49 @@ func handleGHProxyPRChecks(w http.ResponseWriter, r *http.Request) {
 		out.Rollup = encoded
 	}
 	g.respondJSON(w, r, "pr.checks", out)
+}
+
+// readRemainingCheckContexts follows the head commit's contexts past the first
+// page, appending them to pr, up to prChecksMaxRuns in all. A pull request with
+// more than that answers with the first prChecksMaxRuns.
+func (g *ghProxySession) readRemainingCheckContexts(ctx context.Context, pr *ghGQLPullRequest) (*ProxyResult, error) {
+	if len(pr.Commits.Nodes) == 0 {
+		return nil, nil
+	}
+	commit := &pr.Commits.Nodes[0].Commit
+	rollup := commit.StatusCheckRollup
+	if rollup == nil || commit.OID == "" {
+		return nil, nil
+	}
+	page := rollup.Contexts.PageInfo
+	for page.HasNextPage && page.EndCursor != "" && len(rollup.Contexts.Nodes) < prChecksMaxRuns {
+		var data struct {
+			Repository *struct {
+				Object *struct {
+					StatusCheckRollup *ghGQLStatusCheckRollup `json:"statusCheckRollup"`
+				} `json:"object"`
+			} `json:"repository"`
+		}
+		failure, err := g.graphql(ctx, ghPRChecksPageQuery, map[string]any{
+			"owner": g.owner, "name": g.repo, "oid": commit.OID, "after": page.EndCursor,
+		}, &data)
+		if failure != nil || err != nil {
+			return failure, err
+		}
+		if data.Repository == nil || data.Repository.Object == nil || data.Repository.Object.StatusCheckRollup == nil {
+			break
+		}
+		next := data.Repository.Object.StatusCheckRollup.Contexts
+		if len(next.Nodes) == 0 {
+			break
+		}
+		rollup.Contexts.Nodes = append(rollup.Contexts.Nodes, next.Nodes...)
+		page = next.PageInfo
+	}
+	if len(rollup.Contexts.Nodes) > prChecksMaxRuns {
+		rollup.Contexts.Nodes = rollup.Contexts.Nodes[:prChecksMaxRuns]
+	}
+	return nil, nil
 }
 
 // handleGHProxyPREdit serves POST /v1/github/pr/edit.

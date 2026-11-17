@@ -52,10 +52,12 @@ const (
 	// branchLinkTTL: a hovering human is watching a run progress, and the
 	// dashboard polls this endpoint only while that hover lasts.
 	prChecksHotTTL = 6 * time.Second
-	// prChecksMaxRuns caps how many individual checks are cached and served
+	// prChecksMaxRuns caps how many check contexts are read, cached and served
 	// for one PR. Large monorepo PRs can carry hundreds; the panel scrolls,
-	// but neither the cache blob nor the response should be unbounded.
-	prChecksMaxRuns = 200
+	// but neither the cache blob nor the response should be unbounded. A PR
+	// with more than this is shown as incomplete (prChecksSummary.Incomplete)
+	// rather than judged from the part that was read.
+	prChecksMaxRuns = 400
 	// prChecksMaxNameLen truncates a single check's display strings. GitHub
 	// allows long job names (matrix legs especially); the panel wraps, but a
 	// pathological name should not dominate the payload.
@@ -112,6 +114,14 @@ type prChecksSummary struct {
 	// PR's own checks page.
 	RunURL    string `json:"run_url,omitempty"`
 	FetchedAt string `json:"fetched_at,omitempty"` // RFC3339
+	// Incomplete marks a summary read from only part of the PR's checks:
+	// GitHub reported Reported contexts and only Read of them were fetched
+	// (the rest are past prChecksMaxRuns). The counts then cover the read
+	// part only, State is never "failing" unless a read check failed, and
+	// the badge shows a distinct "too many checks, see GitHub" indicator.
+	Incomplete bool `json:"incomplete,omitempty"`
+	Read       int  `json:"read,omitempty"`
+	Reported   int  `json:"reported,omitempty"`
 }
 
 // prChecksInfo is the cached blob: the summary the snapshot serves plus
@@ -284,6 +294,86 @@ type statusCheckRollupNode struct {
 	TargetURL   string `json:"targetUrl"`
 	Description string `json:"description"`
 	CreatedAt   string `json:"createdAt"`
+	// CheckSuite carries the workflow name in a raw GraphQL read (the
+	// open-PR search); `gh pr view` flattens it into WorkflowName instead.
+	CheckSuite *struct {
+		WorkflowRun *struct {
+			Workflow struct {
+				Name string `json:"name"`
+			} `json:"workflow"`
+		} `json:"workflowRun"`
+	} `json:"checkSuite"`
+}
+
+func (n statusCheckRollupNode) workflowName() string {
+	if n.WorkflowName != "" {
+		return n.WorkflowName
+	}
+	if n.CheckSuite != nil && n.CheckSuite.WorkflowRun != nil {
+		return n.CheckSuite.WorkflowRun.Workflow.Name
+	}
+	return ""
+}
+
+func (n statusCheckRollupNode) isStatusContext() bool {
+	return n.TypeName == "StatusContext" || (n.Name == "" && n.Context != "")
+}
+
+// latestRollupNodes keeps only the newest run of each check, the way `gh pr
+// checks` does. A head commit's rollup lists every check run ever created
+// for it, so a job that was cancelled and re-run appears twice under one
+// name: counting both reports a cancellation that a newer run superseded (and
+// GitHub's own rollup state does exactly that, which is why it is not
+// trusted). A check is its name within its workflow; the newer run is the one
+// that started later, a queued run that has not started counting as newest.
+// The kept run takes the slot of the first one seen, so order stays stable.
+// Commit statuses need no pass: GitHub already reports one per context.
+func latestRollupNodes(nodes []statusCheckRollupNode) []statusCheckRollupNode {
+	out := make([]statusCheckRollupNode, 0, len(nodes))
+	slot := make(map[string]int, len(nodes))
+	for _, n := range nodes {
+		if n.isStatusContext() || n.Name == "" {
+			out = append(out, n)
+			continue
+		}
+		key := n.Name + "\x00" + n.workflowName()
+		if i, seen := slot[key]; seen {
+			if !rollupRunOlder(n, out[i]) {
+				out[i] = n
+			}
+			continue
+		}
+		slot[key] = len(out)
+		out = append(out, n)
+	}
+	return out
+}
+
+// rollupRunOlder reports whether run a started before run b. A run with no
+// start time that is not completed is queued, so it is the newest of all.
+// Equal starts are broken by completion time; a full tie keeps the later
+// entry, which is the newer one in GitHub's creation order.
+func rollupRunOlder(a, b statusCheckRollupNode) bool {
+	as, aq := rollupRunStart(a)
+	bs, bq := rollupRunStart(b)
+	if aq != bq {
+		return bq
+	}
+	if !as.Equal(bs) {
+		return as.Before(bs)
+	}
+	ac, _ := time.Parse(time.RFC3339, strings.TrimSpace(a.CompletedAt))
+	bc, _ := time.Parse(time.RFC3339, strings.TrimSpace(b.CompletedAt))
+	return ac.Before(bc)
+}
+
+func rollupRunStart(n statusCheckRollupNode) (time.Time, bool) {
+	started, err := time.Parse(time.RFC3339, strings.TrimSpace(n.StartedAt))
+	if err == nil && !started.IsZero() {
+		return started, false
+	}
+	queued := !strings.EqualFold(strings.TrimSpace(n.Status), "COMPLETED") && strings.TrimSpace(n.Conclusion) == ""
+	return time.Time{}, queued
 }
 
 // normalizeRollupNode maps one rollup node onto a prCheckRun. ok=false for
@@ -304,7 +394,7 @@ func normalizeRollupNode(n statusCheckRollupNode) (prCheckRun, bool) {
 		StartedAt:   normalizePRCheckTimestamp(n.StartedAt),
 		CompletedAt: normalizePRCheckTimestamp(n.CompletedAt),
 	}
-	if n.TypeName == "StatusContext" || (n.Name == "" && n.Context != "") {
+	if n.isStatusContext() {
 		run.Name = clipPRCheckText(n.Context)
 		run.URL = safePRCheckURL(n.TargetURL)
 		run.Source = clipPRCheckText(n.Description)
@@ -327,7 +417,7 @@ func normalizeRollupNode(n statusCheckRollupNode) (prCheckRun, bool) {
 	run.Name = clipPRCheckText(n.Name)
 	run.URL = safePRCheckURL(n.DetailsURL)
 	run.RunURL = githubRunSummaryURL(n.DetailsURL)
-	run.Source = clipPRCheckText(n.WorkflowName)
+	run.Source = clipPRCheckText(n.workflowName())
 	status := strings.ToUpper(strings.TrimSpace(n.Status))
 	conclusion := strings.ToUpper(strings.TrimSpace(n.Conclusion))
 	if status != "COMPLETED" && conclusion == "" {
@@ -411,25 +501,31 @@ func clipPRCheckText(s string) string {
 // parseStatusCheckRollup turns the raw statusCheckRollup array into a
 // cacheable blob. A PR with no checks parses to an empty, non-nil result:
 // "resolved, zero checks" is a real answer the badge renders as a dash,
-// distinct from "never resolved".
+// distinct from "never resolved". Superseded runs are dropped first (see
+// latestRollupNodes), so every surface counts what `gh pr checks` counts.
 func parseStatusCheckRollup(raw json.RawMessage, fetchedAt time.Time) prChecksInfo {
 	var nodes []statusCheckRollupNode
 	if len(raw) > 0 {
 		_ = json.Unmarshal(raw, &nodes)
 	}
+	reported := len(nodes)
+	if reported > prChecksMaxRuns {
+		nodes = nodes[:prChecksMaxRuns]
+	}
+	read := len(nodes)
+	nodes = latestRollupNodes(nodes)
 	checks := make([]prCheckRun, 0, len(nodes))
 	for _, n := range nodes {
-		run, ok := normalizeRollupNode(n)
-		if !ok {
-			continue
-		}
-		checks = append(checks, run)
-		if len(checks) >= prChecksMaxRuns {
-			break
+		if run, ok := normalizeRollupNode(n); ok {
+			checks = append(checks, run)
 		}
 	}
+	summary := summarizePRChecks(checks, fetchedAt)
+	// No aggregate state rides `gh pr view`'s flat array, so a list past the
+	// cap is simply incomplete.
+	reconcileTruncatedPRChecks(&summary, "", reported, read)
 	return prChecksInfo{
-		Summary:   summarizePRChecks(checks, fetchedAt),
+		Summary:   summary,
 		Checks:    checks,
 		FetchedAt: fetchedAt,
 	}
@@ -509,7 +605,7 @@ func prChecksIndexFor(rawURLs []string) map[string]*prChecksSummary {
 			continue
 		}
 		summary := info.Summary
-		if summary.RunURL == "" && len(info.Checks) > 0 {
+		if summary.RunURL == "" && len(info.Checks) > 0 && !summary.Incomplete {
 			// A blob written before the badge became clickable has no run
 			// URL. Re-derive it from the checks the blob already holds rather
 			// than making every such PR wait out a refresh with a badge that

@@ -44,20 +44,40 @@ const (
 // it, and the two-search shape is the one a default configuration actually
 // runs — a second copy would silently drift the moment someone edited the
 // rollup selection here.
+//
+// contexts(first:100) is GitHub's page limit. A PR with more check contexts
+// than that has its remaining pages read afterwards, one PR at a time and only
+// for the PRs that need it (authoredPRRollupPages), so the common case stays
+// one request.
 const authoredOpenPRSearchFragment = `  search(query:$q,type:ISSUE,first:$first){
     issueCount
     nodes{
       ... on PullRequest{
         number title url isDraft updatedAt reviewDecision
         repository{nameWithOwner isArchived}
-        commits(last:1){nodes{commit{statusCheckRollup{state contexts(first:100){totalCount nodes{
-          __typename
-          ... on CheckRun{name status conclusion detailsUrl startedAt completedAt}
-          ... on StatusContext{context state targetUrl description createdAt}
-        }}}}}}
+        commits(last:1){nodes{commit{oid statusCheckRollup{state contexts(first:100){totalCount pageInfo{hasNextPage endCursor} nodes{` +
+	rollupContextSelection + `}}}}}}
       }
     }
   }`
+
+// rollupContextSelection is one status-check context, shared by the search
+// and the follow-up page read so the two cannot drift. The workflow name is
+// part of a check's identity (see latestRollupNodes); it is a nested object,
+// not a connection, so it adds nothing to the query's cost.
+const rollupContextSelection = `
+          __typename
+          ... on CheckRun{name status conclusion detailsUrl startedAt completedAt checkSuite{workflowRun{workflow{name}}}}
+          ... on StatusContext{context state targetUrl description createdAt}
+        `
+
+// authoredPRRollupPageQuery reads one further page of a head commit's
+// contexts. It addresses the commit by oid, not the PR, so a push landing
+// between the search and this read cannot mix two commits' checks.
+const authoredPRRollupPageQuery = `query($owner:String!,$name:String!,$oid:GitObjectID!,$after:String!){
+  repository(owner:$owner,name:$name){object(oid:$oid){... on Commit{statusCheckRollup{contexts(first:100,after:$after){pageInfo{hasNextPage endCursor} nodes{` +
+	rollupContextSelection + `}}}}}}
+}`
 
 const authoredOpenPRGraphQLQuery = "query($q:String!,$first:Int!){\n" +
 	authoredOpenPRSearchFragment + "\n}"
@@ -449,11 +469,13 @@ func decodeAuthoredOpenPRGraphQL(data []byte, login string) (dashboardAuthoredOp
 					Commits struct {
 						Nodes []struct {
 							Commit struct {
+								OID               string `json:"oid"`
 								StatusCheckRollup *struct {
 									State    string `json:"state"`
 									Contexts struct {
-										TotalCount int               `json:"totalCount"`
-										Nodes      []json.RawMessage `json:"nodes"`
+										TotalCount int                `json:"totalCount"`
+										PageInfo   rollupContextsPage `json:"pageInfo"`
+										Nodes      []json.RawMessage  `json:"nodes"`
 									} `json:"contexts"`
 								} `json:"statusCheckRollup"`
 							} `json:"commit"`
@@ -511,11 +533,19 @@ func decodeAuthoredOpenPRGraphQL(data []byte, login string) (dashboardAuthoredOp
 			Archived: node.Repository.IsArchived,
 		}
 		if len(node.Commits.Nodes) > 0 && node.Commits.Nodes[0].Commit.StatusCheckRollup != nil {
-			raw, _ := json.Marshal(node.Commits.Nodes[0].Commit.StatusCheckRollup.Contexts.Nodes)
+			commit := node.Commits.Nodes[0].Commit
+			contexts := commit.StatusCheckRollup.Contexts
+			nodes := contexts.Nodes
+			if contexts.PageInfo.HasNextPage {
+				nodes = authoredPRRollupPages(ref.repo, commit.OID, contexts.PageInfo.EndCursor, nodes)
+			}
+			if len(nodes) > prChecksMaxRuns {
+				nodes = nodes[:prChecksMaxRuns]
+			}
+			raw, _ := json.Marshal(nodes)
 			info := parseStatusCheckRollup(raw, now)
-			reconcileTruncatedPRChecks(&info.Summary,
-				node.Commits.Nodes[0].Commit.StatusCheckRollup.State,
-				node.Commits.Nodes[0].Commit.StatusCheckRollup.Contexts.TotalCount)
+			reconcileTruncatedPRChecks(&info.Summary, commit.StatusCheckRollup.State,
+				contexts.TotalCount, len(nodes))
 			info.PRState = "open"
 			item.Checks = &info.Summary
 			checksByURL[item.URL] = info
@@ -590,37 +620,114 @@ func sortAuthoredOpenPRs(items []dashboardAuthoredOpenPR) {
 	})
 }
 
-func reconcileTruncatedPRChecks(summary *prChecksSummary, rollupState string, total int) {
-	if summary == nil || total <= summary.Total {
+// reconcileTruncatedPRChecks squares a summary built from the read contexts
+// with GitHub's totalCount when the read stopped short of it (more contexts
+// than prChecksMaxRuns, or a page read that failed).
+//
+// GitHub's aggregate rollup state is not trusted to paint the badge red: it
+// counts superseded runs, so a job cancelled and then re-run green keeps a
+// passing PR at FAILURE. Only a check that was read and failed makes the
+// summary failing. A SUCCESS aggregate is trusted, because every context
+// then passed, superseded ones included; anything else leaves the summary
+// marked Incomplete, which the badge shows as "too many checks, see GitHub".
+func reconcileTruncatedPRChecks(summary *prChecksSummary, rollupState string, total, read int) {
+	if summary == nil || total <= read {
 		return
 	}
-	summary.Total = total
-	known := summary.Passed + summary.Failed + summary.Pending + summary.Skipped
-	missing := max(0, total-known)
-	switch strings.ToUpper(strings.TrimSpace(rollupState)) {
-	case "FAILURE", "ERROR":
-		summary.State = "failing"
-		if summary.Failed == 0 {
-			summary.Failed = 1
-			missing--
+	unread := total - read
+	if strings.EqualFold(strings.TrimSpace(rollupState), "SUCCESS") {
+		summary.Total += unread
+		summary.Passed += unread
+		return
+	}
+	summary.Incomplete = true
+	summary.Read = read
+	summary.Reported = total
+	if summary.Failed == 0 {
+		// Unread checks may still be running or may have failed: neither green
+		// nor red can be claimed, and pending keeps CI triggers from firing.
+		summary.State = "pending"
+	}
+}
+
+// rollupContextsPage is a contexts connection's pageInfo.
+type rollupContextsPage struct {
+	HasNextPage bool   `json:"hasNextPage"`
+	EndCursor   string `json:"endCursor"`
+}
+
+// authoredPRRollupPageFetcher reads one further page of a commit's contexts.
+// It is the subprocess seam for the follow-up reads; tests swap it.
+var authoredPRRollupPageFetcher = liveAuthoredPRRollupPage
+
+// authoredPRRollupPages appends the pages after cursor to nodes until the
+// commit has none left or prChecksMaxRuns is reached. A failed page read
+// keeps what was read: the caller then sees fewer contexts than totalCount
+// and marks the summary incomplete.
+func authoredPRRollupPages(repo, oid, cursor string, nodes []json.RawMessage) []json.RawMessage {
+	if oid == "" || cursor == "" {
+		return nodes
+	}
+	for len(nodes) < prChecksMaxRuns {
+		page, info, err := authoredPRRollupPageFetcher(repo, oid, cursor)
+		if err != nil {
+			slog.Warn("open-prs: failed to read further check contexts",
+				"error", err, "repo", repo, "module", "agentd")
+			return nodes
 		}
-	case "PENDING", "EXPECTED":
-		summary.State = "pending"
-		summary.Pending += missing
-		missing = 0
-	case "SUCCESS":
-		summary.State = "passing"
-		summary.Passed += missing
-		missing = 0
-	default:
-		// An unknown aggregate cannot honestly turn a partial page green.
-		summary.State = "pending"
-		summary.Pending += missing
-		missing = 0
+		nodes = append(nodes, page...)
+		if !info.HasNextPage || info.EndCursor == "" || len(page) == 0 {
+			return nodes
+		}
+		cursor = info.EndCursor
 	}
-	if missing > 0 {
-		summary.Pending += missing
+	return nodes
+}
+
+func liveAuthoredPRRollupPage(repo, oid, cursor string) ([]json.RawMessage, rollupContextsPage, error) {
+	owner, name, ok := strings.Cut(repo, "/")
+	if !ok {
+		return nil, rollupContextsPage{}, fmt.Errorf("bad repository %q", repo)
 	}
+	out, err := runInDirWithTimeout("", authoredOpenPRSearchTimeout, "gh", "api", "--hostname", "github.com", "graphql",
+		"-f", "query="+authoredPRRollupPageQuery,
+		"-f", "owner="+owner, "-f", "name="+name, "-f", "oid="+oid, "-f", "after="+cursor)
+	if err != nil {
+		return nil, rollupContextsPage{}, err
+	}
+	return decodeAuthoredPRRollupPage([]byte(out))
+}
+
+func decodeAuthoredPRRollupPage(data []byte) ([]json.RawMessage, rollupContextsPage, error) {
+	var payload struct {
+		Data struct {
+			Repository *struct {
+				Object *struct {
+					StatusCheckRollup *struct {
+						Contexts struct {
+							PageInfo rollupContextsPage `json:"pageInfo"`
+							Nodes    []json.RawMessage  `json:"nodes"`
+						} `json:"contexts"`
+					} `json:"statusCheckRollup"`
+				} `json:"object"`
+			} `json:"repository"`
+		} `json:"data"`
+		Errors []struct {
+			Message string `json:"message"`
+		} `json:"errors"`
+	}
+	if err := json.Unmarshal(data, &payload); err != nil {
+		return nil, rollupContextsPage{}, fmt.Errorf("decode check contexts page: %w", err)
+	}
+	if len(payload.Errors) > 0 {
+		return nil, rollupContextsPage{}, fmt.Errorf("check contexts page: %s", payload.Errors[0].Message)
+	}
+	repo := payload.Data.Repository
+	if repo == nil || repo.Object == nil || repo.Object.StatusCheckRollup == nil {
+		return nil, rollupContextsPage{}, fmt.Errorf("check contexts page: commit has no rollup")
+	}
+	contexts := repo.Object.StatusCheckRollup.Contexts
+	return contexts.Nodes, contexts.PageInfo, nil
 }
 
 func loadAuthoredOpenPRsSnapshot(cfg *config.Config) dashboardAuthoredOpenPRs {

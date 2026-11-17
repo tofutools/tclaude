@@ -339,21 +339,32 @@ func TestAuthoredOpenPRCacheRequiresCurrentProcessIdentity(t *testing.T) {
 		"a different active identity must never load the previous identity's cache")
 }
 
-func TestReconcileTruncatedPRChecksUsesAggregateState(t *testing.T) {
-	failing := prChecksSummary{Total: 100, Passed: 100, State: "passing"}
-	reconcileTruncatedPRChecks(&failing, "FAILURE", 125)
-	assert.Equal(t, "failing", failing.State)
-	assert.Equal(t, 125, failing.Total)
-	assert.Equal(t, 1, failing.Failed)
-	assert.Equal(t, 24, failing.Pending, "unseen non-failing contexts remain incomplete")
+func TestReconcileTruncatedPRChecksNeverPaintsRedFromUnreadChecks(t *testing.T) {
+	// GitHub's FAILURE counts superseded runs, so it says nothing the read
+	// checks did not: an unread remainder leaves the summary incomplete.
+	notRed := prChecksSummary{Total: 100, Passed: 100, State: "passing"}
+	reconcileTruncatedPRChecks(&notRed, "FAILURE", 525, 400)
+	assert.Equal(t, "pending", notRed.State)
+	assert.Zero(t, notRed.Failed)
+	assert.True(t, notRed.Incomplete)
+	assert.Equal(t, 400, notRed.Read)
+	assert.Equal(t, 525, notRed.Reported)
 
-	pending := prChecksSummary{Total: 100, Passed: 90, Pending: 10, State: "pending"}
-	reconcileTruncatedPRChecks(&pending, "PENDING", 120)
-	assert.Equal(t, 30, pending.Pending)
+	readFailure := prChecksSummary{Total: 100, Passed: 99, Failed: 1, State: "failing"}
+	reconcileTruncatedPRChecks(&readFailure, "FAILURE", 525, 400)
+	assert.Equal(t, "failing", readFailure.State, "a check that was read and failed is red")
+	assert.True(t, readFailure.Incomplete)
 
 	passing := prChecksSummary{Total: 100, Passed: 100, State: "passing"}
-	reconcileTruncatedPRChecks(&passing, "SUCCESS", 120)
+	reconcileTruncatedPRChecks(&passing, "SUCCESS", 420, 400)
+	assert.Equal(t, "passing", passing.State, "SUCCESS covers every context, so it is trusted")
 	assert.Equal(t, 120, passing.Passed)
+	assert.False(t, passing.Incomplete)
+
+	complete := prChecksSummary{Total: 106, Passed: 46, Skipped: 60, State: "passing"}
+	reconcileTruncatedPRChecks(&complete, "FAILURE", 107, 107)
+	assert.Equal(t, prChecksSummary{Total: 106, Passed: 46, Skipped: 60, State: "passing"}, complete,
+		"a fully read rollup ignores the aggregate")
 }
 
 func TestAuthoredOpenPRRetryDelayCaps(t *testing.T) {
