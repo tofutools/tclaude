@@ -62,7 +62,7 @@
 :root[data-layout="phone"] .phone-task-run .tk-run { width: 100%; }
 :root[data-layout="phone"] .phone-task-activity { list-style: none; margin: 0; padding: 0; }
 :root[data-layout="phone"] .phone-task-activity li {
-  display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; padding: 8px 0; border-bottom: var(--phone-row-sep);
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; padding: 8px 0; border-bottom: var(--phone-row-sep-soft);
 }
 :root[data-layout="phone"] .phone-task-who { color: var(--ui-text-strong); font-size: 13px; font-weight: 600; }
 :root[data-layout="phone"] .phone-task-when { color: var(--ui-muted-text); font-size: 12px; }
@@ -88,7 +88,7 @@
    from its terminal (or its menu), with what it did; an actor's name in the
    Activity is the same jump. */
 :root[data-layout="phone"] .phone-task-people { list-style: none; margin: 0; padding: 0; }
-:root[data-layout="phone"] .phone-task-person { display: flex; align-items: center; gap: var(--phone-row-gap); border-bottom: var(--phone-row-sep); }
+:root[data-layout="phone"] .phone-task-person { display: flex; align-items: center; gap: var(--phone-row-gap); border-bottom: var(--phone-row-sep-soft); }
 :root[data-layout="phone"] .phone-task-person-open { flex: 1; min-width: 0; }
 :root[data-layout="phone"] .phone-task-person-roles { display: block; color: var(--ui-muted-text); font-size: 12px; overflow-wrap: anywhere; }
 :root[data-layout="phone"] .phone-task-who-link { padding: 0; border: 0; background: none; color: var(--phone-accent); font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }

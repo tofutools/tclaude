@@ -57,8 +57,11 @@
   --phone-purple: #a371f7;
   --phone-r: 12px;
   /* A list row's parts: the line between rows, the gap before its ⋯
-     (RowMore), and its chevron's size. One of each across the phone. */
+     (RowMore), and its chevron's size. One of each across the phone, but
+     the line has a quieter twin for rows on a panel (a card, a sheet's
+     menu), where the page's line would stand out in every skin. */
   --phone-row-sep: 1px solid var(--ui-line);
+  --phone-row-sep-soft: 1px solid var(--phone-tile);
   --phone-row-gap: 4px;
   --phone-row-chev: 20px;
   --phone-btn-r: 10px;
@@ -315,7 +318,7 @@
 :root[data-layout="phone"] .phone-sheet-subhead { margin: 14px 4px 6px; font-size: 12px; font-weight: 700; }
 :root[data-layout="phone"] .phone-menu-item {
   display: flex; align-items: center; gap: 14px; width: 100%; min-height: 58px; padding: 0 6px;
-  background: none; border: 0; border-bottom: var(--phone-row-sep);
+  background: none; border: 0; border-bottom: var(--phone-row-sep-soft);
   color: var(--ui-text-strong); font: inherit; font-size: 16px; text-align: left; cursor: pointer;
 }
 :root[data-layout="phone"] .phone-menu-item:disabled { opacity: .5; cursor: default; }
