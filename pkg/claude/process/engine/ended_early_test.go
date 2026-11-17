@@ -110,3 +110,50 @@ func TestEndedEarlyMustNameAReachedFailedEnd(t *testing.T) {
 		}
 	}
 }
+
+// One failed end shared by every track: the first track to give up ends the
+// run, without waiting for the others to decide.
+func TestSharedFailedEndEndsTheRunOnTheFirstTrackToGiveUp(t *testing.T) {
+	tmpl := giveUpTrackTemplate("failed")
+	tmpl.Nodes["decide-c"] = humanDecision("Fine?", model.Next{"ok": "join", "give-up": "gave-up"})
+	definition := mustPrepare(t, tmpl, nil)
+	checkpoint, err := Initialize("run-shared-end", definition)
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkpoint, command := advanceAndPlan(t, checkpoint, definition)
+	if checkpoint, err = Apply(checkpoint, definition, decidedAt("decide-a", "give-up", 0)); err != nil {
+		t.Fatal(err)
+	}
+	checkpoint, _ = advanceAndPlan(t, checkpoint, definition)
+	if checkpoint.EndedEarly != "gave-up" || len(checkpoint.AwaitingDecisions) != 0 {
+		t.Fatalf("endedEarly = %q, awaiting = %#v", checkpoint.EndedEarly, checkpoint.AwaitingDecisions)
+	}
+	if checkpoint, err = Apply(checkpoint, definition, observed(command, ProgramSucceeded, 0)); err != nil {
+		t.Fatal(err)
+	}
+	if checkpoint = roundTrip(t, checkpoint, definition); checkpoint.Status != RunFailed {
+		t.Fatalf("status = %q", checkpoint.Status)
+	}
+}
+
+// A canceled end decides the run's result even when a sibling's program fails
+// while the run drains.
+func TestCanceledEndKeepsItsResultWhileTheRunDrains(t *testing.T) {
+	definition := mustPrepare(t, giveUpTrackTemplate("canceled"), nil)
+	checkpoint, err := Initialize("run-canceled-drain", definition)
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkpoint, command := advanceAndPlan(t, checkpoint, definition)
+	if checkpoint, err = Apply(checkpoint, definition, decidedAt("decide-a", "give-up", 0)); err != nil {
+		t.Fatal(err)
+	}
+	checkpoint, _ = advanceAndPlan(t, checkpoint, definition)
+	if checkpoint, err = Apply(checkpoint, definition, observed(command, ProgramFailed, 1)); err != nil {
+		t.Fatal(err)
+	}
+	if checkpoint = roundTrip(t, checkpoint, definition); checkpoint.Status != RunCanceled {
+		t.Fatalf("status = %q", checkpoint.Status)
+	}
+}

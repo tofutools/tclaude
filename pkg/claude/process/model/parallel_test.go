@@ -442,3 +442,35 @@ func TestFailedEndInsideATrackValidates(t *testing.T) {
 		t.Fatal("a succeeding end inside a track was accepted")
 	}
 }
+
+// Inside a subprocess body an end completes the subprocess node rather than
+// the run, so a fork there may not stop at one.
+func TestFailedEndInsideABodyForkIsRefused(t *testing.T) {
+	decide := Node{Type: NodeTypeDecision, Performer: &Performer{Kind: PerformerHuman, Ask: "Go on?"},
+		Next: Next{"ok": "join", "give-up": "bad"}}
+	tmpl := &Template{APIVersion: APIVersion, Kind: Kind, ID: "body-give-up", Start: "box", Nodes: map[string]Node{
+		"box": {Type: NodeTypeSubprocess, Next: Next{"next": "end", "failed": "end"}, Subprocess: &Subprocess{
+			Start:   "fork",
+			Outputs: map[string]string{"ok": "next", "bad": "failed"},
+			Nodes: map[string]Node{
+				"fork":     {Type: NodeTypeParallel, Next: Next{"a": "decide-a", "b": "decide-b"}},
+				"decide-a": decide,
+				"decide-b": decide,
+				"join":     {Type: NodeTypeTask, Join: JoinAll, Performer: &Performer{Kind: PerformerProgram, Run: "true"}, Next: Next{DefaultOutcome: "ok"}},
+				"ok":       {Type: NodeTypeEnd},
+				"bad":      {Type: NodeTypeEnd, Result: "failed"},
+			},
+		}},
+		"end": {Type: NodeTypeEnd},
+	}}
+	refused := false
+	for _, diagnostic := range Validate(tmpl, NormalizeEdges(tmpl)) {
+		if diagnostic.Severity == SeverityError {
+			t.Log(diagnostic.Code, diagnostic.Path, diagnostic.Message)
+			refused = refused || diagnostic.Code == "cross_scope_join_v1" || diagnostic.Code == "cross_scope_join"
+		}
+	}
+	if !refused {
+		t.Fatal("a failed end inside a body fork was accepted")
+	}
+}

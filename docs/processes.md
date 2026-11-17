@@ -835,15 +835,18 @@ name and needs the same permission.
   it ends the whole run without waiting for the other tracks. Nothing more is
   planned, decisions still open are dropped, agent work in other tracks is
   withdrawn, and the run finishes with that end's result once programs still
-  running have reported. The join never runs. An end that succeeds still has
-  to come after the join.
+  running have reported. The join never runs. Several tracks may share one
+  such end, and the first to reach it ends the run. An end that succeeds
+  still has to come after the join. Inside a subprocess body this does not
+  apply, since a body's ends complete its subprocess node instead.
 - **`join: any` races its branches.** The first arrival wins and alone
   activates the reducer and everything downstream. Losing branches are not
   cancelled — they run to their own settled outcome and are recorded as
   evidence that cannot replace the winner or run the downstream route twice,
   and the run reports no terminal status until every dispatched branch has
   settled. A losing branch that *fails* still fails the run, exactly as under
-  `join: all`.
+  `join: all`. If the winner's route reaches a failed or canceled end, the run
+  ends there and the losing branches' agent work is withdrawn (see above).
 - **Program performers** (`performer.kind: program`): executed as argv without
   a shell, with a bounded environment and bounded output, inside the run
   scope's bounds (see [Where program steps run](#run-scope)).

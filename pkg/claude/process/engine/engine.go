@@ -925,7 +925,9 @@ func completeAndSettle(next *Checkpoint, definition *Definition, index int, arri
 		// complete candidate set: the first arrival activates the reducer and
 		// its downstream route, and the branches still in flight settle later
 		// as late arrivals against a node that is no longer pending.
-		if target.joinAny && counts.arrived > 0 {
+		// A failed or canceled end ends the run on its first arrival too: one
+		// track giving up is enough, whatever the others still do.
+		if (target.joinAny || endsEarly(target)) && counts.arrived > 0 {
 			next.Nodes[target.id] = NodeReady
 			if target.awaitsHuman() {
 				addObligation(next, target.id)
@@ -1150,20 +1152,16 @@ func doomStatus(checkpoint Checkpoint, definition *Definition) RunStatus {
 	if checkpoint.Canceled {
 		return RunCanceled
 	}
+	// A run an end ended early finishes with that end's result. Nothing had
+	// failed before it (a doomed run advances no end), so a failure seen while
+	// it drains is a consequence, not the reason.
+	if end, ok := definitionNodeByID(definition, checkpoint.EndedEarly); ok {
+		return end.terminal
+	}
 	for _, status := range checkpoint.Nodes {
 		if status == NodeCanceled {
 			return RunCanceled
 		}
-	}
-	// A run an end ended early finishes with that end's result, unless a
-	// node failed or was canceled before it.
-	if end, ok := definitionNodeByID(definition, checkpoint.EndedEarly); ok {
-		for _, status := range checkpoint.Nodes {
-			if status == NodeFailed {
-				return RunFailed
-			}
-		}
-		return end.terminal
 	}
 	return RunFailed
 }
