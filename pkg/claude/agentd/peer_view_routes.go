@@ -90,6 +90,8 @@ var peerViewLocalRoutes = []string{
 	"/api/agent-windows",
 	"/api/background-terminals/kill",
 	"/api/shells/kill",
+	// A terminal socket's diagnostics log is of this node's own sockets.
+	"/api/terminal-diag",
 	"/api/agents/",
 	"/api/audit",
 	"/api/claude-settings/default-model",

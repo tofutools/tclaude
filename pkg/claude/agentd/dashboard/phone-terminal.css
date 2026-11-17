@@ -189,3 +189,6 @@
 :root[data-layout="phone"][data-phone-terminal-nav] .phone-nav { z-index: calc(var(--z-panel) + 1); }
 :root[data-layout="phone"][data-phone-terminal-nav] .phone-term { padding-bottom: var(--footer-h); box-sizing: border-box; }
 :root[data-layout="phone"][data-phone-terminal-nav] .phone-term-input { padding-bottom: 10px; }
+
+/* The Diagnostics overlay (dashboard.css .term-diag): below the pinch chip. */
+:root[data-layout="phone"] .term-diag { top: 40px; }
