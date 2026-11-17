@@ -15,6 +15,7 @@
 
 import { h } from 'preact';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
+import { shellConfirmDiscard } from './shell-state.js';
 import { useDismissablePopover } from './hover-popover.js';
 import htm from 'htm';
 import { ProcessMiniGraph } from './process-kit.js';
@@ -567,12 +568,14 @@ export function MiniGraphEditor({
   const profiles = useSpawnProfiles(api);
   const fallbackInfo = { fallback: draft.template.fallback || null, defaultSpawnProfile: String(groupInfo?.defaultSpawnProfile || ''), profiles };
   // apply lands one operation's result as one undoable edit.
-  const apply = (result, focus = undefined) => {
+  // declare: false for the Params dialog's own edit, which may rename or
+  // drop a param on purpose (validation then names the steps still using it).
+  const apply = (result, focus = undefined, { declare = true } = {}) => {
     touched.current = true;
     setError('');
     setNotice(null);
     // A {{param}} a step now uses is declared with it (declareParams).
-    model.current.applyDraft(declareParams(result.view));
+    model.current.applyDraft(declare ? declareParams(result.view) : result.view);
     setRev(model.current.rev);
     if (focus !== undefined) setSelected(focus);
   };
@@ -597,11 +600,27 @@ export function MiniGraphEditor({
     }
   };
   // editParams opens the full editor's Params dialog over this draft: what
-  // it applies lands as one undoable edit (setParams).
+  // it applies lands as one undoable edit (setParams), on the draft as it is
+  // then, since a newer version may have been merged in meanwhile.
+  const paramsDialog = useRef(null);
+  useEffect(() => () => paramsDialog.current?.(), []);
   const editParams = async () => {
+    if (paramsDialog.current) return;
+    paramsDialog.current = () => {};
     const { openProcessParamsDialog } = await import('./process-params-dialog.js');
-    openProcessParamsDialog({
-      model: { template: draft.template, setParams: (params) => { apply(setParams(draft, params)); return true; } },
+    if (!mounted.current) { paramsDialog.current = null; return; }
+    paramsDialog.current = openProcessParamsDialog({
+      model: {
+        template: viewOf(model.current).template,
+        setParams: (params) => {
+          const now = viewOf(model.current);
+          if (JSON.stringify(params || {}) === JSON.stringify(now.template.params || {})) return false;
+          apply(setParams(now, params), undefined, { declare: false });
+          return true;
+        },
+      },
+      onClosed: () => { paramsDialog.current = null; },
+      confirmDiscard: shellConfirmDiscard,
     });
   };
   const undo = () => { if (model.current.undo()) { setRev(model.current.rev); setSelected(''); setNotice(null); } };

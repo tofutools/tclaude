@@ -130,11 +130,15 @@ export function withReviewerDefault(view, id, index) {
 // addReviewer is a gate's + another decider: a new agent decider kept off
 // the reviewed step's agent, and so is the first decider when this makes the
 // plain decision a gate (it was its own performer, picked before there was a
-// gate to review for).
+// gate to review for) and names nobody yet or anyone: a lead or a role was
+// picked on purpose, and kept off a step that lead or role did it could
+// never vote.
 export function addReviewer(view, id) {
   const index = gateDeciders(view.template.nodes[id]).length;
   const added = addDecider(view, id, { mode: 'nobody' });
-  const first = index === 1 ? withReviewerDefault(added.view, id, 0).view : added.view;
+  const was = view.template.nodes[id]?.performer;
+  const open = index === 1 && was?.kind === 'agent' && !was.lead && !was.role && !was.profile;
+  const first = open ? withReviewerDefault(added.view, id, 0).view : added.view;
   return withReviewerDefault(first, id, index);
 }
 

@@ -11,6 +11,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync } from 'node:fs';
 import * as m from '../dashboard/js/process-mini-edit.js';
+import { addReviewer } from '../dashboard/js/process-gate-deciders.js';
 import { advanced, simple } from './process-reference-recipes.mjs';
 
 const FIXTURE = new URL('./process-reference-recipes.json', import.meta.url);
@@ -131,4 +132,16 @@ test('⫴ on a branch of a fork adds one more branch to that fork: four reviewer
   const longer = m.insertAfter(fork.view, 'cold-review', 'agent');
   const nested = m.runAlongside(longer.view, 'cold-review', 'agent');
   assert.notEqual(nested.fork, fork.fork);
+});
+
+test('+ another decider keeps a first decider who names nobody off the reviewed step, never a lead or a role', () => {
+  // Merge is the lead's decision after the lead's "Ready the PR": kept off
+  // it, the lead could never vote.
+  const lead = addReviewer(built.simple.view, 'merge').view.template.nodes.merge;
+  assert.equal(lead.deciders[0].lead, true);
+  assert.equal(lead.deciders[0].differentFrom, undefined);
+  assert.deepEqual(lead.deciders[1].differentFrom, ['ready-the-pr']);
+  const open = m.insertAfter(built.simple.view, 'build-the-feature', 'decide');
+  const gate = addReviewer(open.view, open.id).view.template.nodes[open.id];
+  assert.deepEqual(gate.deciders.map((d) => d.differentFrom), [['build-the-feature'], ['build-the-feature']]);
 });

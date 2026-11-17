@@ -21,6 +21,17 @@ import { followName } from '../dashboard/js/process-step-ids.js';
 
 const OPS = { after: m.insertAfter, before: m.insertBefore, branch: m.branch, alongside: m.runAlongside };
 
+// offered is what the card's kind picker offers for an operation
+// (groups-mini-editor.js: KIND_CHOICES, INSERT_CHOICES, branchChoices), so a
+// recipe never uses a kind the operator could not pick there.
+const KINDS = ['agent', 'you', 'command'];
+const INSERT = [...KINDS, 'decide'];
+function offered(op, view, at) {
+  if (op === 'alongside') return KINDS;
+  if (op === 'branch') return m.branchKinds(view, at) || INSERT;
+  return INSERT;
+}
+
 // InlineEditor replays the card: each method is one operator edit.
 export class InlineEditor {
   constructor(name) {
@@ -28,16 +39,17 @@ export class InlineEditor {
     this.ops = [];
   }
 
-  land(label, result) {
+  land(label, result, { declare = true } = {}) {
     this.ops.push(label);
     // The card's apply: a {{param}} a step now uses is declared with it.
-    this.view = m.declareParams(result.view);
+    this.view = declare ? m.declareParams(result.view) : result.view;
     return result;
   }
 
   // add is a handle (+ after, ⑂ branch, ⫴ alongside, insert before) and the
   // kind picked: one edit.
   add(op, at, kind) {
+    if (!offered(op, this.view, at).includes(kind)) throw new Error(`the card does not offer ${kind} for ${op} at ${at}`);
     return this.land(`${op} ${kind} at ${at}`, OPS[op](this.view, at, kind));
   }
 
@@ -97,7 +109,7 @@ export class InlineEditor {
 
   // params is the Params dialog: one Apply.
   params(params) {
-    return this.land('params', m.setParams(this.view, params));
+    return this.land('params', m.setParams(this.view, params), { declare: false });
   }
 }
 
@@ -113,7 +125,7 @@ function discussAndDecide(e) {
     name: 'Discuss the idea', who: LEAD,
     text: 'Discuss {{idea}} with the operator until the high-level idea is clear. Write it down.',
   });
-  const decided = e.step('after', discuss, 'decide-you', { name: 'Idea decided', text: 'Is the high-level idea decided?' });
+  const decided = e.step('branch', discuss, 'decide-you', { name: 'Idea decided', text: 'Is the high-level idea decided?' });
   e.rename(decided, 'yes', 'decided');
   e.rename(decided, 'no', 'not-yet');
   e.aim(decided, 'not-yet', discuss);
