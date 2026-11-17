@@ -558,17 +558,17 @@ export function MiniGraphEditor({
   const resync = useRef(false);
   // helper is the agent asked from this editor's ✨ With an agent menu.
   const [helper, setHelper] = useState(null);
-  // fresh is the steps the last agent save added or changed, highlighted for
+  // lit is the steps the last agent save added or changed, highlighted for
   // a moment; editing is the agent saving into this draft lately, shown with
   // a Stop; stopped is the agent the operator stopped, until it saves again.
-  const [fresh, setFresh] = useState(null);
+  const [lit, setLit] = useState(null);
   const [editing, setEditing] = useState(null);
   const [stopped, setStopped] = useState('');
   useEffect(() => {
-    if (!fresh) return undefined;
-    const timer = setTimeout(() => setFresh(null), FRESH_MS);
+    if (!lit) return undefined;
+    const timer = setTimeout(() => setLit(null), FRESH_MS);
     return () => clearTimeout(timer);
-  }, [fresh]);
+  }, [lit]);
   useEffect(() => {
     if (!editing) return undefined;
     const timer = setTimeout(() => setEditing(null), EDITING_IDLE_MS);
@@ -762,7 +762,7 @@ export function MiniGraphEditor({
     setNotice(result.changes.length ? { who, what: changeList(result.changes), kept: choice === 'mine' } : null);
     if (presented?.agentId) {
       const ids = freshNodeIds(result.changes);
-      if (ids.size) setFresh({ ids });
+      if (ids.size) setLit({ ids });
       setEditing({ agentId: presented.agentId, who: presented.label });
       setStopped('');
     }
@@ -1088,7 +1088,7 @@ export function MiniGraphEditor({
       onClick=${(event) => {
         if (event.target === canvas.current || event.target?.classList?.contains?.('pk-mini-graph')) { setSelected(''); setMenu(null); setPicker(null); }
       }}>
-      <${ProcessMiniGraph} run=${projection} wizard=${wizard} selectedId=${selected} problemIds=${problemIds} freshIds=${fresh?.ids || null}
+      <${ProcessMiniGraph} run=${projection} wizard=${wizard} selectedId=${selected} problemIds=${problemIds} freshIds=${lit?.ids || null}
         onNodeClick=${(node) => { if (node.id === FIRST_STEP) { addFirst(); return; } setMenu(null); setPicker(null); setSelected(node.id === selected ? '' : node.id); }}
         onNodeContextMenu=${(node, event) => (node.id === FIRST_STEP ? event.preventDefault() : openMenu(node, event))}
         onNodeHover=${(id) => setHover(id === FIRST_STEP ? '' : id)} overlay=${overlay} />
