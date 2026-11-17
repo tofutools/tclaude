@@ -23,6 +23,7 @@ import { newCommentKey } from './groups-taskboard-comments.js';
 import { relTime } from './helpers.js';
 import { actorName, cardTags, taskStateLabel } from './phone-board-model.js';
 import { shellToast } from './shell-state.js';
+import { ChangeItem, QuestionItem, TaskIdLine, TaskMetaLine, historyEntries } from './phone-task-history.js';
 
 const html = htm.bind(h);
 
@@ -60,15 +61,6 @@ function useTaskRead(api, id, version) {
     return () => { live = false; };
   }, [api, id, version]);
   return read;
-}
-
-// activityText is what one activity entry says when it is not a comment:
-// what happened, then its detail ("assigned → checkout-ui").
-function activityText(entry) {
-  if (entry.comment) return '';
-  const what = String(entry.action || entry.kind || '').replace(/_/g, ' ');
-  const detail = entry.detail_text || entry.detail || '';
-  return [what, detail].filter(Boolean).join(' ');
 }
 
 // QuestionBlock is an open question with its options, and an answer in words.
@@ -135,10 +127,14 @@ export function TaskPage({ id, group, source, state, api, onClose, onMove }) {
   // A brief the read has no body for is empty, not still loading.
   const body = read.task ? (read.task.body || '') : (typeof task.body === 'string' ? task.body : null);
   const refs = task.refs || (task.ref ? [task.ref] : []);
-  const entries = read.activity?.events || [];
+  const all = read.activity?.entries || read.activity?.events || [];
+  const entries = historyEntries(all);
+  const nameOf = (actor) => actorName(actor, names);
 
   return html`<div class="phone-task-page">
     <h2 class="phone-task-page-title">${task.title}</h2>
+    <${TaskIdLine} id=${task.id} />
+    <${TaskMetaLine} task=${task} nameOf=${nameOf} />
     <div class="phone-board-tags">
       <${StatePill} tone=${state_.tone}>${state_.text}<//>
       ${cardTags(task, names).map((tag) => html`<span key=${tag.key} class=${`phone-board-tag${tag.tone ? ` phone-board-tag-${tag.tone}` : ''}`}>${tag.text}</span>`)}
@@ -170,13 +166,17 @@ export function TaskPage({ id, group, source, state, api, onClose, onMove }) {
       ${read.activity === null
         ? html`<p class="ui-empty">${read.failed ? 'Could not read the activity.' : 'Loading…'}</p>`
         : html`<ol class="phone-task-activity">
-          ${entries.map((ev) => html`<li key=${ev.id} class=${ev.comment ? 'phone-task-comment' : ''}>
-            <span class="phone-task-who">${ev.actor_name || actorName(ev.actor, names)}</span>
-            <span class="phone-task-when">${relTime(ev.at)}</span>
-            ${ev.comment
-              ? html`<${MarkdownDocument} source=${ev.comment.body || ''} className="markdown-document phone-task-md" />`
-              : html`<span class="phone-task-what">${activityText(ev)}</span>`}
-          </li>`)}
+          ${entries.map((ev, i) => (ev.comment?.question
+            ? html`<${QuestionItem} key=${`q-${ev.comment.id}`} entry=${ev} nameOf=${nameOf} />`
+            : ev.comment
+              ? html`<li key=${`c-${ev.comment.id}`} class="phone-task-comment">
+                <span class="phone-task-who">${ev.actor_name || actorName(ev.actor, names)}</span>
+                <span class="phone-task-when">${relTime(ev.at)}</span>
+                ${ev.comment.deleted_at
+                  ? html`<span class="phone-task-what ui-hint">deleted</span>`
+                  : html`<${MarkdownDocument} source=${ev.comment.body || ''} className="markdown-document phone-task-md" />`}
+              </li>`
+              : html`<${ChangeItem} key=${ev.id || `e-${i}`} entry=${ev} nameOf=${nameOf} />`))}
         </ol>`}
     <//>
 

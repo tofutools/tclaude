@@ -18,6 +18,9 @@ function board() {
     tasks: [
       { id: 'tk_ready', title: 'Checkout page redesign', status: 'open', stage: 'next', held: true,
         assignee: { agent_id: AGENT, name: 'checkout-ui' },
+        created_by: `agent:${LEAD}`, created_by_name: 'lead', created_at: '2026-11-14T00:00:00Z',
+        assigned_by: `agent:${LEAD}`, assigned_at: '2026-11-14T00:00:30Z',
+        last_edited_by: 'human:operator', last_edited_by_name: 'operator', last_edited_at: '2026-11-14T00:01:00Z',
         refs: [{ kind: 'github', label: '#1482', url: 'https://github.com/acme/webshop/pull/1482', pr: { number: 1482, checks: { state: 'passing', total: 4, passed: 4 } } }] },
       { id: 'tk_coupon', title: 'Coupon lookup p95 regression', status: 'open', stage: 'next', kind: 'bug' },
       { id: 'tk_carrier', title: 'Which carrier?', status: 'open', stage: 'next',
@@ -84,7 +87,7 @@ test('Move offers the columns a task can go to, and its place among its section'
   assert.deepEqual(m.positionMoves([ready, coupon], coupon), { top: { before: 'tk_ready', stage: 'next' }, up: { before: 'tk_ready', stage: 'next' }, down: null });
 });
 
-async function setupView(t) {
+async function setupView(t, { activity = null, task = null } = {}) {
   const harness = await createPreactHarness(t);
   const [{ createDashboardState }, boardMod, sheetMod, pageMod] = await Promise.all([
     harness.importDashboardModule('js/snapshot-store.js'),
@@ -110,11 +113,11 @@ async function setupView(t) {
   const api = {
     answer: record('answer'), comment: record('comment'), stage: record('stage'), start: record('start'),
     hold: record('hold'), status: record('status'), move: record('move'), create: record('create'),
-    task: async (id) => ({ ...board().tasks.find((task) => task.id === id), body: 'The **address** step is done.' }),
-    activity: async () => ({ events: [
+    task: task || (async (id) => ({ ...board().tasks.find((one) => one.id === id), body: 'The **address** step is done.' })),
+    activity: activity || (async () => ({ events: [
       { id: 1, at: '2026-11-14T00:00:00Z', actor: 'human:operator', actor_name: 'operator', kind: 'created', detail: 'in next' },
       { id: 2, at: '2026-11-14T00:01:00Z', actor: `agent:${AGENT}`, actor_name: 'checkout-ui', kind: 'comment', comment: { body: 'PR is up.' } },
-    ] }),
+    ] })),
   };
   t.after(() => { boardMod.boardTask.value = null; sheetMod.closePhoneSheet(); pageMod.phonePage.value = null; pageMod.phoneBar.value = null; });
   const { html } = harness;
@@ -281,4 +284,51 @@ test("Agents' Board › opens a group's board, even one with nothing live yet", 
   // A group with no board at all shows the first board there is.
   await harness.act(() => boardMod.openBoardGroup('nowhere'));
   assert.equal(pageMod.phoneBar.value.menu.sub, 'webshop');
+});
+
+// tk_2d942cb6 items 1, 2, 8 and 9: the id with ⧉, the meta line, changes in
+// the desktop's words, and a question with its state, options and answer.
+test("a task's page: its id with copy, who made and holds it, changes in words, and a question's answer under it", async (t) => {
+  const copied = [];
+  const activity = async () => ({ entries: [
+    { id: 1, at: '2026-11-14T00:00:00Z', actor: `agent:${LEAD}`, actor_name: 'lead', kind: 'created', detail: 'in next' },
+    { id: 2, at: '2026-11-14T00:01:00Z', actor: `agent:${LEAD}`, actor_name: 'lead', kind: 'edited',
+      changes: [{ field: 'status', before: 'open', after: 'blocked' }, { field: 'body', before: 'a', after: 'b' }] },
+    { id: 3, at: '2026-11-14T00:02:00Z', actor: `agent:${LEAD}`, kind: 'comment', comment: { id: 10, at: '2026-11-14T00:02:00Z', author: `agent:${LEAD}`, author_name: 'lead',
+      body: 'EU only for now.',
+      question: { n: 1, title: 'Which carrier?', state: 'answered', recommend: 'dhl',
+        options: [{ key: 'dhl', label: 'DHL' }, { key: 'ups', label: 'UPS' }],
+        answer: { picked: ['dhl'], text: '', answered_by: 'human:operator', answered_at: '2026-11-14T00:03:00Z' } } } },
+    { id: 4, at: '2026-11-14T00:03:00Z', actor: 'human:operator', actor_name: 'operator', kind: 'comment', comment: { id: 11, author: 'human:operator', author_name: 'operator', body: 'DHL', answers: 1 } },
+    { id: 5, at: '2026-11-14T00:03:30Z', actor: 'human:operator', actor_name: 'operator', kind: 'comment_edited', comment: { id: 11, author: 'human:operator', author_name: 'operator', body: 'DHL' } },
+    { id: 6, at: '2026-11-14T00:04:00Z', actor: 'peer:node-b', actor_name: 'node-b', kind: 'comment', comment: { id: 12, author: 'peer:node-b', author_name: 'node-b', body: '', deleted_at: '2026-11-14T00:05:00Z' } },
+  ] });
+  const { harness, c, settle, boardMod } = await setupView(t, { activity });
+  const history = await harness.importDashboardModule('js/phone-task-history.js');
+  await harness.act(() => boardMod.openBoardTask('tk_ready', 'webshop'));
+  await settle();
+  await settle();
+  const idLine = c.querySelector('.phone-task-id');
+  assert.equal(idLine.querySelector('code').textContent, 'tk_ready');
+  assert.equal(idLine.querySelector('button').getAttribute('aria-label'), 'Copy tk_ready');
+  const line = await harness.mount(harness.html`<${history.TaskIdLine} id="tk_x" copy=${(id) => copied.push(id)} />`);
+  await harness.act(() => line.container.querySelector('button').click());
+  assert.deepEqual(copied, ['tk_x'], '⧉ copies the id');
+  const toasts = [];
+  await history.copyId('tk_ready', async () => false, (text, bad) => toasts.push([text, !!bad]));
+  assert.deepEqual(toasts, [['Could not copy tk_ready', true]]);
+  const meta = c.querySelector('[data-task-meta]').textContent;
+  assert.match(meta, /^created by lead /);
+  assert.match(meta, /assigned to checkout-ui by lead /);
+  assert.match(meta, /last edited by you /, 'the board\'s last edit, the operator as "you"');
+  const items = [...c.querySelectorAll('.phone-task-activity > li')];
+  assert.equal(items.length, 4, 'created, the edit, the question and a deleted comment; the answer sits under its question, the edit note is no entry');
+  assert.equal(items[3].querySelector('.phone-task-who').textContent, 'node-b', 'a peer by the name the server sent');
+  assert.equal(items[3].querySelector('.phone-task-what').textContent, 'deleted');
+  assert.equal(items[1].querySelector('.phone-task-what').textContent, 'status: open → blocked · edited the brief', 'changeText words');
+  const q = c.querySelector('[data-question-n="1"]');
+  assert.match(q.querySelector('.phone-task-q-kind').textContent, /Q1 · answered/);
+  assert.equal(q.querySelector('.phone-task-q-title').textContent, 'Which carrier?');
+  assert.deepEqual([...q.querySelectorAll('.phone-task-q-opts li')].map((li) => li.textContent.trim()), ['● DHL recommended', '○ UPS']);
+  assert.ok(q.querySelector('[data-answer-of="1"]').textContent.includes('you'), 'who answered');
 });
