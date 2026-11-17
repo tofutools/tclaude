@@ -50,6 +50,21 @@ test('the primitives render the mock\'s shapes', async (t) => {
     [['phone-btn', 'phone-btn-no', 'phone-btn-grow'], ['phone-btn', 'phone-btn-ok', 'phone-btn-grow'], ['phone-btn']]);
 });
 
+test('Section heads a block with its count; SheetHead is a sheet\'s sub-head', async (t) => {
+  const { harness, mod } = await load(t, 'js/phone-ui.js');
+  const { html } = harness;
+  const { container } = await harness.mount(html`<div>
+    <${mod.Section} title="Trusted peers" count=${2}><p>a peer</p><//>
+    <${mod.SheetHead} class="extra">Move to<//>
+  </div>`);
+  const section = harness.getByRole(container, 'group', { name: 'Trusted peers' });
+  assert.equal(section.querySelector('h2.phone-section-head').textContent, 'Trusted peers · 2');
+  assert.equal(section.querySelector('p').textContent, 'a peer');
+  const head = container.querySelector('h3');
+  assert.equal(head.className, 'ui-eyebrow phone-sheet-head extra');
+  assert.equal(head.textContent, 'Move to');
+});
+
 test('pillTone maps agent states onto the mock\'s pill colours', async (t) => {
   const { mod } = await load(t, 'js/phone-ui.js');
   assert.deepEqual(['asking', 'working', 'idle', 'offline', 'error', 'approval', 'key', 'mystery'].map(mod.pillTone),

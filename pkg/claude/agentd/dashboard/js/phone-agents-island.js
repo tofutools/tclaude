@@ -37,7 +37,7 @@ import { DiscardAsk, useDraftGuard } from './phone-draft-guard.js';
 import { AgentMenu } from './phone-agent-menu.js';
 import { useHold } from './phone-hold.js';
 import { usePhoneBar, usePhonePage } from './phone-page.js';
-import { Avatar, ButtonRow, Card, IconButton, Section, StatePill } from './phone-ui.js';
+import { Avatar, ButtonRow, Card, IconButton, Section, SheetHead, StatePill } from './phone-ui.js';
 import { ContextMeter } from './context-meter.js';
 import { dashPrefs } from './prefs.js';
 import { openBoardGroup } from './phone-board.js';
@@ -244,16 +244,16 @@ export function ViewSheet({ prefs, onChange }) {
     <div class="phone-agents-view-head"><h2 class="phone-agents-sheet-title">View</h2>
       <button data-ui-exempt type="button" class="phone-link phone-agents-view-reset" disabled=${atDefaults(settings)}
         onClick=${() => set({ ...VIEW_DEFAULTS })}>Reset</button></div>
-    <p class="phone-section-head ui-eyebrow">Layout</p>
+    <${SheetHead}>Layout<//>
     <div class="phone-agents-seg" role="group" aria-label="Layout">${LAYOUTS.map((key) => html`<button data-ui-exempt key=${key} type="button"
       class=${`phone-agents-seg-btn${settings.layout === key ? ' on' : ''}`} aria-pressed=${settings.layout === key ? 'true' : 'false'}
       onClick=${() => set({ layout: key })}>${LAYOUT_LABELS[key]}</button>`)}</div>
     <p class="ui-hint phone-agents-view-hint">Tree nests subgroups and puts workers under their lead. List is one level.</p>
-    <p class="phone-section-head ui-eyebrow">Show</p>
+    <${SheetHead}>Show<//>
     ${show('offline', 'Offline agents', 'and groups with nobody online')}
     ${show('empty', 'Empty groups')}
     ${show('archived', 'Archived groups')}
-    <p class="phone-section-head ui-eyebrow">Order groups by</p>
+    <${SheetHead}>Order groups by<//>
     <div role="radiogroup" aria-label="Order groups by">${ORDERS.map((key) => html`<${Check} key=${key} type="radio" name="agents-view-order"
       labelClass="phone-agents-view-order" value=${key} checked=${settings.order === key} onChange=${() => set({ order: key })}>
       ${ORDER_LABELS[key][0]} <small>${ORDER_LABELS[key][1]}</small><//>`)}</div>

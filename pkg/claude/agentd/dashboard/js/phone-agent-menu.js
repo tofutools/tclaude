@@ -30,7 +30,7 @@ import { diagnosticsEnabled, setDiagnosticsEnabled } from './terminal-diagnostic
 import { contextFigure } from './context-meter.js';
 import htm from 'htm';
 import { agentGroups, findRow } from './phone-agents-model.js';
-import { StatePill } from './phone-ui.js';
+import { SheetHead, StatePill } from './phone-ui.js';
 import { harnessCanCompact, harnessCanRemoteControl } from './helpers.js';
 import { claudeAppOffer, pageCanToggleRemote } from './claude-app.js';
 import { agentShellEntries, openAgentShell } from './phone-open-shell.js';
@@ -161,9 +161,9 @@ export function AgentMenu({ state, order, actions, agentKey, groupKey = '', here
         disabled=${!!tile.disabled} aria-disabled=${tile.why ? 'true' : null} title=${tile.why || null} onClick=${run(tile.key)}>
         <span class="phone-agent-tile-icon" aria-hidden="true">${tile.icon}</span><span>${tile.label}</span></button>`)}
     </div>
-    ${model.session && html`<h3 class="ui-eyebrow phone-agent-menu-head">Session</h3>
+    ${model.session && html`<${SheetHead}>Session<//>
       <ul class="phone-menu phone-agent-menu">${model.session.map((entry) => item(entry))}</ul>`}
-    <h3 class="ui-eyebrow phone-agent-menu-head">Agent</h3>
+    <${SheetHead}>Agent<//>
     <ul class="phone-menu phone-agent-menu">${model.agent.map((entry) => item(entry))}</ul>
     <ul class="phone-menu phone-agent-menu phone-agent-menu-last">${item(model.retire, true)}</ul>
     ${model.note && html`<p class="phone-sheet-meta">${model.note}</p>`}

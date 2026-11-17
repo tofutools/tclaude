@@ -14,6 +14,7 @@ import htm from 'htm';
 import { nodeHref, remoteNodeID } from './fleet-model.js';
 import { fleetNodes, withFused } from './fleet-scope.js';
 import { openPhoneSheet } from './phone-sheet.js';
+import { SheetHead } from './phone-ui.js';
 
 const html = htm.bind(h);
 
@@ -57,7 +58,7 @@ function NodePicker({ fleet, current, open, close }) {
     if (row.current) return;
     open(row.local ? '' : row.id);
   };
-  return html`<h2 class="ui-eyebrow phone-menu-head">Nodes</h2>
+  return html`<${SheetHead}>Nodes<//>
     <ul class="phone-menu">
       ${rows.map((row) => html`<li key=${row.id}>
         <button data-ui-exempt type="button" class="phone-menu-item phone-node-row" style=${`--nc:${row.color}`}

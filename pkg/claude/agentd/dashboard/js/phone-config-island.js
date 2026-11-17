@@ -18,6 +18,7 @@ import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { configPanel, configSection } from './config-panel.js';
 import { usePhonePage } from './phone-page.js';
+import { Section } from './phone-ui.js';
 import { Button, Switch } from './ui-components.js';
 
 const html = htm.bind(h);
@@ -72,8 +73,7 @@ function SectionList({ panels, actions, onOpen, dirtyPanels }) {
   const editable = panels.filter((panel) => PHONE_EDITABLE.includes(panel.id));
   const others = panels.filter((panel) => !PHONE_EDITABLE.includes(panel.id));
   return html`<div class="phone-config">
-    <div class="phone-section" role="group" aria-label="This phone">
-      <h2 class="phone-section-head ui-eyebrow">This phone</h2>
+    <${Section} title="This phone">
       <ul class="phone-list">
         <li class="phone-config-device">
           <span class="phone-config-text">
@@ -90,16 +90,14 @@ function SectionList({ panels, actions, onOpen, dirtyPanels }) {
           <${Switch} id="phone-config-wizard" checked=${wizard} onChange=${() => actions.toggleWizard()} />
         </li>
       </ul>
-    </div>
-    <div class="phone-section" role="group" aria-label="Settings">
-      <h2 class="phone-section-head ui-eyebrow">Settings</h2>
+    <//>
+    <${Section} title="Settings">
       <ul class="phone-list">${editable.map((panel) => html`<${SectionRow} key=${panel.id} panel=${panel} onOpen=${onOpen} dirty=${dirty(panel.id)} />`)}</ul>
-    </div>
-    <div class="phone-section" role="group" aria-label="On the desktop">
-      <h2 class="phone-section-head ui-eyebrow">On the desktop</h2>
+    <//>
+    <${Section} title="On the desktop">
       <p class="phone-config-note">These set up the machine tclaude runs on. Read them here; change them on the desktop site.</p>
       <ul class="phone-list">${others.map((panel) => html`<${SectionRow} key=${panel.id} panel=${panel} onOpen=${onOpen} readOnly dirty=${dirty(panel.id)} />`)}</ul>
-    </div>
+    <//>
   </div>`;
 }
 

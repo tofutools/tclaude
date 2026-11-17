@@ -61,6 +61,6 @@
 :root[data-layout="phone"] .phone-update-err { border-color: var(--ui-danger, #f85149); color: var(--ui-text-strong); }
 :root[data-layout="phone"] .phone-update-lines { max-height: 30vh; overflow: auto; color: var(--ui-danger-text, #ff7b72); }
 :root[data-layout="phone"] .phone-update-log-head { display: flex; align-items: center; gap: 8px; }
-:root[data-layout="phone"] .phone-update-log-head h3 { flex: 1; }
+:root[data-layout="phone"] .phone-update-log-head h3 { flex: 1; margin: 0 4px; }
 :root[data-layout="phone"] .phone-update-copy { flex: none; min-height: 32px; padding: 4px 12px; }
 :root[data-layout="phone"] .phone-update-log { max-height: 45vh; overflow: auto; overscroll-behavior: contain; }

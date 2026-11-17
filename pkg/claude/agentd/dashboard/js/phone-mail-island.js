@@ -51,7 +51,7 @@ import { trustLock } from './lock-reason.js';
 import { usePhoneBar, usePhonePage } from './phone-page.js';
 import { NavToggle, navShown } from './phone-nav-toggle.js';
 import { Button } from './ui-components.js';
-import { Avatar, avatarHue } from './phone-ui.js';
+import { Avatar, SheetHead, avatarHue } from './phone-ui.js';
 import { findAgentRoute } from './agent-route.js';
 
 const html = htm.bind(h);
@@ -336,7 +336,7 @@ export function MailboxSheet({ controller, close }) {
     <h2 class="phone-sheet-title">Mailboxes</h2>
     <ul class="phone-menu">${chips.map((chip) => item(chip.id, chip.label, chip.count,
       html`<span class="phone-menu-icon" aria-hidden="true">${chip.id === HUMAN ? '🔔' : chip.id === ACCESS ? '🔑' : chip.id.startsWith('group:') ? '#' : '✉'}</span>`))}</ul>
-    <h3 class="phone-section-head ui-eyebrow phone-mail-boxes-head">Agents</h3>
+    <${SheetHead}>Agents<//>
     <input name="filter-agent-mailboxes" class="ui-input phone-mail-search" type="search" placeholder="Filter agents" aria-label="Filter agent mailboxes"
       value=${current.boxQuery} onInput=${(event) => controller.setBoxQuery(event.currentTarget.value)} />
     <ul class="phone-menu">${view.agents.map((mailbox) => item(mailbox.id, controller.mailboxLabel(mailbox), mailbox.unread,
@@ -615,7 +615,7 @@ function PhoneReader({ current, controller, item, active, back }) {
     <${PhoneAttachments} message=${item} />
     ${human && (pendingDecision(item, HUMAN) && (item.from_conv || item.from_agent)
       ? html`<div class="phone-mail-decision" role="group" aria-label="Decide">
-          <h2 class="ui-eyebrow phone-mail-decision-head">Decide</h2>
+          <${SheetHead}>Decide<//>
           <${DecisionAnswer} decision=${item} notify=${shellToast}
             onDone=${(sent) => { shellToast(sent ? `Sent “${sent}” to ${sender}` : `Dismissed; ${sender} is told`, false); controller.reloadMail(); }} />
         </div>`

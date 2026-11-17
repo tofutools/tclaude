@@ -32,6 +32,7 @@
 import { h } from 'preact';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
+import { SheetHead } from './phone-ui.js';
 import { Button } from './ui-components.js';
 import { useSheetGuard } from './phone-sheet.js';
 import { featureState } from './peer-view-limits.js';
@@ -96,7 +97,7 @@ export function JobOutput({ job, failed, copy = writeClipboard, toast = shellToa
       ${job.error && html`<pre class="phone-update-err">${job.error}</pre>`}
       ${lines.length > 0 && html`<pre class="phone-update-lines">${lines.join('\n')}</pre>`}
     </div>`}
-    ${text && html`<div class="phone-update-log-head"><h3 class="ui-eyebrow">Output · ${text.split('\n').length} lines, the end shown</h3>
+    ${text && html`<div class="phone-update-log-head"><${SheetHead}>Output · ${text.split('\n').length} lines, the end shown<//>
       <${Button} class="phone-btn phone-update-copy" onClick=${async () => toast(await copy(text) ? 'Copied the output' : 'Could not copy the output', false)}>Copy<//></div>
       <pre class="phone-update-log" ref=${pre} tabindex="0" aria-label="The update's output">${text}</pre>`}
   </div>`;

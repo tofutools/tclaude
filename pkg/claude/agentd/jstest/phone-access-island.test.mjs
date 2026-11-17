@@ -121,7 +121,7 @@ async function openGrant(t, options) {
   await harness.act(() => phoneBar.value.actions.find((act) => act.key === 'grant').onClick());
   const submit = () => root.querySelector('.phone-grant-submit');
   const box = (slug) => root.querySelector(`.phone-grant-row[data-slug="${slug}"] input`);
-  const pressSeg = (label, text) => tap([...root.querySelector(`.phone-grant-seg[aria-label="${label}"]`).querySelectorAll('button')]
+  const pressSeg = (label, text) => tap([...root.querySelector(`[role="group"][aria-label="${label}"] .phone-grant-seg`).querySelectorAll('button')]
     .find((b) => b.textContent.trim() === text));
   const type = (element, value) => harness.act(() => { element.value = value; element.dispatchEvent(new harness.window.Event('input', { bubbles: true })); });
   const check = (slug) => harness.act(() => { box(slug).click(); });
@@ -196,13 +196,13 @@ test('Grant, step 2: the policy caps the time, refuses a slug, and a failed gran
   const { root, tap, settle, submit, check, pressSeg, type, box, grants } = await openGrant(t, { slugs: 4, policy, grantFails: 'agent is gone', deniedDefault: 'slug.003' });
   await tap(root.querySelector('[data-agent="agt_lead"]'));
   await settle();
-  assert.deepEqual([...root.querySelector('.phone-grant-seg[aria-label="Time limit"]').querySelectorAll('button')].map((b) => b.textContent.trim()),
+  assert.deepEqual([...root.querySelector('[role="group"][aria-label="Time limit"] .phone-grant-seg').querySelectorAll('button')].map((b) => b.textContent.trim()),
     ['5 min', '15 min', '…'], 'no preset over the maximum');
   assert.equal(box('slug.000').disabled, true);
   assert.match(root.querySelector('[data-slug="slug.000"]').textContent, /Refused/);
   await check('slug.003');
   assert.equal(submit().textContent.trim(), 'Grant 1 · 10 min', 'the policy\'s default');
-  assert.equal(root.querySelector('.phone-grant-seg[aria-label="Time limit"] [aria-pressed="true"]').textContent, '…',
+  assert.equal(root.querySelector('[role="group"][aria-label="Time limit"] .phone-grant-seg [aria-pressed="true"]').textContent, '…',
     'a default no preset shows is the custom value');
   assert.equal(root.querySelector('[aria-label="Custom time limit"].phone-grant-custom').value, '10m');
   await pressSeg('Max uses', '1');

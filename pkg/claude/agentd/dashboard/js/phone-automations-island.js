@@ -35,7 +35,7 @@ import { usePhonePage } from './phone-page.js';
 import { RunPage, RunsList, gateItems, runRequest } from './phone-process-runs.js';
 import { DesktopOnlyNote, desktopSite } from './phone-desktop-only.js';
 import { Button, Input, Switch } from './ui-components.js';
-import { ChipRow } from './phone-ui.js';
+import { ChipRow, Section } from './phone-ui.js';
 
 const html = htm.bind(h);
 
@@ -265,13 +265,14 @@ function CronPage({ job, actions }) {
       ['By', job.operator_authored ? 'the operator' : (job.owner_label || shortAgentId(job.owner_agent, job.owner_conv))],
       ['On', html`<${OnOff} on=${!!job.enabled} label=${job.name} onToggle=${() => actions.toggleCron(job)} />`],
     ]} />
-    <h2 class="ui-eyebrow phone-section-title">Recent runs</h2>
-    <${History} load=${() => actions.loadCronLogs(job.id)} empty="No runs recorded."
-      render=${(run) => {
-        const outcome = cronOutcome({ enabled: true, last_run_status: run.status || 'unknown', last_run_at: run.fired_at });
-        return html`<li key=${run.id}><span class=${`phone-auto-meta ${outcome.tone}`}><${Stamp} iso=${run.fired_at} /> · ${run.status || 'unknown'}</span>
-          ${run.error_msg && html`<span class="phone-auto-log">${run.error_msg}</span>`}</li>`;
-      }} />
+    <${Section} title="Recent runs">
+      <${History} load=${() => actions.loadCronLogs(job.id)} empty="No runs recorded."
+        render=${(run) => {
+          const outcome = cronOutcome({ enabled: true, last_run_status: run.status || 'unknown', last_run_at: run.fired_at });
+          return html`<li key=${run.id}><span class=${`phone-auto-meta ${outcome.tone}`}><${Stamp} iso=${run.fired_at} /> · ${run.status || 'unknown'}</span>
+            ${run.error_msg && html`<span class="phone-auto-log">${run.error_msg}</span>`}</li>`;
+        }} />
+    <//>
     <${DesktopOnlyNote} what="Editing, duplicating and deleting are" />
   </div>`;
 }
@@ -306,10 +307,11 @@ function TriggerPage({ rule, actions, onChanged }) {
         return ok;
       }} />`],
     ]} />
-    <h2 class="ui-eyebrow phone-section-title">Recent firings</h2>
-    <${History} load=${() => actions.loadTriggerFirings(rule.id)} empty="Never fired."
-      render=${(firing) => html`<li key=${firing.id}><span class=${`phone-auto-meta ${firing.outcome === 'ok' ? 'ok' : 'warn'}`}><${Stamp} iso=${firing.started_at} /> · ${firing.outcome || 'fired'}</span>
-        ${firing.detail && html`<span class="phone-auto-log">${firing.detail}</span>`}</li>`} />
+    <${Section} title="Recent firings">
+      <${History} load=${() => actions.loadTriggerFirings(rule.id)} empty="Never fired."
+        render=${(firing) => html`<li key=${firing.id}><span class=${`phone-auto-meta ${firing.outcome === 'ok' ? 'ok' : 'warn'}`}><${Stamp} iso=${firing.started_at} /> · ${firing.outcome || 'fired'}</span>
+          ${firing.detail && html`<span class="phone-auto-log">${firing.detail}</span>`}</li>`} />
+    <//>
     <${DesktopOnlyNote} what="Editing and deleting are" />
   </div>`;
 }
