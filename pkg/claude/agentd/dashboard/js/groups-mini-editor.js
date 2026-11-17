@@ -352,12 +352,14 @@ function FailureRow({ id, failure, staged = false, onChange }) {
           <option value="fail">fail the run</option>
           <option value="hold">hold it for me</option>
           <option value="retry">retry, then hold it for me</option>
+          ${!staged && html`<option value="go-on">go on as failed, for a rule to see</option>`}
         <//>
         ${failure.mode === 'retry' && html`<label class="gm-retries" title="How many times it is tried again before it waits for you">
           <${TypedField} name="gm-retries" type="number" min="1" max=${FAILURE_RETRIES_MAX} aria-label="Retries" data-mini-retries value=${failure.retries}
             onChange=${(event) => onChange({ mode: 'retry', retries: event.currentTarget.value })} />×</label>`}
       </div>
-      ${failure.mode !== 'fail' && html`<span class="gq-dim" data-mini-failure-note>Held, it waits for you to retry, skip or cancel it.${staged ? ' Its check or review sending it back counts as a failure too.' : ''}</span>`}
+      ${failure.mode === 'go-on' && html`<span class="gq-dim" data-mini-failure-note>The run goes on; a rule after it can read that it failed.</span>`}
+      ${(failure.mode === 'hold' || failure.mode === 'retry') && html`<span class="gq-dim" data-mini-failure-note>Held, it waits for you to retry, skip or cancel it.${staged ? ' Its check or review sending it back counts as a failure too.' : ''}</span>`}
     </div></div>`;
 }
 

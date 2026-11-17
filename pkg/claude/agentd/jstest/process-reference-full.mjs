@@ -8,8 +8,11 @@
 // (process-reference-recipes.mjs): the same steps, Who, text, answers,
 // loops and params, ids aside (the full editor names nodes by type).
 //
-// TODO(tk_c324d5a4): "Amend the criteria" and "Merge" become rule decisions
-// once the engine has them, as in the inline recipes.
+// The full editor cannot make a rule decision or a step that may fail (its
+// performer kinds are human, agent and program, and it has no "may fail"
+// field): "Merge" and "Amending allowed" are drawn with their answers, and
+// the CI step as a command, and the comparison leaves those two out
+// (INLINE_ONLY).
 
 import { ProcessEditModel, blankEditView } from '../dashboard/js/process-edit-model.js';
 import { addGateDecider, defaultPerformer, setPerformerField, setPerformerKind } from '../dashboard/js/process-node-form.js';
@@ -135,8 +138,11 @@ function giveUp(e, from) {
 function shipIt(e, from, outcome) {
   const ready = agentStep(e, from, 'Ready the PR', 'Mark the PR ready for review and notify the operator with a short summary.', LEAD);
   e.label(from, 'pass', outcome);
-  const merge = agentDecision(e, ready, 'Merge',
-    'Auto-merge is {{params.auto_merge}}. Answer merge only if it is true and CI on the PR passed; otherwise leave it for the operator.', LEAD);
+  const ci = e.node(ready, 'task', 'CI');
+  e.kind(ci, 'program');
+  e.field(ci, 'run', 'gh');
+  e.field(ci, 'args', ['pr', 'checks', '--watch']);
+  const merge = e.node(ci, 'decision', 'Merge');
   const mergePR = agentStep(e, merge, 'Merge the PR', 'Merge the PR now that CI passed.', LEAD);
   e.label(merge, 'pass', 'merge');
   const end = e.node(mergePR, 'end');
@@ -199,9 +205,14 @@ export function fullAdvanced() {
   e.connect(minors, 'proceed', conform);
   const { ready } = shipIt(e, conform, 'meets');
   // Off the criteria: amend them if the operator allowed it, else rework.
-  const amend = agentDecision(e, conform, 'Amend the criteria',
-    'The operator allowed amending: {{params.allow_amend}}. Only if that is true and the gap is minor, answer amend; otherwise rework.', LEAD);
+  const allowed = e.node(conform, 'decision', 'Amending allowed');
   e.label(conform, 'pass', 'misses');
+  const amend = agentDecision(e, allowed, 'Amend the criteria',
+    'The operator allows minor changes to the criteria and design. Is the gap minor? Then answer amend; otherwise rework.', LEAD);
+  e.label(allowed, 'pass', 'allowed');
+  e.connect(allowed, 'rework', implement);
+  e.connect(allowed, 'give-up', gaveUp);
+  e.loop(allowed, 'rework', { maxIterations: 3, onExhausted: 'give-up' });
   const amended = agentStep(e, amend, 'Amend criteria and design', 'Make the minor changes to the criteria and the design, and note them for the operator.', LEAD);
   e.label(amend, 'pass', 'amend');
   e.connect(amended, 'pass', ready);
@@ -219,7 +230,11 @@ export function fullAdvanced() {
 // canonical is a view with node ids replaced by their names' slugs (an
 // unnamed end is "end"), so two editors' processes compare as the same
 // process whatever ids each minted. Task pass labels compare as one.
-export function canonical(view) {
+// INLINE_ONLY is what only the inline editor can make: the rules deciding
+// these decisions, and a step's "may fail".
+export const INLINE_ONLY = Object.freeze(['merge', 'amending-allowed']);
+
+export function canonical(view, { inlineOnly = false } = {}) {
   const { nodes } = view.template;
   const ids = {};
   for (const [id, node] of Object.entries(nodes)) ids[id] = node.name ? stepSlug(node.name) : node.type;
@@ -234,7 +249,9 @@ export function canonical(view) {
   };
   const out = {};
   for (const [id, node] of Object.entries(nodes)) {
-    const copy = { type: node.type, name: node.name, performer: performer(node.performer), deciders: node.deciders?.map(performer), agree: node.agree, loops: node.loops };
+    const copy = { type: node.type, name: node.name, performer: performer(node.performer), deciders: node.deciders?.map(performer), agree: node.agree, loops: node.loops, mayFail: node.mayFail };
+    if (inlineOnly && INLINE_ONLY.includes(ids[id])) copy.performer = 'a rule: inline only';
+    if (inlineOnly) delete copy.mayFail;
     if (node.type === 'end') copy.result = node.result || 'success';
     out[ids[id]] = JSON.parse(JSON.stringify(copy));
   }

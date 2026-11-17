@@ -462,4 +462,9 @@ test('"If it fails" maps onto the retry policy the engine runs', () => {
   assert.equal(step.node.retry, undefined, 'the step given is not changed');
   const backoff = { ...step, node: { ...step.node, retry: { maxAttempts: 2, backoff: '30s' } } };
   assert.deepEqual(setStepFailure(backoff, { mode: 'hold' }).node.retry, { maxAttempts: 1 }, 'a backoff the engine refuses goes');
+  const goesOn = setStepFailure(retried, { mode: 'go-on' });
+  assert.equal(goesOn.node.mayFail, true, 'go on: the run goes on with the step failed, for a rule after it');
+  assert.equal(goesOn.node.retry, undefined);
+  assert.deepEqual(stepFailure(goesOn), { mode: 'go-on', retries: 0 });
+  assert.equal(setStepFailure(goesOn, { mode: 'hold' }).node.mayFail, undefined, 'any other choice clears it');
 });

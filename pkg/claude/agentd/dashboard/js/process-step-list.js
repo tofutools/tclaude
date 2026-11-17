@@ -833,8 +833,11 @@ export const FAILURE_RETRIES_MAX = 99;
 //   hold      retry.maxAttempts 1: the step is held (blocked) for the
 //             operator to retry, skip or cancel, without retrying itself.
 //   retry     retry.maxAttempts N+1: N retries, then held the same way.
+//   go-on     mayFail: the run goes on along the step's route with its
+//             result failed, for a rule decision after it to branch on.
 // Returns { mode, retries } (retries is 0 unless mode is retry).
 export function stepFailure(step) {
+  if (step?.node?.mayFail) return { mode: 'go-on', retries: 0 };
   const attempts = Number(step?.node?.retry?.maxAttempts) || 0;
   if (!step?.node?.retry) return { mode: 'fail', retries: 0 };
   if (attempts <= 1) return { mode: 'hold', retries: 0 };
@@ -847,6 +850,8 @@ export function stepFailure(step) {
 // clamped to 1..FAILURE_RETRIES_MAX.
 export function setStepFailure(step, { mode, retries = 1 } = {}) {
   const node = clone(step.node);
+  if (mode === 'go-on') node.mayFail = true;
+  else delete node.mayFail;
   if (mode === 'hold' || mode === 'retry') {
     const count = Math.min(FAILURE_RETRIES_MAX, Math.max(1, Math.round(Number(retries) || 1)));
     node.retry = { maxAttempts: mode === 'hold' ? 1 : count + 1, ...(node.retry?.onFail ? { onFail: node.retry.onFail } : {}) };
