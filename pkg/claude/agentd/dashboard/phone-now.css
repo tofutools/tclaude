@@ -96,17 +96,14 @@
    view stops inside the page's gutter, not at the screen edge. */
 :root[data-layout="phone"] .phone-chips.phone-now-chips { gap: 5px; margin-bottom: 10px; scroll-padding-inline: 16px; }
 :root[data-layout="phone"] .phone-now-chips .ui-tab { padding-inline: 8px; }
-/* A row's time or reason line (idle 12m, updated 4m ago, ✓ finished, PR #9
-   checks failing): green when done, red when broken, blue for a merge,
-   amber (quiet) for a quiet busy agent or a nearly full context. */
+/* A row's time or reason line (idle 12m, updated 4m ago, PR #9 checks
+   failing): red when broken, amber (quiet) for a quiet busy agent. */
 :root[data-layout="phone"] .phone-now-when { flex-basis: 100%; color: var(--ui-muted-text); font-size: 13px; }
 :root[data-layout="phone"] .phone-now-when.quiet { color: var(--ui-warn-text); }
 /* A group's name over its first row in Idle. */
 :root[data-layout="phone"] .phone-now-group { margin: 0; padding: 9px 12px 2px; }
 
-:root[data-layout="phone"] .phone-now-when.ok { color: var(--phone-ok); }
 :root[data-layout="phone"] .phone-now-when.bad { color: var(--phone-bad); }
-:root[data-layout="phone"] .phone-now-when.info { color: var(--ui-focus); }
 /* An agent's context meter (context-meter.js, the desktop's gauge) by its
    state pill on a row, and by its name on a card: the row's gap spaces it. */
 :root[data-layout="phone"] :is(.phone-row, .phone-who) > .ctx-meter { flex: none; align-self: center; margin-right: 0; }

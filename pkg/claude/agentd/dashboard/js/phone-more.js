@@ -1,8 +1,7 @@
 // phone-more.js -- the phone shell's More sheet: the node on screen (and the
 // node picker), every tab the bottom nav has no slot for with its scope
 // badge, the power actions, whether notifications are on and the switch to
-// the desktop site, and Update tclaude (phone-update.js). Also the Power
-// sheet behind the Agents bar's ⏻.
+// the desktop site, and Update tclaude (phone-update.js).
 
 import { h } from 'preact';
 import htm from 'htm';
@@ -75,17 +74,4 @@ export function MoreMenu({ state, actions, close, fleet = null, doctor = feature
         end=${html`<span class="phone-menu-end phone-menu-note">this device</span>`} />
     </ul>
     ${meta && html`<p class="phone-sheet-meta">tclaude ${meta.version}</p>`}`;
-}
-
-// PowerMenu is the Power sheet: power every agent on, or shut them all down
-// (the desktop's own confirmation follows).
-export function PowerMenu({ actions, close }) {
-  const run = (act) => { close(); act(); };
-  return html`<h2 class="ui-eyebrow phone-menu-head">Power</h2>
-    <ul class="phone-menu">
-      <li><button data-ui-exempt type="button" class="phone-menu-item" onClick=${() => run(actions.powerOnAll)}>
-        <span class="phone-menu-icon" aria-hidden="true">🟢</span>Power on all</button></li>
-      <li><button data-ui-exempt type="button" class="phone-menu-item phone-menu-danger" onClick=${() => run(actions.shutdownAll)}>
-        <span class="phone-menu-icon" aria-hidden="true">🛑</span>Shut down all…</button></li>
-    </ul>`;
 }

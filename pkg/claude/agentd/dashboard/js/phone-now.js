@@ -2,8 +2,7 @@
 // A row of chips picks what it shows: All (below), Needs you (the cards
 // only), Idle (online idle agents by group), Recent (every online agent, the
 // latest heard from first) and Problems (one go-look list: errors, CI failed,
-// at work but quiet). All also says what changed since this viewer last
-// looked. A row's context meter sits by its state pill (context-meter.js):
+// at work but quiet). A row's context meter sits by its state pill (context-meter.js):
 // a full context is no problem. All is a one-line usage strip that opens Usage, then what needs the operator as
 // cards (access requests, decisions, process gates, agents asking), the
 // online agents in one card of rows (every one when there are few, else the
@@ -13,12 +12,12 @@
 // its home view.
 
 import { h } from 'preact';
-import { useEffect, useRef, useState } from 'preact/hooks';
+import { useEffect, useState } from 'preact/hooks';
 import htm from 'htm';
 import { companionAgents } from './companion-model.js';
 import { authoredOpenPRsView } from './shell-model.js';
 import { featureState } from './peer-view-limits.js';
-import { FEW_ONLINE, PROBLEMS, agentRows, askerName, hookAt, idleGroups, contextHigh, lookedState, nowView, problemRows, recentRows, rowState, sinceLooked } from './phone-shell-model.js';
+import { FEW_ONLINE, PROBLEMS, agentRows, askerName, hookAt, idleGroups, contextHigh, nowView, problemRows, recentRows } from './phone-shell-model.js';
 import { usageStrip } from './phone-now-model.js';
 import { AskCard, PhoneApprovalCard, PhoneDecisionCard } from './phone-approval.js';
 import { ContextMeter } from './context-meter.js';
@@ -64,9 +63,7 @@ function UsageStrip({ snapshot, onOpen }) {
 // an error row says what went wrong, and a row may carry a time or reason
 // line (when) in a tone (ok, bad, info, warn). A row opens the agent's
 // terminal. heads put a heading over a row (Idle's groups, Problems' kinds),
-// and the agent's context meter sits by its state pill. What changed since
-// the viewer looked is said once, in its own section, not marked again on
-// the rows.
+// and the agent's context meter sits by its state pill.
 // NowRow is one agent's row: a tap opens its terminal; a hold, or its ⋯,
 // opens its menu (phone-agent-menu.js) when onMenu is wired.
 function NowRow({ agent, state, when, tone, onOpen, onMenu }) {
@@ -112,39 +109,15 @@ function storeChip(chip, storage = globalThis.localStorage) {
   try { storage?.setItem(CHIP_KEY, chip); } catch { /* private mode: the pick lasts this visit */ }
 }
 
-// LOOKED_KEY holds, per viewer, what Now showed when the viewer last looked
-// (phone-shell-model lookedState). It moves on Mark seen, or on leaving Now
-// (or hiding the page) once what changed has been on screen LOOK_MS, so a
-// glance, or a chip that does not show the changes, does not clear them.
-const LOOKED_KEY = 'tclaude.phone.now.looked';
-export const LOOK_MS = 5000;
-export function storedLooked(storage = globalThis.localStorage) {
-  try {
-    const value = JSON.parse(storage?.getItem(LOOKED_KEY) || 'null');
-    return value && typeof value === 'object' && !Array.isArray(value) ? value : null;
-  } catch { return null; }
-}
-function storeLooked(value, storage = globalThis.localStorage) {
-  try { storage?.setItem(LOOKED_KEY, JSON.stringify(value)); } catch { /* private mode: marks last this visit */ }
+// LEGACY_LOOKED_KEY is where Now's former Since you looked section kept
+// what the viewer last saw; Now drops it, so it does not linger.
+const LEGACY_LOOKED_KEY = 'tclaude.phone.now.looked';
+function dropLegacyLooked(storage = globalThis.localStorage) {
+  try { storage?.removeItem(LEGACY_LOOKED_KEY); } catch { /* no storage: nothing kept */ }
 }
 
-// The tones and marks of a change's or a problem's line.
-const CHANGE_TONE = Object.freeze({ errored: 'bad', ci: 'bad', merged: 'info', finished: 'ok' });
-const CHANGE_MARK = Object.freeze({ errored: '✗', ci: '✗', merged: '⇡', finished: '✓' });
+// The tone of a problem's line.
 const PROBLEM_TONE = Object.freeze({ error: 'bad', ci: 'bad', quiet: 'quiet' });
-
-// changeRows folds Since you looked's changes into one row per agent, the
-// worst change's tone leading.
-function changeRows(changes) {
-  const rows = new Map();
-  for (const change of changes) {
-    const row = rows.get(change.agent.agentId);
-    const text = `${CHANGE_MARK[change.kind]} ${change.text}`;
-    if (row) row.when += ` · ${text}`;
-    else rows.set(change.agent.agentId, { agent: change.agent, state: rowState(change.agent), when: text, tone: CHANGE_TONE[change.kind] });
-  }
-  return [...rows.values()];
-}
 
 // problemLine says why a row is in Problems.
 function problemLine({ kind, agent }) {
@@ -182,42 +155,7 @@ export function NowView({ state, actions, fetchImpl = globalThis.fetch, processS
   const [showAll, setShowAll] = useState(false);
   const [chip, setChip] = useState(storedChip);
   const pick = (key) => { setChip(key); storeChip(key); };
-  const [looked, setLooked] = useState(storedLooked);
-  // latest is what Now shows now, for the look to keep when it moves;
-  // marks says which changes are on screen (All, under Needs you), '' when
-  // none; seenSince is when they came into view on a visible page.
-  const latest = useRef(null);
-  const marks = useRef('');
-  const pending = useRef(0);
-  const seenSince = useRef(null);
-  const visible = () => globalThis.document?.visibilityState !== 'hidden';
-  // After each render: the marks' time on screen starts when they show, and
-  // again when a new change joins them or the page comes back.
-  const shown = useRef('');
-  useEffect(() => {
-    if (!marks.current || !visible()) { seenSince.current = null; shown.current = ''; return; }
-    if (marks.current !== shown.current) { seenSince.current = Date.now(); shown.current = marks.current; }
-  });
-  useEffect(() => {
-    // The look moves past changes only once they have been on screen
-    // LOOK_MS; with none waiting, keeping what shows loses nothing.
-    const leave = () => {
-      if (!latest.current) return false;
-      const seen = seenSince.current !== null && Date.now() - seenSince.current >= LOOK_MS;
-      if (pending.current > 0 && !seen) return false;
-      storeLooked(latest.current);
-      return true;
-    };
-    const onVisibility = () => {
-      if (!visible()) { if (leave()) setLooked(latest.current); seenSince.current = null; shown.current = ''; return; }
-      if (marks.current) { seenSince.current = Date.now(); shown.current = marks.current; }
-    };
-    globalThis.document?.addEventListener('visibilitychange', onVisibility);
-    return () => { globalThis.document?.removeEventListener('visibilitychange', onVisibility); leave(); };
-  }, []);
-  const ready = !!state.snapshot.value;
-  // A first visit has nothing to compare: what it sees is the first look.
-  useEffect(() => { if (ready && !looked && latest.current) { storeLooked(latest.current); setLooked(latest.current); } }, [ready]);
+  useEffect(() => { dropLegacyLooked(); }, []);
   // Process gates waiting on the operator come from the process read model,
   // not the snapshot: Now keeps it fresh while it shows.
   const gates = gateItems(useProcessRuns(processSource).context);
@@ -230,12 +168,7 @@ export function NowView({ state, actions, fetchImpl = globalThis.fetch, processS
   const quiet = view.needs === 0;
   const list = agentRows(view, { showAll });
   const rows = list.rows;
-  latest.current = lookedState(view);
   const problems = problemRows(view);
-  const changes = changeRows(sinceLooked(view, looked));
-  pending.current = changes.length;
-  marks.current = chip === 'all' ? changes.map((row) => `${row.agent.agentId}:${row.when}`).join('|') : '';
-  const markSeen = () => { storeLooked(latest.current); setLooked(latest.current); };
   const online = new Map(view.online.map((agent) => [agent.agentId, agent]));
   const chips = [
     { key: 'all', label: 'All', count: list.total },
@@ -283,10 +216,6 @@ export function NowView({ state, actions, fetchImpl = globalThis.fetch, processS
     body = html`
     <${UsageStrip} snapshot=${snapshot} onOpen=${() => actions.navigate('/usage')} />
     ${needsYou}
-    ${changes.length > 0 && html`<${Section} title="Since you looked" count=${changes.length}
-      more=${html`<button data-ui-exempt type="button" class="phone-link" onClick=${markSeen}>Mark seen</button>`}>
-      <${AgentRows} rows=${changes} onOpen=${actions.openTerminal} onMenu=${actions.agentMenu} />
-    <//>`}
     <${Section} title=${list.all ? 'Online' : 'Active'} count=${rows.length}
       more=${html`<span class="phone-section-links">
         ${actions.spawnAgent && spawnable(snapshot) && html`<button data-ui-exempt type="button" class="phone-link" data-agent-add
