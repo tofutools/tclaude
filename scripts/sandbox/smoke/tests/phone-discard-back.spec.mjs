@@ -137,9 +137,6 @@ const GUARDED = [
   },
   {
     name: 'Agents: New agent › All options…',
-    // A Dialog's question (shellConfirmDiscard) still records a step of its
-    // own right after the Back: the follow-up to tk_3739e29d.
-    gesturelessKnown: true,
     open: async (page) => {
       await views(page).getByRole('button', { name: /Agents/ }).click();
       await page.getByRole('button', { name: 'New agent', exact: true }).click();
@@ -236,7 +233,7 @@ for (const form of GUARDED) {
     await form.discard(page);
     await expect(form.form(page), 'discarded, the form closes').toBeHidden();
     expect(await behind(page), 'and the page behind is where it was').toEqual(before);
-    if (!form.gesturelessKnown) expect(await gestureless(page), 'no entry added after a Back without a tap (Android would skip them all)').toEqual([]);
+    expect(await gestureless(page), 'no entry added after a Back without a tap (Android would skip them all)').toEqual([]);
 
     // One more Back goes to the page before, inside tclaude (a form opened
     // on the first page has none before it).

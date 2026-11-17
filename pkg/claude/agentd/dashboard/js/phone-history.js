@@ -74,8 +74,21 @@ export const RETAKE_SETTLE_MS = 400;
 // function.
 export function installPhoneHistory({ view, tab = () => null, doc = globalThis.document }) {
   let restoring = false;
+  // quiet is the layers a Back's close raised while it was on its way (a
+  // dialog's Discard? question): they are no step of their own. The form
+  // asking takes its entry back at once instead (asked, below), so nothing
+  // adds an entry after the Back without a tap (retakeStep).
+  const quiet = new Set();
+  const counted = (page, sheet, layers = backLayers.peek()) => {
+    for (const layer of quiet) if (!layers.includes(layer)) quiet.delete(layer);
+    return layerDepth(page, sheet, layers) - stepLayers(layers).filter((layer) => quiet.has(layer)).length;
+  };
+  // asking is the Back whose close of a layer is on its way, until it lands:
+  // { retaken } once a question it raised made the form take its entry back.
+  let asking = null;
+  let knownLayers = backLayers.peek();
   // depth is the layer count the router was last told of.
-  let depth = layerDepth();
+  let depth = counted();
   // sheetSeq is when the open sheet opened, against the layers' (backSeq).
   let sheetSeq = 0;
   let sheetShown = phoneSheet.peek();
@@ -103,7 +116,7 @@ export function installPhoneHistory({ view, tab = () => null, doc = globalThis.d
     }
     retaking = setTimeout(() => {
       retaking = null;
-      if (layerDepth() > Number(new URL(win.location.href).searchParams.get('phone') || 0)) announceOverlay({ doc });
+      if (counted() > Number(new URL(win.location.href).searchParams.get('phone') || 0)) announceOverlay({ doc });
     }, RETAKE_SETTLE_MS);
     win.history.forward();
   };
@@ -112,7 +125,7 @@ export function installPhoneHistory({ view, tab = () => null, doc = globalThis.d
   // yet: the step back is taken, so they are no longer in the address.
   let closing = 0;
   const unLayers = registerOverlayRoute('phone', {
-    value: () => { const shown = layerDepth() - closing; return shown > 0 ? String(shown) : ''; },
+    value: () => { const shown = counted() - closing; return shown > 0 ? String(shown) : ''; },
     restore: (want) => {
       // Back over an open dialog or form is that overlay's: it closes the
       // topmost one through its own guarded close, which may ask first (a
@@ -122,13 +135,19 @@ export function installPhoneHistory({ view, tab = () => null, doc = globalThis.d
       // Whichever of a sheet and a layer opened last is on top.
       const top = stepLayers().at(-1);
       const layerOnTop = top && (!phoneSheet.peek() || top.seq > sheetSeq);
-      if (layerOnTop && layerDepth() > (Number(want) || 0)) {
-        depth = layerDepth() - 1;
-        closing += 1;
+      if (layerOnTop && counted() > (Number(want) || 0)) {
+        // A question on top (Back while a dialog asks Discard?) closes as
+        // Keep, leaving its form up without the entry Back just left.
+        const question = quiet.has(top);
+        const back = { retaken: false };
+        asking = back;
+        depth = counted() - (question ? 0 : 1);
+        closing += question ? 0 : 1;
         void closeTopBackLayer().then((closed) => {
-          closing -= 1;
-          if (closed) return;
-          depth = layerDepth();
+          if (asking === back) asking = null;
+          if (!back.retaken && !question) closing -= 1;
+          if (back.retaken || (closed && !question)) return;
+          depth = counted();
           retakeStep();
         });
         return;
@@ -139,7 +158,7 @@ export function installPhoneHistory({ view, tab = () => null, doc = globalThis.d
       try {
         // Back is a close the operator asked for: a sheet's guard may hold
         // it (a draft to ask about, a send in flight).
-        if (layerDepth() > depthWanted && phoneSheet.peek()) {
+        if (counted() > depthWanted && phoneSheet.peek()) {
           // Until it is known to be held, the sheet is closing: the address
           // has left it. Were it counted, the router would write a held
           // sheet onto the entry Back landed on (the page's), so the sheet
@@ -153,7 +172,7 @@ export function installPhoneHistory({ view, tab = () => null, doc = globalThis.d
             if (!held) closing -= 1;
           }
         }
-        if (!held && layerDepth() > depthWanted) phonePage.peek()?.onBack?.();
+        if (!held && counted() > depthWanted) phonePage.peek()?.onBack?.();
       } finally {
         restoring = false;
       }
@@ -189,7 +208,23 @@ export function installPhoneHistory({ view, tab = () => null, doc = globalThis.d
   // Changes made on screen are history steps; ones Back made are not.
   // A layer closed on screen steps back off its own entry.
   const stopLayers = effect(() => {
-    const next = layerDepth(phonePage.value, phoneSheet.value, backLayers.value);
+    const page = phonePage.value;
+    const sheet = phoneSheet.value;
+    const layers = backLayers.value;
+    const raised = layers.filter((layer) => !knownLayers.includes(layer));
+    knownLayers = layers;
+    // A layer opened while Back's close is on its way is that close's
+    // question: no step of its own, and the form takes its entry back now,
+    // so a further Back finds it and keeps it.
+    if (asking && !asking.retaken && raised.length) {
+      for (const layer of raised) quiet.add(layer);
+      asking.retaken = true;
+      closing -= 1;
+      depth = counted(page, sheet, layers);
+      retakeStep();
+      return;
+    }
+    const next = counted(page, sheet, layers);
     if (next === depth) return;
     const closed = next < depth;
     depth = next;

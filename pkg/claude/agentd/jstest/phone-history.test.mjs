@@ -16,7 +16,8 @@ function browser(harness, { canGoForward } = {}) {
   const steps = [];
   win.location = { href: 'http://localhost/?terminal=a' };
   win.history = { forward: () => steps.push('forward') };
-  if (canGoForward !== undefined) win.navigation = { canGoForward };
+  // The harness window outlives a test: set (or clear) every part of it.
+  win.navigation = canGoForward === undefined ? undefined : { canGoForward };
   const land = () => win.dispatchEvent(new win.Event('popstate'));
   return { steps, land };
 }
@@ -343,4 +344,44 @@ test('with nothing ahead (the Navigation API says so) the step is recorded at on
   await harness.act(async () => { routes.restoreOverlays({}); await tick(); });
   assert.deepEqual(steps, []);
   assert.deepEqual(announced.map((detail) => detail.closed), [false]);
+});
+
+test('a dialog\'s Discard? raised by Back is no step of its own; the dialog steps Forward onto its entry', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { steps, land } = browser(harness);
+  const { routes, sheet, announced, tick } = await setupWith(t, harness);
+  const form = await GUARDS[1].mount(t, harness, sheet);
+  await tick();
+  announced.length = 0;
+  const back = (want = {}) => harness.act(async () => { routes.restoreOverlays(want); await tick(); });
+
+  await back();
+  assert.equal(form.asking(), true, 'Back asks');
+  assert.deepEqual(steps, ['forward'], 'and the dialog steps Forward onto its own entry at once');
+  assert.deepEqual(announced, [], 'the question records no entry');
+  await harness.act(async () => { land(); routes.restoreOverlays({ phone: '1' }); await tick(); });
+  assert.equal(form.asking(), true, 'landing changes nothing');
+  assert.equal(routes.overlayParams().phone, '1');
+
+  // A further Back while it asks is Keep, and the dialog steps Forward again.
+  await back();
+  assert.equal(form.asking(), false);
+  assert.equal(form.open(), true, 'kept, the dialog stays');
+  assert.deepEqual(steps, ['forward', 'forward']);
+  assert.deepEqual(announced, []);
+  await harness.act(async () => { land(); routes.restoreOverlays({ phone: '1' }); await tick(); });
+
+  // Kept by a tap: nothing to record either.
+  await back();
+  await harness.act(async () => { land(); routes.restoreOverlays({ phone: '1' }); form.keep(); await tick(); });
+  assert.equal(form.open(), true);
+  assert.deepEqual(announced, []);
+
+  // Discarded: the dialog closes and steps back off its entry.
+  await back();
+  await harness.act(async () => { land(); routes.restoreOverlays({ phone: '1' }); form.discard(); await tick(); });
+  assert.equal(form.open(), false);
+  assert.deepEqual(announced.map((detail) => detail.closed), [true], 'one step back, off the dialog\'s entry');
+  await new Promise((resolve) => setTimeout(resolve, 450));
+  assert.deepEqual(announced.map((detail) => detail.closed), [true]);
 });

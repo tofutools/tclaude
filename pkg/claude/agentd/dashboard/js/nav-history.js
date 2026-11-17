@@ -437,10 +437,14 @@ function stepBackTo(loc) {
 let stepOver = false;
 let replaceNext = false;
 
-function flushSteppingBack() {
+// flushSteppingBack runs the navigations held while a step back was on its
+// way; landed says the step did land (its popstate), so the entry it left is
+// just ahead to step Forward onto. Should it never have arrived, they run as
+// they are.
+function flushSteppingBack({ landed = false } = {}) {
   const opens = (steppingBack || []).length || waitingPaths.length || (overlayAgain && !overlayAgain.closed);
   const nav = window.navigation;
-  if (opens && !stepOver && (!nav || nav.canGoForward !== false)) {
+  if (landed && opens && !stepOver && (!nav || nav.canGoForward !== false)) {
     // Still holding navigations (steppingBack) until the step lands.
     stepOver = true;
     history.forward();
@@ -457,9 +461,14 @@ function flushSteppingBack() {
 function landStepOver() {
   stepOver = false;
   replaceNext = true;
-  runSteppedBack();
-  if (!replaceNext) return;
-  replaceNext = false;
+  let taken;
+  try {
+    runSteppedBack();
+  } finally {
+    taken = !replaceNext;
+    replaceNext = false;
+  }
+  if (taken) return;
   const loc = withOverlays(current(stack));
   if (locEquals(loc, current(stack))) {
     history.replaceState(serializeStack(stack), '', urlFor(loc));
@@ -626,7 +635,7 @@ function onPopstate(e) {
   // entry (or whatever was navigated to since, which is recorded now).
   if (steppingBack) {
     history.replaceState(serializeStack(stack), '', urlFor(current(stack)));
-    flushSteppingBack();
+    flushSteppingBack({ landed: true });
     return;
   }
   // Stale target: a popped tab may have been hidden while it sat in the
