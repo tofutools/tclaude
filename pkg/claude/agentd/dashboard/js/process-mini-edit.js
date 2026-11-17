@@ -131,9 +131,79 @@ export function canInsertBefore(view, id) {
 export function canBranch(view, id) {
   const node = view.template.nodes[id];
   if (!isStep(node)) return 'only a step branches';
-  // The engine routes a task one way only; branching is a decision's.
-  if (node.type === 'task') return 'a task continues one way; make it a "you" step or use a decision to branch';
+  // The engine routes a task one way only; branching is a decision's. An
+  // agent step branches by becoming an agent decision (see toAgentDecision).
+  if (node.type === 'task') return canDecide(view, id);
   return '';
+}
+
+// canDecide says why an agent step cannot become an agent decision, or ''.
+// A command reports no verdict; outputs are a task's; the "changes" outcome
+// goes back to the one step before it, so there must be one.
+export function canDecide(view, id) {
+  const node = view.template.nodes[id];
+  if (node?.type !== 'task') return 'only a task becomes a decision';
+  if (node.performer?.kind !== 'agent') return 'a command continues one way; add a "you" step after it to branch';
+  if (node.captures?.length) return 'a step with outputs continues one way; clear its outputs to let its agent decide';
+  // Plan, checks, review and retry are a task's; a decision would drop them.
+  if (['plan', 'checks', 'review', 'retry'].some((key) => node[key] !== undefined)) return 'its plan, checks, review or retry are a task\'s; change it in the full editor';
+  if (outgoing(view, id).length > 1) return 'it already has more than one way out; change it in the full editor';
+  const into = incoming(view, id);
+  if (into.length !== 1 || !isStep(view.template.nodes[into[0].from])) return 'it needs exactly one step before it to send changes back to';
+  if (overlapsALoop(view, [into[0].from, id])) return 'going back from it would cross another loop; the server refuses loops that overlap';
+  return '';
+}
+
+// overlapsALoop says whether a loop whose body is `body` would overlap an
+// existing loop without one containing the other, which the server refuses
+// (loop_overlap). An existing loop's body is what lies on a forward path from
+// its target to the decision that goes back.
+function overlapsALoop(view, body) {
+  const { nodes } = view.template;
+  const forward = view.edges.filter((edge) => edge.from !== '' && !loopBound(nodes[edge.from], edge.outcome));
+  const reach = (start, step) => {
+    const seen = new Set([start]);
+    const stack = [start];
+    while (stack.length) {
+      const at = stack.pop();
+      for (const next of step(at)) if (!seen.has(next)) { seen.add(next); stack.push(next); }
+    }
+    return seen;
+  };
+  const mine = new Set(body);
+  for (const edge of view.edges) {
+    if (!edge.from || !loopBound(nodes[edge.from], edge.outcome)) continue;
+    const ahead = reach(edge.to, (at) => forward.filter((e) => e.from === at).map((e) => e.to));
+    const behind = reach(edge.from, (at) => forward.filter((e) => e.to === at).map((e) => e.from));
+    const theirs = [...ahead].filter((n) => behind.has(n));
+    const shared = theirs.filter((n) => mine.has(n)).length;
+    if (shared && shared !== theirs.length && shared !== mine.size) return true;
+  }
+  return false;
+}
+
+// toAgentDecision turns an agent step into an agent decision, the review
+// shape: its agent reports "approved" (on to what came next) or "changes"
+// (back to the step before it, at most LOOP_DEFAULT_ROUNDS rounds, then the
+// run fails). The agent, its prompt and its fallback stay.
+export function toAgentDecision(view, id) {
+  const why = canDecide(view, id);
+  if (why) throw new Error(why);
+  const next = copyView(view);
+  const node = next.template.nodes[id];
+  const main = mainEdge(next, id);
+  const previous = incoming(next, id)[0].from;
+  node.type = 'decision';
+  let after = main?.to;
+  next.edges = next.edges.filter((edge) => edge.from !== id);
+  if (!after) {
+    after = Object.keys(next.template.nodes).find((nodeID) => next.template.nodes[nodeID]?.type === 'end' && !isFailedEnd(next.template.nodes[nodeID]))
+      || addNode(next, { type: 'end', name: 'Done', result: 'success' }, 'done');
+  }
+  next.edges.push({ from: id, outcome: 'approved', to: after }, { from: id, outcome: 'changes', to: previous });
+  syncLoops(next);
+  defaultAgentExhaustion(next, id);
+  return { view: next, id };
 }
 
 export function canRunAlongside(view, id) {
@@ -401,10 +471,12 @@ export function insertBefore(view, id, kind) {
 
 // branch adds an outcome to a decision that leads to a new step, which then
 // rejoins its main path: a "you" step gains an answer, an agent decision an
-// outcome.
+// outcome. On an agent step it makes the step decide (toAgentDecision), and
+// `kind` is unused.
 export function branch(view, id, kind) {
   const why = canBranch(view, id);
   if (why) throw new Error(why);
+  if (view.template.nodes[id].type === 'task') return toAgentDecision(view, id);
   const next = copyView(view);
   const node = next.template.nodes[id];
   const main = mainEdge(next, id);

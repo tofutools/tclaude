@@ -48,6 +48,7 @@ function cases() {
     'before-join-agent': fill(m.insertBefore(fill(m.runAlongside(ship, 'review', 'agent')), 'approve', 'agent')),
     'delete-join': m.deleteStep(fill(m.insertAfter(fill(m.runAlongside(ship, 'review', 'agent')), 'approve', 'agent')), 'approve').view,
     'agent-decider-loop': agentDecides(),
+    'branch-review-decides': m.branch(ship, 'review').view,
     'loop-approve-rounds': m.setLoopRounds(ship, 'approve', 'changes', 4).view,
   };
 }
@@ -80,7 +81,48 @@ test('a "you" step branches on a new answer that rejoins; a task does not branch
   assert.deepEqual(out.view.template.nodes.approve.performer.choices, ['ship', 'changes', 'hold', 'option']);
   assert.equal(edge(out.view, 'approve', 'option'), out.id);
   assert.equal(edge(out.view, out.id, 'next'), 'merge', 'the branch rejoins the main path');
-  assert.match(m.canBranch(ship, 'implement'), /continues one way/);
+  assert.equal(m.canBranch(ship, 'implement'), 'it needs exactly one step before it to send changes back to');
+  assert.match(m.canBranch(ship, 'merge'), /a command continues one way/);
+});
+
+test('⑂ on an agent step makes its agent decide: approved goes on, changes go back, then the run fails', () => {
+  const out = m.branch(ship, 'review');
+  const review = out.view.template.nodes.review;
+  assert.equal(out.id, 'review');
+  assert.equal(review.type, 'decision');
+  assert.deepEqual(review.performer, ship.template.nodes.review.performer, 'the agent, its prompt and role stay');
+  assert.equal(m.miniKind(review), 'agent');
+  assert.equal(edge(out.view, 'review', 'approved'), 'approve');
+  assert.equal(edge(out.view, 'review', 'changes'), 'implement');
+  assert.equal(edge(out.view, 'review', 'next'), undefined, 'the pass edge became approved');
+  const giveUp = review.loops.changes.onExhausted;
+  assert.equal(review.loops.changes.maxIterations, 3);
+  assert.equal(out.view.template.nodes[edge(out.view, 'review', giveUp)].result, 'failed', 'past the last round the run fails');
+  // A Who change keeps it deciding.
+  const who = m.setDecisionWho(out.view, 'review', { mode: 'anyone' }).view.template.nodes.review;
+  assert.equal(who.type, 'decision');
+  assert.equal(who.performer.anyone, true);
+  assert.deepEqual(Object.keys(who.loops), ['changes']);
+});
+
+test('an agent step with outputs, a first step, or a command does not decide', () => {
+  const captures = m.updateStep(ship, 'review', (step) => ({ ...step, node: { ...step.node, captures: ['pr'] } })).view;
+  assert.match(m.canBranch(captures, 'review'), /clear its outputs/);
+  assert.throws(() => m.toAgentDecision(ship, 'implement'), /one step before it/);
+  assert.throws(() => m.toAgentDecision(ship, 'merge'), /command/);
+  const checks = m.updateStep(ship, 'review', (step) => ({ ...step, node: { ...step.node, checks: [{ run: 'make test' }] } })).view;
+  assert.match(m.canBranch(checks, 'review'), /full editor/, 'a compound task keeps its stages');
+  const twoWays = { ...ship, edges: [...ship.edges, { from: 'review', outcome: 'other', to: 'merge' }] };
+  assert.match(m.canBranch(twoWays, 'review'), /more than one way out/);
+});
+
+test('⑂ is not offered where going back would overlap another loop', () => {
+  // A step after approve: going back to approve would share only approve
+  // with approve's own loop back to implement (loop_overlap).
+  const after = m.insertAfter(ship, 'approve', 'agent');
+  assert.match(m.canBranch(after.view, after.id), /cross another loop/);
+  // review → implement nests inside approve's loop: fine.
+  assert.equal(m.canBranch(ship, 'review'), '');
 });
 
 test('alongside fans out through a parallel node and joins at what came next', () => {

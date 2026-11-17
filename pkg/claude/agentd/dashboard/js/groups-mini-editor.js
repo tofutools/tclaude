@@ -20,7 +20,7 @@ import htm from 'htm';
 import { ProcessMiniGraph } from './process-kit.js';
 import { ProcessEditModel } from './process-edit-model.js';
 import {
-  addOutcome, branch, canBranch, canDelete, canInsertAfter, canInsertBefore, canRunAlongside, changeKind, changeSummary,
+  addOutcome, branch, canBranch, toAgentDecision, canDelete, canInsertAfter, canInsertBefore, canRunAlongside, changeKind, changeSummary,
   deleteOrphans, deleteStep, draftProjection, duplicate, insertAfter, insertBefore, isStep, miniKind, outcomesOf,
   canRemoveOutcome, removeOutcome, renameOutcome, runAlongside, setLoopRounds, setOutcomeTarget, targetsFor, updateStep,
   addDecider, canAddDecider, gateDeciders, removeDecider, setAgree, setDecider, setGateText,
@@ -85,6 +85,13 @@ function whoLine(node, fallbackInfo) {
   if (who.mode === 'you') return 'you';
   if (who.mode === 'command') return stepText({ node }) || 'a command';
   return agent('pick who');
+}
+
+// decides says whether ⑂ on id makes an agent step an agent decision
+// rather than adding an outcome to a decision.
+function decides(view, id) {
+  const node = view.template.nodes[id];
+  return node?.type === 'task' && node.performer?.kind === 'agent';
 }
 
 function viewOf(model) {
@@ -243,7 +250,9 @@ function Inspector({ view, id, roster, roles, fallbackInfo, onApply, onRename, o
       defaultSpawnProfile=${fallbackInfo.defaultSpawnProfile} onChange=${setWho} />
       ${node.type === 'decision' && kind !== 'command' && html`<${Button} size="sm" variant="link" class="gq-link" data-mini-add-decider
         disabled=${!!noMoreDeciders} title=${noMoreDeciders || 'Several decide together: all must agree'}
-        onClick=${() => onApply(addDecider(view, id, { mode: 'nobody' }))}>+ another decider<//>`}</div>`}
+        onClick=${() => onApply(addDecider(view, id, { mode: 'nobody' }))}>+ another decider<//>`}</div>
+      ${node.type === 'decision' && kind === 'agent' && html`<div class="gm-field" data-mini-decided-by=${id}><span>Decided by</span>
+        <span class="gq-dim">🤖 ${whoLine(node, fallbackInfo).replace(/^pick who$/, 'the agent you pick')} reports one outcome as its verdict. Nobody is asked.</span></div>`}`}
     ${others.length > 0 && html`<div class="gm-field" data-mini-constraint=${id}><span>Which agent</span><${Select} size="sm" aria-label="Which agent does this step"
       value=${constraint} onChange=${(event) => onApply(updateStep(view, id, (s) => setStepConstraint(s, constraintFromValue(event.currentTarget.value))))}>
       <option value="">whoever fits</option>
@@ -356,7 +365,9 @@ function StructureMenu({ view, menu, onRun, onWrap, onClose }) {
   return html`<div ref=${rootRef} class="gm-menu" role="menu" aria-label=${`Structure of ${node.name || id}`} style=${floating(menu, 400, 330)}>
     ${kinds('before', 'Insert step before', canInsertBefore(view, id), insertBefore)}
     ${kinds('after', 'Insert step after', canInsertAfter(view, id), insertAfter)}
-    ${kinds('branch', 'Branch on outcome', step ? canBranch(view, id) : 'only a step branches', branch)}
+    ${decides(view, id)
+    ? item('branch', 'Branch: let its agent decide (approved / changes)', canBranch(view, id), () => onRun(() => toAgentDecision(view, id)))
+    : kinds('branch', 'Branch on outcome', step ? canBranch(view, id) : 'only a step branches', branch)}
     ${kinds('alongside', 'Run alongside (parallel)', canRunAlongside(view, id), runAlongside)}
     <hr />
     ${item('duplicate', 'Duplicate', step ? '' : 'only a step can be duplicated here', () => onRun(() => duplicate(view, id)))}
@@ -724,12 +735,14 @@ export function MiniGraphEditor({
   };
   // A handle opens the kind picker for its operation; dragged into empty
   // space, the new step lands from that step (a decision branches).
-  const handle = (op, id, x, y, glyph, text, why) => html`<button type="button" data-ui-exempt class=${`gm-handle gm-handle-${op}`} data-mini-handle=${op}
-    style=${`left:${x}px;top:${y}px`} disabled=${!!why} title=${why || text} aria-label=${`${text} ${view.template.nodes[id]?.name || id}`}
+  const handle = (op, id, x, y, glyph, text, why, hint = '') => html`<button type="button" data-ui-exempt class=${`gm-handle gm-handle-${op}`} data-mini-handle=${op}
+    style=${`left:${x}px;top:${y}px`} disabled=${!!why} title=${why || hint || text} aria-label=${`${text} ${view.template.nodes[id]?.name || id}`}
     onPointerDown=${(event) => { if (op === 'after' && !why) { const at = pointAt(event); setDrag({ id, ...at, x0: at.x, y0: at.y, moved: false }); } }}
     onClick=${(event) => {
       if (dragged.current) { dragged.current = false; return; }
       const box = event.currentTarget?.getBoundingClientRect?.() || { left: 0, bottom: 0 };
+      // ⑂ on an agent step makes it decide: no new step to pick.
+      if (!why && op === 'branch' && decides(draft, id)) { setPicker(null); run(() => toAgentDecision(draft, id)); return; }
       if (!why) setPicker({ op, id, cx: box.left, cy: box.bottom + 4 });
     }}>${glyph}<span>${text}</span></button>`;
   const OPS = { after: insertAfter, branch, alongside: runAlongside, before: insertBefore };
@@ -744,7 +757,8 @@ export function MiniGraphEditor({
     const right = handles ? node.x + node.width / 2 + 4 : 0;
     return html`${handles && html`<span class="gm-handles" data-mini-handles=${id}>
       ${handle('after', id, right, node.y - 9, '+', 'after', canInsertAfter(draft, id))}
-      ${isStep(data) && handle('branch', id, node.x - 9, node.y + node.height / 2 + 2, '⑂', 'branch', canBranch(draft, id))}
+      ${isStep(data) && handle('branch', id, node.x - 9, node.y + node.height / 2 + 2, '⑂', 'branch', canBranch(draft, id),
+    decides(draft, id) ? 'branch: its agent decides, approved goes on, changes go back' : '')}
       ${isStep(data) && handle('alongside', id, node.x - 9, node.y - node.height / 2 - 20, '⫴', 'alongside', canRunAlongside(draft, id))}
     </span>`}
       ${drag?.moved && html`<span class="gm-ghost" style=${`left:${drag.x}px;top:${drag.y}px`}>+ new step</span>`}
