@@ -142,8 +142,33 @@ func validateScopeHeader(tmpl *Template, diagnostics *templateDiagnosticCollecto
 				return false
 			}
 		}
+	}
+	return true
+}
+
+// ParamTypes are the param types a template may declare (JSON's, as a
+// default is written). A blank type is a string.
+var ParamTypes = []string{"string", "number", "integer", "boolean", "object", "array"}
+
+// checkParamTypes refuses, while a template is authored, a param type nothing
+// understands and a default that is not a value of its type, in the template
+// and in its inline subprocess bodies. It is not part of Validate: a run's
+// pinned snapshot, saved before types were checked, must keep loading.
+func checkParamTypes(tmpl *Template, diagnostics *templateDiagnosticCollector) bool {
+	if tmpl == nil {
+		return true
+	}
+	for _, paramID := range sortedKeys(tmpl.Params) {
 		if diagnostic, bad := checkParamType(paramID, tmpl.Params[paramID]); bad {
 			if !diagnostics.Add(diagnostic) {
+				return false
+			}
+		}
+	}
+	for _, nodeID := range sortedKeys(tmpl.Nodes) {
+		if sp := tmpl.Nodes[nodeID].Subprocess; sp != nil && sp.IsInline() {
+			body := Template{Params: sp.Params, Nodes: sp.Nodes}
+			if !checkParamTypes(&body, diagnostics.scoped("nodes."+nodeID+".subprocess")) {
 				return false
 			}
 		}
@@ -151,16 +176,12 @@ func validateScopeHeader(tmpl *Template, diagnostics *templateDiagnosticCollecto
 	return true
 }
 
-// ParamTypes are the param types a template may declare (JSON's, as a
-// default is written). A blank type is a string. int and bool are accepted spellings of integer and boolean, as
-// subprocess input binding reads them.
-var ParamTypes = []string{"string", "number", "integer", "boolean", "object", "array"}
-
 // checkParamType refuses a param type nothing understands, and a default
-// that is not a value of the param's type.
+// that is not a value of the param's type. Types match regardless of case,
+// as subprocess input binding reads them.
 func checkParamType(paramID string, param Param) (Diagnostic, bool) {
 	path := "params." + paramID
-	kind := strings.TrimSpace(param.Type)
+	kind := strings.ToLower(strings.TrimSpace(param.Type))
 	switch kind {
 	case "", "string", "number", "integer", "int", "boolean", "bool", "object", "array":
 	default:
@@ -190,12 +211,29 @@ func checkParamType(paramID string, param Param) (Diagnostic, bool) {
 	if ok {
 		return Diagnostic{}, false
 	}
-	want := kind
-	if want == "" {
-		want = "string"
-	}
+	want := map[string]string{"": "string", "string": "string", "number": "number", "integer": "whole number",
+		"int": "whole number", "boolean": "true or false", "bool": "true or false", "object": "map", "array": "list"}[kind]
 	return diagError("invalid_param_default", path+".default",
-		fmt.Sprintf("default %v is not a %s", param.Default, want)), true
+		fmt.Sprintf("a %s param's default must be a %s; got %s", kind, want, describeDefault(param.Default))), true
+}
+
+// describeDefault names a default's value and kind for a message: the
+// string "5" is not the number 5.
+func describeDefault(value any) string {
+	switch typed := value.(type) {
+	case string:
+		return fmt.Sprintf("the text %q", typed)
+	case bool:
+		return fmt.Sprintf("%t", typed)
+	case map[string]any:
+		return "a map"
+	case []any:
+		return "a list"
+	}
+	if n, ok := paramNumber(value); ok {
+		return fmt.Sprintf("the number %v", n)
+	}
+	return fmt.Sprintf("%v", value)
 }
 
 // paramNumber reads a decoded default as a number: YAML gives ints and

@@ -26,7 +26,7 @@ func TestParamTypesAndDefaultsAreValidated(t *testing.T) {
 		{"{type: array, default: [a, b]}", ""},
 		{"{type: boolean}", ""},
 		{"{type: bogus}", "invalid_param_type"},
-		{"{type: Boolean}", "invalid_param_type"},
+		{"{type: Boolean, default: true}", ""}, // case-blind, as subprocess binding reads it
 		{"{type: boolean, default: \"false\"}", "invalid_param_default"},
 		{"{type: boolean, default: 1}", "invalid_param_default"},
 		{"{type: number, default: \"1\"}", "invalid_param_default"},
@@ -63,4 +63,66 @@ nodes:
 			}
 		})
 	}
+}
+
+// A run's pinned snapshot was saved before types were checked: it must still
+// load (ParseExactSource, and Validate under it), or the run could no longer
+// be advanced after the daemon restarts.
+func TestPinnedSourceWithAnUncheckedParamTypeStillLoads(t *testing.T) {
+	data := []byte(`
+apiVersion: tclaude.dev/v1alpha1
+kind: ProcessTemplate
+id: old
+params:
+  p: {type: text, default: 5}
+start: done
+nodes:
+  done: {type: end}
+`)
+	pinned, err := ParseExactSource(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pinned.Diagnostics.HasErrors() {
+		t.Fatalf("a pinned snapshot is refused: %v", pinned.Diagnostics.Errors())
+	}
+	if diagnostics := Validate(pinned.Template, pinned.Edges); diagnostics.HasErrors() {
+		t.Fatalf("Validate refuses a pinned snapshot: %v", diagnostics.Errors())
+	}
+	authored, err := ParseAuthoring(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !authored.Diagnostics.HasErrors() {
+		t.Fatal("authoring accepts an unknown param type")
+	}
+}
+
+func TestInlineSubprocessParamTypesAreChecked(t *testing.T) {
+	parsed, err := Parse([]byte(`
+apiVersion: tclaude.dev/v1alpha1
+kind: ProcessTemplate
+id: outer
+start: sub
+nodes:
+  sub:
+    type: subprocess
+    subprocess:
+      params:
+        n: {type: integer, default: "5"}
+      start: done
+      nodes:
+        done: {type: end}
+    next: {next: done}
+  done: {type: end}
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, d := range parsed.Diagnostics.Errors() {
+		if d.Code == "invalid_param_default" {
+			return
+		}
+	}
+	t.Fatalf("want invalid_param_default in the body, got %v", parsed.Diagnostics.Errors())
 }

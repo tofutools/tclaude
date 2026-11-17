@@ -247,6 +247,38 @@ test('params dialog edits identifiers, typed defaults, descriptions, and require
   assert.equal(model.template.params.ticket, undefined);
 });
 
+test('params dialog writes each type\'s default as the server checks it, and refuses a typed unknown type', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { parseDefault } = await harness.importDashboardModule('js/process-params-dialog.js');
+  assert.deepEqual(parseDefault('5', 'integer'), { value: 5 });
+  assert.deepEqual(parseDefault('5', 'Int'), { value: 5 });
+  assert.match(parseDefault('1.5', 'integer').error, /whole number/);
+  assert.deepEqual(parseDefault('true', 'bool'), { value: true });
+  assert.deepEqual(parseDefault('{"a": 1}', 'object'), { value: { a: 1 } });
+  assert.match(parseDefault('["a"]', 'object').error, /JSON object/);
+  assert.deepEqual(parseDefault('["a", "b"]', 'array'), { value: ['a', 'b'] });
+  assert.match(parseDefault('{"a": 1}', 'array').error, /JSON list/);
+  assert.deepEqual(parseDefault('5', 'string'), { value: '5' });
+  assert.match(parseDefault('x', 'bogus').error, /unknown type/);
+
+  const [{ ProcessEditModel }, { openProcessParamsDialog }] = await Promise.all([
+    harness.importDashboardModule('js/process-edit-model.js'),
+    harness.importDashboardModule('js/process-params-dialog.js'),
+  ]);
+  const loaded = view();
+  loaded.template.params = { n: { type: 'string' } };
+  const model = new ProcessEditModel(loaded);
+  openProcessParamsDialog({ model });
+  const overlay = harness.document.querySelector('.process-param-modal');
+  const type = overlay.querySelector('[data-process-param="n"] .process-param-type');
+  type.value = 'bogus'; harness.fireEvent(type, 'input');
+  harness.fireEvent(overlay.querySelector('.modal-buttons .ui-btn-primary'), 'click');
+  await settle();
+  assert.ok(harness.document.querySelector('.process-param-modal'), 'an unknown type is not applied');
+  assert.match(overlay.querySelector('[role="alert"]').textContent, /unknown type "bogus"/);
+  assert.equal(model.template.params.n.type, 'string');
+});
+
 test('params dialog rejects invalid edited number and boolean defaults without applying', async (t) => {
   const harness = await createPreactHarness(t);
   const [{ ProcessEditModel }, { openProcessParamsDialog }] = await Promise.all([
