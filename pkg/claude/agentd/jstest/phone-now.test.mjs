@@ -29,7 +29,7 @@ async function setup(t, snapshot = SNAPSHOT, { stored = null, looked = null } = 
   const harness = await createPreactHarness(t);
   const store = new Map(stored ? [['tclaude.phone.now.chip', stored]] : []);
   if (looked) store.set('tclaude.phone.now.looked', JSON.stringify(looked));
-  const storage = { getItem: (k) => store.get(k) ?? null, setItem: (k, v) => { store.set(k, v); } };
+  const storage = { getItem: (k) => store.get(k) ?? null, setItem: (k, v) => { store.set(k, v); }, removeItem: (k) => { store.delete(k); } };
   const saved = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');
   Object.defineProperty(globalThis, 'localStorage', { value: storage, configurable: true });
   t.after(() => { if (saved) Object.defineProperty(globalThis, 'localStorage', saved); else delete globalThis.localStorage; });
@@ -252,51 +252,12 @@ test('a remembered chip comes back; a bad one falls back to All', async (t) => {
   assert.equal(storedChip({ getItem: () => { throw new Error('blocked'); } }), 'all');
 });
 
-test('since you looked: what changed shows under Needs you, its rows unmarked elsewhere, and Mark seen clears it', async (t) => {
-  // The last look: lead was working, release-bot fine, payments-fix's PR open with green checks.
-  const looked = {
-    [WORKER]: { s: 'working', pr: 0, prs: '', ci: '' },
-    [BROKEN]: { s: 'working', pr: 0, prs: '', ci: '' },
-    [STEWARD]: { s: 'idle', pr: 7, prs: 'open', ci: 'passing' },
-  };
-  const snapshot = { ...SNAPSHOT, groups: [
-    { name: 'webshop', members: [
-      SNAPSHOT.groups[0].members[0],
-      { ...SNAPSHOT.groups[0].members[1], state: { status: 'idle' } },
-      SNAPSHOT.groups[0].members[2],
-    ] },
-    { name: 'steward', scribe: true, members: [{ ...SNAPSHOT.groups[1].members[0], branch_pr_number: 7, branch_pr_url: 'https://github.com/o/r/pull/7', branch_pr_state: 'merged' }] },
-  ] };
-  const { harness, root, tap, store } = await setup(t, snapshot, { looked });
-  const section = harness.getByRole(root, 'group', { name: 'Since you looked' });
-  const lines = Object.fromEntries([...section.querySelectorAll('.phone-row')].map((r) => [r.querySelector('.phone-who-name').textContent, r.querySelector('.phone-now-when').textContent]));
-  assert.deepEqual(lines, { lead: '✓ finished · was working', 'release-bot': '✗ errored · rate limited until 14:00', steward: '⇡ PR #7 merged' });
-  const online = harness.getByRole(root, 'group', { name: 'Online' });
-  assert.equal(online.querySelectorAll('.phone-now-new').length, 0, 'the section says what changed; the rows are not marked again');
-  assert.ok(![...online.querySelectorAll('.phone-row')].some((row) => /changed since you looked/.test(row.getAttribute('aria-label'))));
-  assert.ok(root.querySelector('[role="group"][aria-label="Needs you"]').compareDocumentPosition(section) & 4, 'under Needs you');
-
-  await tap(harness.getByRole(section, 'button', { name: 'Mark seen' }));
+test('Now has no Since you looked section, and drops the look a former version stored', async (t) => {
+  const { root, store } = await setup(t, SNAPSHOT, { looked: { [WORKER]: { s: 'working', pr: 0, prs: '', ci: '' } } });
+  assert.equal(store.has('tclaude.phone.now.looked'), false, 'the stored look is gone');
   assert.equal(root.querySelector('[aria-label="Since you looked"]'), null);
-  assert.equal(JSON.parse(store.get('tclaude.phone.now.looked'))[WORKER].s, 'idle', 'the look now is what showed');
-});
-
-test('a first visit takes what it sees as the look; leaving keeps a new look only after LOOK_MS', async (t) => {
-  const { harness, mounted, store, root } = await setup(t, SNAPSHOT);
-  assert.equal(root.querySelector('[aria-label="Since you looked"]'), null, 'nothing to compare on a first visit');
-  const first = JSON.parse(store.get('tclaude.phone.now.looked'));
-  assert.equal(first[WORKER].s, 'working');
-
-  // A second visit with a change waiting, left before it was seen LOOK_MS,
-  // keeps the old look.
-  const { LOOK_MS } = await harness.importDashboardModule('js/phone-now.js');
-  await harness.act(() => mounted.unmount());
-  const second = await setup(t, SNAPSHOT, { looked: { ...first, [WORKER]: { s: 'working', pr: 0, prs: '', ci: '' }, [BROKEN]: { s: 'working', pr: 0, prs: '', ci: '' } } });
-  const kept = second.store.get('tclaude.phone.now.looked');
-  assert.ok(second.root.querySelector('[aria-label="Since you looked"]'), 'release-bot errored since');
-  await harness.act(() => second.mounted.unmount());
-  assert.equal(second.store.get('tclaude.phone.now.looked'), kept, 'left within LOOK_MS: unchanged');
-  assert.equal(LOOK_MS, 5000);
+  assert.doesNotMatch(root.textContent, /Since you looked|Mark seen/);
+  assert.ok(root.querySelector('[aria-label^="Active"], [aria-label^="Online"]'), 'the agent list is still there');
 });
 
 test('a nearly full context is the desktop\'s meter on rows and cards, and no problem: not in Problems or its count', async (t) => {
@@ -326,42 +287,6 @@ test('a nearly full context is the desktop\'s meter on rows and cards, and no pr
     ['rate limited until 14:00', 'PR #9 checks failing']);
   const chip = harness.getByRole(harness.getByRole(root, 'tablist', { name: 'Show on Now' }), 'tab', { name: /^Problems/ });
   assert.match(chip.textContent.replace(/\s+/g, ' ').trim(), /^Problems 2$/, 'the chip counts two, not the full contexts');
-});
-
-// A look in which release-bot was still working: it has errored since.
-const BEFORE_ERROR = { [WORKER]: { s: 'working', pr: 0, prs: '', ci: '' }, [BROKEN]: { s: 'working', pr: 0, prs: '', ci: '' } };
-
-test('leaving Now after the changes were on screen LOOK_MS keeps what it showed as the new look', async (t) => {
-  const old = BEFORE_ERROR;
-  const { harness, mounted, store } = await setup(t, SNAPSHOT, { looked: old });
-  const realNow = Date.now;
-  t.after(() => { Date.now = realNow; });
-  Date.now = () => realNow() + 6000;
-  await harness.act(() => mounted.unmount());
-  assert.equal(JSON.parse(store.get('tclaude.phone.now.looked'))[BROKEN].s, 'error', 'shown 6s: the look moved');
-});
-
-test('changes a chip never showed are not cleared by leaving, however long Now was up', async (t) => {
-  const { harness, mounted, store } = await setup(t, SNAPSHOT, { looked: BEFORE_ERROR, stored: 'needs' });
-  const kept = store.get('tclaude.phone.now.looked');
-  const realNow = Date.now;
-  t.after(() => { Date.now = realNow; });
-  Date.now = () => realNow() + 60_000;
-  await harness.act(() => mounted.unmount());
-  assert.equal(store.get('tclaude.phone.now.looked'), kept, 'Needs you shows no marks, so nothing was seen');
-});
-
-test('hiding the page after the changes were seen moves the look, on screen too; coming back starts the clock again', async (t) => {
-  const { harness, root, store } = await setup(t, SNAPSHOT, { looked: BEFORE_ERROR });
-  const realNow = Date.now;
-  const doc = globalThis.document;
-  const setVisibility = (value) => Object.defineProperty(doc, 'visibilityState', { value, configurable: true });
-  t.after(() => { Date.now = realNow; delete doc.visibilityState; });
-  assert.ok(root.querySelector('[aria-label="Since you looked"]'));
-  Date.now = () => realNow() + 6000;
-  await harness.act(() => { setVisibility('hidden'); doc.dispatchEvent(new Event('visibilitychange')); });
-  assert.equal(JSON.parse(store.get('tclaude.phone.now.looked'))[BROKEN].s, 'error', 'stored');
-  assert.equal(root.querySelector('[aria-label="Since you looked"]'), null, 'and the screen follows');
 });
 
 test('a row\'s label says when its context is nearly full', async (t) => {

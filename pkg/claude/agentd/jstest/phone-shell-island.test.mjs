@@ -250,7 +250,7 @@ test('the More sheet sits above the nav: More lit, the rest of the shell inert, 
 test('a sheet from the top bar is modal: the nav is inert under it', async (t) => {
   const { harness, mounted, navItem, tap } = await setup(t);
   await tap(navItem('Agents'));
-  await tap(mounted.container.querySelector('[aria-label="Power"]'));
+  await tap(mounted.container.querySelector('.phone-bar [aria-label="Search"]'));
   const nav = mounted.container.querySelector('.phone-nav');
   assert.equal(nav.inert, true);
   assert.equal(mounted.container.querySelector('.phone-sheet').classList.contains('phone-sheet-over-nav'), false);
@@ -363,14 +363,14 @@ test('More → Fleet over Now shows Fleet even when it is the tab underneath', a
   assert.equal(shell.view.value, null, 'Now steps aside for the tab');
 });
 
-test('each root view has its own top-bar actions: node chip and 🔍 on Now, ⏻ on Agents', async (t) => {
+test('each root view has its own top-bar actions: node chip and 🔍 on Now, 🔍 on Agents, and no ⏻', async (t) => {
   const { harness, bar, navItem, tap } = await setup(t);
   const named = (name) => harness.getByRole(bar(), 'button', { name });
   assert.ok(named('Search'), 'Now has search');
   assert.equal(bar().querySelector('.phone-node-chip').textContent.trim(), '⌂dev@box', 'and names the node on screen');
   assert.equal(bar().querySelector('[aria-label="Power"]'), null);
   await tap(navItem('Agents'));
-  assert.ok(named('Power'));
+  assert.equal(bar().querySelector('[aria-label="Power"]'), null, 'powering on or off is in ☰ More');
   assert.ok(named('Search'));
   assert.equal(bar().querySelector('.phone-node-chip'), null, 'the node chip is on Now and More only');
   await tap(navItem('Board'));
@@ -379,11 +379,10 @@ test('each root view has its own top-bar actions: node chip and 🔍 on Now, ⏻
   assert.equal(bar().querySelector('[aria-label="Power"]'), null);
 });
 
-test('⏻ opens the power actions', async (t) => {
-  const { harness, calls, bar, navItem, sheet, tap } = await setup(t);
-  await tap(navItem('Agents'));
-  await tap(harness.getByRole(bar(), 'button', { name: 'Power' }));
-  assert.equal(sheet().getAttribute('aria-label'), 'Power');
+test('☰ More has the power actions', async (t) => {
+  const { harness, calls, navItem, sheet, tap } = await setup(t);
+  await tap(navItem('More'));
+  assert.ok(harness.getByRole(sheet(), 'button', { name: /Shut down all…$/ }));
   await tap(harness.getByRole(sheet(), 'button', { name: /Power on all$/ }));
   assert.deepEqual(calls.at(-1), ['powerOnAll']);
   assert.equal(sheet(), null);

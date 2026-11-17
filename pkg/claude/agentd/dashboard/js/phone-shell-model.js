@@ -65,12 +65,12 @@ export function slotFor(view, activeTab) {
 }
 
 // ROOT_BARS is what the shell itself puts in a root view's top bar (no page
-// pushed), by bottom-nav slot: the node chip, ⏻ for the power actions, and
-// 🔍 search. A view adds its own actions through phoneBar (phone-page.js).
+// pushed), by bottom-nav slot: the node chip and 🔍 search. Powering every
+// agent on or off is in ☰ More. A view adds its own actions through phoneBar (phone-page.js).
 // Mail's 🔍 is its own (phone-mail-island.js): it searches the open mailbox.
 const ROOT_BARS = Object.freeze({
   now: Object.freeze({ node: true, search: true }),
-  agents: Object.freeze({ power: true, search: true }),
+  agents: Object.freeze({ search: true }),
 });
 const NO_BAR = Object.freeze({});
 
@@ -262,35 +262,6 @@ export function problemRows(view, now = Date.now()) {
   take('ci', online.filter((agent) => agent.pr?.ci === 'failing' && agent.pr.state !== 'merged' && agent.pr.state !== 'closed'));
   take('quiet', stuckRows(view, now).rows.filter((row) => row.quiet).map((row) => row.agent));
   return rows;
-}
-
-// lookedState is what Since you looked compares between visits, per online
-// agent id: its state word, and its PR's number, state and checks.
-export function lookedState(view) {
-  const out = {};
-  for (const agent of view.online) out[agent.agentId] = { s: rowState(agent), pr: agent.pr?.number || 0, prs: agent.pr?.state || '', ci: agent.pr?.ci || '' };
-  return out;
-}
-
-// sinceLooked lists what changed for each agent since the viewer last looked
-// (a lookedState): it finished (was working, now idle), it errored, its PR
-// merged, or its PR's checks turned red. An agent the last look did not
-// see has no change to show. [{ agent, kind, text }]
-export function sinceLooked(view, last) {
-  if (!last) return [];
-  const out = [];
-  for (const agent of view.online) {
-    const was = last[agent.agentId];
-    if (!was) continue;
-    const state = rowState(agent);
-    const pr = agent.pr;
-    const samePR = pr && was.pr === pr.number;
-    if (state === 'error' && was.s !== 'error') out.push({ agent, kind: 'errored', text: `errored${agent.detail ? ` · ${agent.detail}` : ''}` });
-    else if (state === 'idle' && was.s === 'working') out.push({ agent, kind: 'finished', text: 'finished · was working' });
-    if (samePR && pr.state === 'merged' && was.prs !== 'merged') out.push({ agent, kind: 'merged', text: `PR #${pr.number} merged` });
-    else if (pr && pr.ci === 'failing' && pr.state !== 'merged' && pr.state !== 'closed' && !(samePR && was.ci === 'failing')) out.push({ agent, kind: 'ci', text: `PR #${pr.number} CI failed` });
-  }
-  return out;
 }
 
 // askerName names whoever put a decision to the operator, as the companion's

@@ -37,7 +37,7 @@ import { NodeChip } from './phone-node-picker.js';
 import { SearchSheet } from './phone-search.js';
 import { NowView } from './phone-now.js';
 import { BoardView, boardRequest, openBoardTask } from './phone-board.js';
-import { MoreMenu, PowerMenu } from './phone-more.js';
+import { MoreMenu } from './phone-more.js';
 import { navBadge, navShown, terminalDock } from './phone-nav-toggle.js';
 
 // The own views live in their own files; re-exported for this module's
@@ -285,7 +285,6 @@ export function PhoneShell({ shell, state, actions, boardSource, fetchImpl = glo
               aria-label=${`${title}${added.menu.sub ? ` ${added.menu.sub}` : ''}, ${added.menu.label || 'pick'}`} onClick=${added.menu.onClick}>
               ${title}<small>${added.menu.sub ? ` ${added.menu.sub}` : ''} ▾</small></button>`
           : title}</h1>
-        ${own.power && html`<${IconButton} icon="⏻" label="Power" aria-haspopup="dialog" onClick=${() => openSheet('Power', PowerMenu)} />`}
         ${(added?.actions || []).map((act) => (act.text
           ? html`<button data-ui-exempt key=${act.key || act.label} type="button" class=${`phone-bar-act${act.danger ? ' danger' : ''}`}
               aria-label=${act.label} title=${act.label} disabled=${!!act.disabled} onClick=${act.onClick}>${act.text}</button>`
