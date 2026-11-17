@@ -84,6 +84,10 @@ func sendBackClosure(definition *Definition, index int) []int {
 			}
 		}
 		queue = append(queue, node.children...)
+		// A decision-first loop's body runs after its decision.
+		if loop, ok := definition.decisionFirstLoop(node); ok {
+			queue = append(queue, loop.body...)
+		}
 		if node.scopeEnd > i {
 			for inner := i + 1; inner < node.scopeEnd; inner++ {
 				queue = append(queue, inner)
@@ -123,6 +127,13 @@ func applySendBack(next *Checkpoint, definition *Definition, back SendBack) erro
 	// they settled when the loop last finished, which a new round could take
 	// into steps already closed. Go back to where the loop starts instead.
 	for _, loop := range definition.loops {
+		// A decision-first loop starts at its decision.
+		if loop.decisionFirst && in[loop.to] && index != loop.from {
+			if _, inBody := slices.BinarySearch(loop.body, index); inBody {
+				return fmt.Errorf("%w: %q runs only when %q sends the work back; send the run back to %q instead",
+					ErrInvalidTransition, target.id, definition.nodes[loop.from].id, definition.nodes[loop.from].id)
+			}
+		}
 		if in[loop.from] && !in[loop.to] {
 			return fmt.Errorf("%w: %q is inside the loop that goes back to %q; send the run back to %q instead",
 				ErrInvalidTransition, target.id, definition.nodes[loop.to].id, definition.nodes[loop.to].id)

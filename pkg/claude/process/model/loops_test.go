@@ -200,3 +200,166 @@ func TestUnboundedCycleHintNamesTheClosingDecision(t *testing.T) {
 		t.Fatalf("following the hint leaves errors = %v", codes)
 	}
 }
+
+// decisionFirstTemplate is a review that sends work to a fix and back: the
+// loop is entered at its decision.
+func decisionFirstTemplate(mutate func(nodes map[string]Node)) *Template {
+	task := func(next string) Node {
+		return Node{Type: NodeTypeTask, Performer: &Performer{Kind: PerformerProgram, Run: "true"}, Next: Next{DefaultOutcome: next}}
+	}
+	nodes := map[string]Node{
+		"start":     {Type: NodeTypeStart, Next: Next{DefaultOutcome: "implement"}},
+		"implement": task("review"),
+		"review": {
+			Type:      NodeTypeDecision,
+			Performer: &Performer{Kind: PerformerHuman, Ask: "Approve?"},
+			Next:      Next{"approved": "end", "changes": "fix", "escalate": "escalated"},
+			Loops:     map[string]LoopBound{"changes": {MaxIterations: 3, OnExhausted: "escalate"}},
+		},
+		"fix":       task("review"),
+		"end":       {Type: NodeTypeEnd},
+		"escalated": {Type: NodeTypeEnd, Result: "canceled"},
+	}
+	if mutate != nil {
+		mutate(nodes)
+	}
+	return &Template{APIVersion: APIVersion, Kind: Kind, ID: "review-first", Start: "start", Nodes: nodes}
+}
+
+func TestDecisionFirstLoopValidates(t *testing.T) {
+	tmpl := decisionFirstTemplate(nil)
+	if codes := loopErrorCodes(tmpl); len(codes) != 0 {
+		t.Fatalf("errors = %v", codes)
+	}
+	loops := Loops(tmpl, NormalizeEdges(tmpl))
+	if len(loops) != 1 || !loops[0].DecisionFirst || loops[0].To != "fix" || len(loops[0].Body) != 2 {
+		t.Fatalf("loops = %#v", loops)
+	}
+	if classic := Loops(loopTestTemplate(nil), NormalizeEdges(loopTestTemplate(nil))); classic[0].DecisionFirst {
+		t.Fatalf("a loop entered at its target is not decision-first: %#v", classic)
+	}
+}
+
+func TestDecisionFirstLoopRejections(t *testing.T) {
+	cases := map[string]struct {
+		mutate func(nodes map[string]Node)
+		code   string
+	}{
+		// Entered at both the decision and the target.
+		"two entries": {func(nodes map[string]Node) {
+			nodes["start"] = Node{Type: NodeTypeDecision, Performer: &Performer{Kind: PerformerHuman, Ask: "Fix first?"},
+				Next: Next{"build": "implement", "fix": "fix"}}
+		}, "loop_entry"},
+		"nested loop": {func(nodes map[string]Node) {
+			nodes["fix"] = Node{Type: NodeTypeTask, Performer: &Performer{Kind: PerformerProgram, Run: "true"}, Next: Next{DefaultOutcome: "check"}}
+			nodes["check"] = Node{Type: NodeTypeDecision, Performer: &Performer{Kind: PerformerHuman, Ask: "Fixed?"},
+				Next:  Next{"yes": "review", "again": "fix"},
+				Loops: map[string]LoopBound{"again": {MaxIterations: 2, OnExhausted: "yes"}}}
+		}, "loop_decision_first_nested"},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			codes := loopErrorCodes(decisionFirstTemplate(tc.mutate))
+			if _, ok := codes[tc.code]; !ok {
+				t.Fatalf("errors = %v, want %s", codes, tc.code)
+			}
+		})
+	}
+}
+
+// Two review tracks alongside each other, each with its own fix, join once
+// both approve.
+func TestDecisionFirstTracksAlongsideValidate(t *testing.T) {
+	task := func(next string) Node {
+		return Node{Type: NodeTypeTask, Performer: &Performer{Kind: PerformerProgram, Run: "true"}, Next: Next{DefaultOutcome: next}}
+	}
+	review := func(fix string) Node {
+		return Node{
+			Type:      NodeTypeDecision,
+			Performer: &Performer{Kind: PerformerHuman, Ask: "Approve?"},
+			Next:      Next{"approved": "signoff", "changes": fix},
+			Loops:     map[string]LoopBound{"changes": {MaxIterations: 3}},
+		}
+	}
+	tmpl := &Template{APIVersion: APIVersion, Kind: Kind, ID: "tracks", Start: "implement", Nodes: map[string]Node{
+		"implement": task("tracks"),
+		"tracks":    {Type: NodeTypeParallel, Next: Next{"a": "review-a", "b": "review-b"}},
+		"review-a":  review("fix-a"),
+		"fix-a":     task("review-a"),
+		"review-b":  review("fix-b"),
+		"fix-b":     task("review-b"),
+		"signoff":   {Type: NodeTypeTask, Join: JoinAll, Performer: &Performer{Kind: PerformerProgram, Run: "true"}, Next: Next{DefaultOutcome: "end"}},
+		"end":       {Type: NodeTypeEnd},
+	}}
+	if codes := loopErrorCodes(tmpl); len(codes) != 0 {
+		t.Fatalf("errors = %v", codes)
+	}
+}
+
+func TestUnboundedReviewFirstCycleHintNamesTheReview(t *testing.T) {
+	tmpl := decisionFirstTemplate(func(nodes map[string]Node) {
+		review := nodes["review"]
+		review.Loops = nil
+		nodes["review"] = review
+	})
+	var got string
+	for _, diagnostic := range Validate(tmpl, NormalizeEdges(tmpl)) {
+		if diagnostic.Code == "graph_cycle" {
+			got = diagnostic.Message
+		}
+	}
+	if !strings.Contains(got, `bound decision "review"'s outcome "changes"`) {
+		t.Fatalf("message = %q", got)
+	}
+}
+
+// A work-first loop around a decision-first loop whose repeated work may
+// leave it: the exit into the outer body is no entry from outside.
+func TestLoopAroundADecisionFirstLoopWithAnExitValidates(t *testing.T) {
+	tmpl := decisionFirstTemplate(func(nodes map[string]Node) {
+		review := nodes["review"]
+		review.Next = Next{"approved": "signoff", "changes": "fix"}
+		review.Loops = map[string]LoopBound{"changes": {MaxIterations: 3}}
+		nodes["review"] = review
+		nodes["fix"] = Node{Type: NodeTypeDecision, Performer: &Performer{Kind: PerformerHuman, Ask: "Fixed?"},
+			Next: Next{"done": "review", "giveup": "signoff"}}
+		nodes["signoff"] = Node{Type: NodeTypeDecision, Performer: &Performer{Kind: PerformerHuman, Ask: "Ship?"},
+			Next:  Next{"ok": "end", "redo": "implement"},
+			Loops: map[string]LoopBound{"redo": {MaxIterations: 2}}}
+		delete(nodes, "escalated")
+	})
+	if codes := loopErrorCodes(tmpl); len(codes) != 0 {
+		t.Fatalf("errors = %v", codes)
+	}
+	for _, loop := range Loops(tmpl, NormalizeEdges(tmpl)) {
+		if loop.From == "signoff" && (loop.DecisionFirst || !loop.Contains("fix")) {
+			t.Fatalf("outer loop = %#v", loop)
+		}
+	}
+}
+
+// Two tracks whose repeated work leads into each other's decision cannot be
+// ordered: refused at authoring rather than when a run starts.
+func TestDecisionFirstLoopsLeadingIntoEachOtherAreRefused(t *testing.T) {
+	review := func(fix string) Node {
+		return Node{Type: NodeTypeDecision, Join: JoinAll, Performer: &Performer{Kind: PerformerHuman, Ask: "Approve?"},
+			Next:  Next{"approved": "join", "changes": fix},
+			Loops: map[string]LoopBound{"changes": {MaxIterations: 3}}}
+	}
+	fix := func(own, other string) Node {
+		return Node{Type: NodeTypeDecision, Performer: &Performer{Kind: PerformerHuman, Ask: "Done?"},
+			Next: Next{"done": own, "handoff": other}}
+	}
+	tmpl := &Template{APIVersion: APIVersion, Kind: Kind, ID: "crossed", Start: "par", Nodes: map[string]Node{
+		"par":  {Type: NodeTypeParallel, Next: Next{"a": "ra", "b": "rb"}},
+		"ra":   review("fixa"),
+		"rb":   review("fixb"),
+		"fixa": fix("ra", "rb"),
+		"fixb": fix("rb", "ra"),
+		"join": {Type: NodeTypeTask, Join: JoinAll, Performer: &Performer{Kind: PerformerProgram, Run: "true"}, Next: Next{DefaultOutcome: "end"}},
+		"end":  {Type: NodeTypeEnd},
+	}}
+	if _, ok := loopErrorCodes(tmpl)["loop_decision_first_order"]; !ok {
+		t.Fatalf("errors = %v", loopErrorCodes(tmpl))
+	}
+}

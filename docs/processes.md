@@ -206,11 +206,65 @@ runs without anyone in it. See [Agent deciders](#agent-deciders). Several
 deciders can decide together, with every one of them needed to approve: see
 [Agreement gates](#agreement-gates).
 
+A loop can also start at its decision. In that shape the work arrives at the
+decision, and the steps that repeat run only when the decision sends the work
+back:
+
+```yaml
+review:
+  type: decision
+  performer: {kind: agent, role: reviewer, prompt: "Review the change and decide."}
+  next: {approved: signoff, changes: fix}
+  loops:
+    changes: {maxIterations: 3}
+fix:
+  type: task
+  performer: {kind: agent, sameAs: implement, prompt: "Address the review."}
+  next: {next: review}
+```
+
+Round one is the decision alone. Each time the decision goes back, its body
+(`fix`, then the decision again) runs one more round. If the decision approves
+first time, the body never runs and is skipped. A step that loops this way
+must not be entered from outside the loop; only the decision is.
+
+The same shape works outside software too. A stall's buyer can check a
+delivery of fruit (`decide`) and send a crate back to the grower
+(`replace → decide`) at most twice before accepting what came.
+
 Every cycle needs a bounded outcome; an unbounded one is a `graph_cycle`
 error that says how to bound it. To keep a round well defined, a loop body is
-entered only at its target, left only through decisions, holds no
-`join: any`, and two loops' bodies nest or are disjoint. An inner loop starts
-its count over with each round of the loop around it.
+entered only at its target or only at its decision, left only through
+decisions, holds no `join: any`, and two loops' bodies nest or are disjoint.
+An inner loop starts its count over with each round of the loop around it. A
+loop that starts at its decision may sit inside another loop, but holds no
+loop of its own.
+
+### Tracks
+
+Loops that start at their decision can run alongside each other, as tracks
+of a parallel fork, and join before the run goes on:
+
+```yaml
+tracks:
+  type: parallel
+  next: {a: review-a, b: review-b}
+review-a: # a decision looping on fix-a, as above, approved → signoff
+review-b: # the same with its own reviewer and fix-b
+signoff:
+  type: task
+  join: all
+  ...
+```
+
+Each track runs its rounds at its own pace and never waits on another track.
+The join (`join: all`) waits until every track has left its loop. A track that
+approved stays approved, even when another track's later round changes what
+it approved. A step after the join (a sign-off) is where that gets looked at
+again. A track whose rounds run out follows its own `onExhausted`. Tracks
+whose steps share one performer (each fix `sameAs: implement`) hand that
+performer their work one at a time, while the decisions still run alongside
+each other.
 
 Three worked examples live in the repo under `docs/examples/`
 (`code-change-with-review.yaml`, `parallel-any-review.yaml`,

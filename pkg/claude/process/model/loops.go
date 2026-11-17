@@ -20,9 +20,26 @@ import (
 //
 // Every cycle must contain such an edge. The nodes on the paths from the edge's
 // target to the decision are the loop BODY, and taking the edge runs the whole
-// body again. To keep a round well defined the body is single-entry (only its
-// target is entered from outside), it is left only through decisions, and it
-// holds no join: any; two loops' bodies are nested or disjoint.
+// body again. To keep a round well defined the body is single-entry, it is left
+// only through decisions, and it holds no join: any; two loops' bodies are
+// nested or disjoint.
+//
+// The single entry is either the edge's target (the work comes first, then the
+// decision) or the decision itself, a decision-first loop:
+//
+//	review:
+//	  type: decision
+//	  next: {approved: merge, changes: fix}
+//	  loops:
+//	    changes: {maxIterations: 3, onExhausted: ...}
+//	fix:
+//	  next: {done: review}
+//
+// Here the work arrives at review, and fix runs only when review asks for
+// changes: every other node of the body is reached only through the edge that
+// goes back. That is what lets two review loops run alongside each other, each
+// with its own fix, and join once both approve. No other loop may sit inside a
+// decision-first body.
 
 // MinLoopIterations and MaxLoopIterations bound a loop's round limit. A
 // limit of one would forbid the very round the edge exists for.
@@ -53,6 +70,10 @@ type Loop struct {
 	Body []string
 	// Exits are the forward edges from a body node to a node outside it.
 	Exits []Edge
+	// DecisionFirst marks a loop entered at its decision (From) rather than at
+	// its target: the rest of the body runs only once the decision sends the
+	// work back. Validation proves the entry is one or the other.
+	DecisionFirst bool
 }
 
 // Contains reports whether a node is in the loop's body.
@@ -147,15 +168,39 @@ func Loops(tmpl *Template, edges []Edge) []Loop {
 				}
 			}
 			slices.Sort(loop.Body)
-			for _, edge := range edges {
-				if edge.From == "" || !loop.Contains(edge.From) || loop.Contains(edge.To) || isCycleExemptEdge(tmpl, edge) {
-					continue
-				}
-				loop.Exits = append(loop.Exits, edge)
-			}
-			slices.SortFunc(loop.Exits, compareEdge)
+			loop.DecisionFirst = loopEntries(tmpl, edges, loop)[from]
 			loops = append(loops, loop)
 		}
+	}
+	// A decision-first loop's repeated work is not on the forward paths through
+	// its decision, but it belongs to every loop around that decision.
+	for changed := true; changed; {
+		changed = false
+		for i := range loops {
+			for _, inner := range loops {
+				if !inner.DecisionFirst || !loops[i].Contains(inner.From) || loopInside(inner, loops[i]) {
+					continue
+				}
+				loops[i].Body = append(loops[i].Body, inner.Body...)
+				slices.Sort(loops[i].Body)
+				loops[i].Body = slices.Compact(loops[i].Body)
+				changed = true
+			}
+		}
+	}
+	for i := range loops {
+		loop := &loops[i]
+		// An outer loop's entries are judged on its body with the inner
+		// decision-first bodies added: an edge from an inner loop's repeated
+		// work into the outer body is not an entry from outside.
+		loop.DecisionFirst = loopEntries(tmpl, edges, *loop)[loop.From]
+		for _, edge := range edges {
+			if edge.From == "" || !loop.Contains(edge.From) || loop.Contains(edge.To) || isCycleExemptEdge(tmpl, edge) {
+				continue
+			}
+			loop.Exits = append(loop.Exits, edge)
+		}
+		slices.SortFunc(loop.Exits, compareEdge)
 	}
 	return loops
 }
@@ -240,15 +285,21 @@ func validateLoops(tmpl *Template, edges []Edge) Diagnostics {
 	loops := Loops(tmpl, edges)
 	for _, loop := range loops {
 		path := "nodes." + loop.From + ".loops." + loop.Outcome
-		if loop.Contains(tmpl.Start) && loop.To != tmpl.Start {
-			add("loop_entry", path, fmt.Sprintf("the process starts at %q inside the loop body; a loop is entered only at %q", tmpl.Start, loop.To))
+		// The body is entered at its target, or only at its decision.
+		entry := loop.To
+		if loop.DecisionFirst {
+			entry = loop.From
+		}
+		if loop.Contains(tmpl.Start) && tmpl.Start != entry {
+			add("loop_entry", path, fmt.Sprintf("the process starts at %q inside the loop body; a loop is entered only at %q or at its decision %q", tmpl.Start, loop.To, loop.From))
 		}
 		for _, edge := range edges {
-			if edge.From == "" || isCycleExemptEdge(tmpl, edge) || loop.Contains(edge.From) || !loop.Contains(edge.To) || edge.To == loop.To {
+			if edge.From == "" || isCycleExemptEdge(tmpl, edge) || loop.Contains(edge.From) || !loop.Contains(edge.To) || edge.To == entry {
 				continue
 			}
 			add("loop_entry", "nodes."+edge.From+".next."+edge.Outcome, fmt.Sprintf(
-				"%q enters the loop body at %q; a loop back to %q is entered only there", edge.From, edge.To, loop.To))
+				"%q enters the loop body at %q; a loop back to %q is entered only at %q, or only at its decision %q",
+				edge.From, edge.To, loop.To, loop.To, loop.From))
 		}
 		for _, exit := range loop.Exits {
 			if tmpl.Nodes[exit.From].Type != NodeTypeDecision {
@@ -263,7 +314,18 @@ func validateLoops(tmpl *Template, edges []Edge) Diagnostics {
 			}
 		}
 	}
+	if cycle := decisionFirstOrderCycle(tmpl, edges, loops); cycle != "" {
+		add("loop_decision_first_order", "nodes."+cycle, fmt.Sprintf(
+			"%q is reached from a loop that starts at a decision and also leads into one, so neither can run first; route it through the decision of its own loop", cycle))
+	}
 	for i := range loops {
+		for j := range loops {
+			if i != j && loops[i].DecisionFirst && loopInside(loops[j], loops[i]) {
+				add("loop_decision_first_nested", "nodes."+loops[j].From+".loops."+loops[j].Outcome, fmt.Sprintf(
+					"the loop back to %q sits inside the loop that starts at decision %q; nothing may loop inside a loop entered at its decision",
+					loops[j].To, loops[i].From))
+			}
+		}
 		for j := i + 1; j < len(loops); j++ {
 			if !loopsNestOrDisjoint(loops[i], loops[j]) {
 				add("loop_overlap", "nodes."+loops[j].From+".loops."+loops[j].Outcome, fmt.Sprintf(
@@ -273,6 +335,86 @@ func validateLoops(tmpl *Template, edges []Edge) Diagnostics {
 		}
 	}
 	return diagnostics
+}
+
+// loopEntries is the set of body nodes the work enters from outside the body:
+// the start when it is in the body, and every target of a forward edge from
+// outside.
+func loopEntries(tmpl *Template, edges []Edge, loop Loop) map[string]bool {
+	entries := map[string]bool{}
+	if loop.Contains(tmpl.Start) {
+		entries[tmpl.Start] = true
+	}
+	for _, edge := range edges {
+		if edge.From == "" || isCycleExemptEdge(tmpl, edge) || loop.Contains(edge.From) || !loop.Contains(edge.To) {
+			continue
+		}
+		entries[edge.To] = true
+	}
+	return entries
+}
+
+// decisionFirstOrderCycle checks the order a run executes in: a
+// decision-first loop's decision runs before its repeated work, so its bounded
+// edge orders and the edges from its body back into the decision do not. That
+// order must be acyclic (the engine prepares nodes in it); it returns a node
+// on a cycle, or "".
+func decisionFirstOrderCycle(tmpl *Template, edges []Edge, loops []Loop) string {
+	adj := map[string][]string{}
+	for _, edge := range edges {
+		if edge.From == "" {
+			continue
+		}
+		if _, ok := tmpl.Nodes[edge.To]; !ok {
+			continue
+		}
+		orders := !isCycleExemptEdge(tmpl, edge)
+		for _, loop := range loops {
+			if !loop.DecisionFirst {
+				continue
+			}
+			if edge.From == loop.From && edge.Outcome == loop.Outcome {
+				orders = true
+			} else if edge.To == loop.From && edge.From != loop.From && loop.Contains(edge.From) {
+				orders = false
+			}
+		}
+		if orders {
+			adj[edge.From] = append(adj[edge.From], edge.To)
+		}
+	}
+	state := map[string]int{}
+	var found string
+	var visit func(id string) bool
+	visit = func(id string) bool {
+		state[id] = 1
+		for _, next := range adj[id] {
+			if state[next] == 1 || state[next] == 0 && visit(next) {
+				if found == "" {
+					found = next
+				}
+				return true
+			}
+		}
+		state[id] = 2
+		return false
+	}
+	for _, id := range sortedKeys(tmpl.Nodes) {
+		if state[id] == 0 && visit(id) {
+			return found
+		}
+	}
+	return ""
+}
+
+// loopInside reports whether inner's body lies within outer's.
+func loopInside(inner, outer Loop) bool {
+	for _, id := range inner.Body {
+		if !outer.Contains(id) {
+			return false
+		}
+	}
+	return true
 }
 
 func loopsNestOrDisjoint(a, b Loop) bool {

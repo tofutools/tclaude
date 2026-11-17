@@ -1050,6 +1050,20 @@ func cycleFixHint(tmpl *Template, edges []Edge, cycle []string) string {
 			}
 		}
 	}
+	// A cycle closed into a decision is a loop entered at that decision (a
+	// review that sends work to a fix and back): bound the decision's outcome
+	// that starts the round.
+	if n := len(cycle); n >= 2 && tmpl.Nodes[cycle[n-1]].Type == NodeTypeDecision {
+		from := cycle[n-1]
+		if i := slices.Index(cycle, from); i >= 0 && i+1 < n {
+			to := cycle[i+1]
+			for _, edge := range edges {
+				if edge.From == from && edge.To == to {
+					return fmt.Sprintf("bound decision %q's outcome %q with loops: {%s: {maxIterations: N}}", from, edge.Outcome, edge.Outcome)
+				}
+			}
+		}
+	}
 	return "only a decision can send work back for another round: route the cycle through a decision and bound that outcome with loops: {<outcome>: {maxIterations: N}}"
 }
 

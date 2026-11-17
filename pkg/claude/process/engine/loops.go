@@ -13,9 +13,9 @@ import (
 //
 // A decision outcome bounded by model.LoopBound goes back to earlier work.
 // Authoring proves the shape (model.validateLoops): the graph without bounded
-// edges is acyclic, a loop body is entered only at the edge's target, left
-// only through decisions, holds no join: any, and two bodies nest or are
-// disjoint. On that shape a round is well defined, and the reducer keeps its
+// edges is acyclic, a loop body is entered only at the edge's target or only
+// at its decision, left only through decisions, holds no join: any, and two
+// bodies nest or are disjoint. On that shape a round is well defined, and the reducer keeps its
 // one-way settlement inside a round:
 //
 //   - Taking the edge with rounds left starts the next round: every body node
@@ -33,6 +33,15 @@ import (
 //
 // Checkpoint.Iterations counts how often each bounded edge was taken in the
 // current round of every loop around it: the round is that count plus one.
+//
+// A decision-first loop (model.Loop.DecisionFirst) is entered at its decision,
+// and the rest of its body runs only once the decision sends the work back. So
+// the decision waits on different edges per round: in round one on the edges
+// into it from outside the body, as any node does, and from round two on only
+// on the edges into it from its own body, since the outside arrival already
+// settled for good. The rest of the body is pending in round one; when the
+// decision finishes without going back, or is skipped, the body nodes that
+// never ran are skipped with it.
 
 // ErrLoopExhausted refuses a verdict that would start a round past its
 // loop's limit when the loop names no onExhausted outcome.
@@ -52,6 +61,8 @@ type definitionLoop struct {
 	exits []int
 	// inner are the loops nested inside this one, whose rounds restart with it.
 	inner []int
+	// decisionFirst marks a loop entered at its decision (loops.go header).
+	decisionFirst bool
 }
 
 // pendingLoop is one scope's loop before the edge indices exist.
@@ -61,6 +72,7 @@ type pendingLoop struct {
 	onExhausted       string
 	body              []string
 	exits             [][2]string
+	decisionFirst     bool
 }
 
 // prepareLoops turns the scopes' loops into prepared ones once every node and
@@ -86,6 +98,7 @@ func prepareLoops(definition *Definition, pending []pendingLoop) error {
 		loop := definitionLoop{
 			edge: edge, from: definition.edges[edge].fromIndex, to: definition.edges[edge].toIndex,
 			outcome: scoped.outcome, maxIterations: scoped.maxIterations, onExhausted: scoped.onExhausted,
+			decisionFirst: scoped.decisionFirst,
 		}
 		for _, id := range scoped.body {
 			index, ok := definition.index[id]
@@ -157,6 +170,7 @@ func scopeLoops(tmpl *model.Template, prefix string) []pendingLoop {
 		pending := pendingLoop{
 			from: prefix + loop.From, outcome: loop.Outcome, to: prefix + loop.To,
 			maxIterations: loop.MaxIterations, onExhausted: loop.OnExhausted,
+			decisionFirst: loop.DecisionFirst,
 		}
 		for _, id := range loop.Body {
 			pending.body = append(pending.body, prefix+id)
@@ -226,7 +240,8 @@ func iterateLoop(next *Checkpoint, definition *Definition, li int) error {
 			}
 			continue
 		}
-		if status != NodeDone && status != NodeSkipped {
+		// A decision-first body node the first round never reached is pending.
+		if status != NodeDone && status != NodeSkipped && (!loop.decisionFirst || status != NodePending) {
 			return fmt.Errorf("%w: node %q is %q; a loop starts its next round only once its body has finished",
 				ErrInvalidTransition, node.id, status)
 		}
@@ -275,6 +290,49 @@ func iterateLoop(next *Checkpoint, definition *Definition, li int) error {
 		addObligation(next, to.id)
 	}
 	return nil
+}
+
+// decisionFirstLoop returns the decision-first loop a node decides, if any.
+func (d *Definition) decisionFirstLoop(node definitionNode) (definitionLoop, bool) {
+	for _, li := range node.sourceOf {
+		if d.loops[li].decisionFirst {
+			return d.loops[li], true
+		}
+	}
+	return definitionLoop{}, false
+}
+
+// candidateEdges are the incoming edges a node waits on now. That is every
+// incoming edge, except for the decision of a decision-first loop: in its
+// first round it waits on the edges from outside its body, afterwards only on
+// those from inside it.
+func candidateEdges(checkpoint Checkpoint, definition *Definition, index int) []int {
+	node := definition.nodes[index]
+	loop, ok := definition.decisionFirstLoop(node)
+	if !ok {
+		return node.incoming
+	}
+	inside := iterationsTaken(checkpoint, definition, loop) > 0
+	out := make([]int, 0, len(node.incoming))
+	for _, edgeIndex := range node.incoming {
+		_, fromBody := slices.BinarySearch(loop.body, definition.edges[edgeIndex].fromIndex)
+		if fromBody == inside {
+			out = append(out, edgeIndex)
+		}
+	}
+	return out
+}
+
+// dormantLoopNode reports whether a node is in the body of a decision-first
+// loop other than as its decision: it runs only once that decision sends the
+// work back, so it may wait with no incoming edge to wait on.
+func dormantLoopNode(definition *Definition, index int) bool {
+	for _, li := range definition.nodes[index].loops {
+		if loop := definition.loops[li]; loop.decisionFirst && loop.from != index {
+			return true
+		}
+	}
+	return false
 }
 
 // openLoopAttemptWindow gives a task that already ran a fresh authored-size

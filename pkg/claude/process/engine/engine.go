@@ -865,7 +865,11 @@ func completeAndSettle(next *Checkpoint, definition *Definition, index int, arri
 			disposition = EdgeArrivedLate
 		}
 		next.Edges[edge.from][edge.outcome] = disposition
-		if counts := touched[edge.toIndex]; counts != nil {
+		// A decision-first loop's decision waits on a per-round subset of its
+		// edges (candidateEdges), so it is counted afresh when dequeued.
+		if _, firstOf := definition.decisionFirstLoop(definition.nodes[edge.toIndex]); firstOf {
+			delete(touched, edge.toIndex)
+		} else if counts := touched[edge.toIndex]; counts != nil {
 			counts.unresolved--
 			switch disposition {
 			case EdgeArrived:
@@ -877,9 +881,52 @@ func completeAndSettle(next *Checkpoint, definition *Definition, index int, arri
 		queue = append(queue, edge.toIndex)
 		return nil
 	}
-	// closeLoopExits settles the exits a finished loop decision held open.
-	closeLoopExits := func(sourceIndex int) error {
+	// skipNode closes a node that will never activate: its compound stages and
+	// subprocess body with it, and its outgoing edges as not taken.
+	var closeLoopExits func(sourceIndex int) error
+	skipNode := func(targetIndex int) error {
+		target := definition.nodes[targetIndex]
+		next.Nodes[target.id] = NodeSkipped
+		// A compound parent that will never activate can never start its
+		// stages, and the stages have no edges for closure to travel along, so
+		// they are skipped here with their parent. Without this they would sit
+		// pending forever in a run that is otherwise finished.
+		for _, childIndex := range target.children {
+			next.Nodes[definition.nodes[childIndex].id] = NodeSkipped
+		}
+		// A subprocess that will never activate closes its whole body the same
+		// way: every body node is skipped and every body edge not taken.
+		if target.kind == definitionSubprocess {
+			skipSubprocessBody(next, definition, targetIndex)
+		}
+		for _, edgeIndex := range target.outgoing {
+			edge := definition.edges[edgeIndex]
+			if next.Edges[edge.from][edge.outcome] != EdgeUnresolved {
+				continue
+			}
+			if err := settleEdge(edgeIndex, EdgeNotTaken); err != nil {
+				return err
+			}
+		}
+		return closeLoopExits(targetIndex)
+	}
+	// closeLoopExits settles the exits a finished loop decision held open, and
+	// skips the body nodes of a decision-first loop that never ran.
+	closeLoopExits = func(sourceIndex int) error {
 		for _, li := range definition.nodes[sourceIndex].sourceOf {
+			loop := definition.loops[li]
+			if loop.decisionFirst {
+				for _, member := range loop.body {
+					member := definition.nodes[member]
+					if member.parent >= 0 || member.scope != definition.nodes[loop.from].scope ||
+						next.Nodes[member.id] != NodePending {
+						continue
+					}
+					if err := skipNode(definition.index[member.id]); err != nil {
+						return err
+					}
+				}
+			}
 			for _, exit := range definition.loops[li].exits {
 				edge := definition.edges[exit]
 				if next.Edges[edge.from][edge.outcome] != EdgeUnresolved {
@@ -909,7 +956,7 @@ func completeAndSettle(next *Checkpoint, definition *Definition, index int, arri
 		}
 		counts := touched[targetIndex]
 		if counts == nil {
-			scanned := countDispositions(*next, definition, target.incoming)
+			scanned := countDispositions(*next, definition, candidateEdges(*next, definition, targetIndex))
 			counts = &scanned
 			touched[targetIndex] = counts
 		}
@@ -929,25 +976,7 @@ func completeAndSettle(next *Checkpoint, definition *Definition, index int, arri
 		}
 		switch {
 		case counts.arrived == 0:
-			next.Nodes[target.id] = NodeSkipped
-			// A compound parent that will never activate can never start its
-			// stages, and the stages have no edges for closure to travel along, so
-			// they are skipped here with their parent. Without this they would sit
-			// pending forever in a run that is otherwise finished.
-			for _, childIndex := range target.children {
-				next.Nodes[definition.nodes[childIndex].id] = NodeSkipped
-			}
-			// A subprocess that will never activate closes its whole body the same
-			// way: every body node is skipped and every body edge not taken.
-			if target.kind == definitionSubprocess {
-				skipSubprocessBody(next, definition, targetIndex)
-			}
-			for _, edgeIndex := range target.outgoing {
-				if err := settleEdge(edgeIndex, EdgeNotTaken); err != nil {
-					return err
-				}
-			}
-			if err := closeLoopExits(targetIndex); err != nil {
+			if err := skipNode(targetIndex); err != nil {
 				return err
 			}
 		case target.joinAll || counts.arrived == 1:
