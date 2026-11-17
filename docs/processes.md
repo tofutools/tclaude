@@ -758,6 +758,22 @@ going-back outcome may run. Deciders asked different things each show their
 own text. *+ another decider* on a plain decision makes it a gate; removing
 down to one decider makes it a plain decision again.
 
+**Tracks in the small graph.** *⫴ alongside* on a step that is already a
+track of a fork adds another track to that fork, joined where the others
+join, instead of opening a second fork. *+ after* on a step also offers
+*↺ reviewer track*: a review an agent decides (*approved*, or *changes*) and a
+fix it sends the work back to, which returns to the review (see
+[Tracks](#tracks)). The fix goes to the agent that did the reviewed step
+(*same agent as*), so fixes from every track queue on that one agent while the
+reviews run alongside each other; it is a step like any other, and its
+inspector changes who does it. A second *↺ reviewer track* on the same step,
+or *⫴ alongside* on a review, puts the reviews alongside each other, joined
+before what came next. When a track's rounds run out it fails the run by
+default; *When rounds run out* also offers *ask me*, a decision of yours to
+count the track as approved or fail the run. A run's graph shows each
+track's round (*↺ 2/3*) on its active step, and a join that some tracks have
+reached says which it still waits for (*⧗ waiting for Review 2*).
+
 **Authoring** (Automations › Processes, then open a template). The graph
 editor has the node inspector, live validation, undo/redo, snippets and
 versioned saves; see [Dashboard › Processes](dashboard-automations.md#processes). Three

@@ -301,3 +301,40 @@ test('a run names its template version short, and keeps the full ref to copy', a
   await harness.act(async () => { button.click(); await new Promise((resolve) => setTimeout(resolve, 0)); });
   assert.deepEqual(copied, [ref]);
 });
+
+// tracksRun is two reviewer tracks into a sign-off join: track a approved,
+// track b on its second round.
+const tracksRun = () => ({
+  id: 'run-tracks',
+  nodes: [
+    { id: 'review-a', label: 'Review', kind: 'decision', state: 'done', round: 1, rounds: 3 },
+    { id: 'review-b', label: 'Review 2', kind: 'decision', state: 'running', round: 2, rounds: 3, performer: { kind: 'agent' } },
+    { id: 'fix-b', label: 'Fix 2', kind: 'task', state: 'done', round: 2, rounds: 3, performer: { kind: 'agent' } },
+    { id: 'signoff', label: 'Sign off', kind: 'task', state: 'pending', performer: { kind: 'agent' } },
+  ],
+  edges: [
+    { from: 'review-a', to: 'signoff', label: 'approved', state: 'arrived' },
+    { from: 'review-b', to: 'signoff', label: 'approved', state: 'unresolved' },
+    { from: 'review-b', to: 'fix-b', label: 'changes', back: true, maxIterations: 3, state: 'unresolved' },
+    { from: 'fix-b', to: 'review-b', label: 'next', state: 'arrived' },
+  ],
+});
+
+test('a join some tracks reached says which it still waits for', async (t) => {
+  const { harness, mod } = await kit(t);
+  assert.deepEqual([...mod.joinWaiting(tracksRun())], [['signoff', ['Review 2']]]);
+  const allIn = tracksRun();
+  allIn.edges[1].state = 'arrived';
+  assert.equal(mod.joinWaiting(allIn).size, 0, 'every track arrived');
+  const none = tracksRun();
+  none.edges[0].state = 'unresolved';
+  assert.equal(mod.joinWaiting(none).size, 0, 'no track arrived yet');
+  assert.equal(mod.joinWaiting({ nodes: [{ id: 'x', state: 'pending' }], edges: [{ from: 'y', to: 'x' }] }).size, 0, 'a template has no edge states');
+
+  const mounted = await harness.mount(harness.html`<${mod.ProcessMiniGraph} run=${tracksRun()} onNodeClick=${() => {}} />`);
+  const wait = mounted.container.querySelector('[data-process-join-waiting]');
+  assert.equal(wait.closest('[data-process-node]').dataset.processNode, 'signoff');
+  assert.equal(wait.textContent, '⧗ waiting for Review 2');
+  assert.match(wait.closest('[data-process-node]').getAttribute('title'), /waiting for Review 2/);
+  assert.equal(mounted.container.querySelector('[data-process-node="review-b"] [data-process-round]').textContent, '↺ 2/3', 'the track says its round');
+});

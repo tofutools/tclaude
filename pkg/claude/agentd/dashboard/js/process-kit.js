@@ -386,6 +386,29 @@ export function loopLabel(edge, known = new Map()) {
   return (base ? `${base} · ${bound}` : bound) + then;
 }
 
+// joinWaiting is, for each join of a run that some tracks have reached and
+// others not yet, the names of the steps it still waits on: a node not yet
+// started with an edge into it that arrived and one still open. Runs only:
+// a template's edges carry no state.
+export function joinWaiting(run) {
+  const nodes = new Map((run?.nodes || []).map((node) => [String(node.id), node]));
+  const into = new Map();
+  for (const edge of run?.edges || []) {
+    if (!edge?.state || edge.back === true) continue;
+    const to = String(edge.to);
+    if (!into.has(to)) into.set(to, []);
+    into.get(to).push(edge);
+  }
+  const out = new Map();
+  for (const [id, edges] of into) {
+    if (nodes.get(id)?.state !== 'pending' || !edges.some((edge) => edge.state === 'arrived')) continue;
+    const open = edges.filter((edge) => edge.state === 'unresolved').map((edge) => String(edge.from));
+    const names = [...new Set(open)].map((from) => nodes.get(from)?.label || from);
+    if (names.length) out.set(id, names);
+  }
+  return out;
+}
+
 // nodeRound is a loop body node's round ("2/3"), or '' outside loops.
 export function nodeRound(node) {
   const round = Number(node?.round) || 0;
@@ -660,6 +683,7 @@ export function ProcessMiniGraph({
   const prefix = `pk-ah-${useId().replace(/[^A-Za-z0-9_-]/g, '_')}`;
   const layout = miniGraphLayout(run, { compact });
   if (!layout.nodes.length) return html`<div class="pk-mini-graph empty">no nodes</div>`;
+  const waiting = joinWaiting(run);
   const nodes = layout.nodes.map((node) => {
     const here = performerId && performs(node, performerId);
     const selected = selectedId !== '' && node.id === String(selectedId);
@@ -667,11 +691,14 @@ export function ProcessMiniGraph({
     const cls = `pk-gnode pk-state-${node.state} pk-kind-${node.kind}${isTerminalKind(node.kind) ? ' terminal' : ''}${here ? ' here' : ''}${selected ? ' selected' : ''}${problem ? ' problem' : ''}`;
     const style = `left:${node.x}px;top:${node.y}px;width:${node.width}px;height:${node.height}px`;
     const round = nodeRound(node);
-    const title = `${node.label} · ${kindLabel(node.kind, wizard)} · ${stateLabel(node.state)}${round ? ` · round ${round.replace('/', ' of ')}` : ''}${node.sub ? ` · ${node.sub}` : ''}${node.caption ? ` · ${node.caption}` : ''}${Number(node.retries) > 0 ? ` · retries ${node.retries}× if it fails, then waits for you` : ''}${problem ? ' · has a problem' : ''}`;
+    const title = `${node.label} · ${kindLabel(node.kind, wizard)} · ${stateLabel(node.state)}${round ? ` · round ${round.replace('/', ' of ')}` : ''}${node.sub ? ` · ${node.sub}` : ''}${node.caption ? ` · ${node.caption}` : ''}${Number(node.retries) > 0 ? ` · retries ${node.retries}× if it fails, then waits for you` : ''}${waiting.has(node.id) ? ` · waiting for ${waiting.get(node.id).join(', ')}` : ''}${problem ? ' · has a problem' : ''}`;
     // The round badge marks the loop body's active node; the others say
     // their round in the tooltip.
+    // A join some tracks reached says which it still waits for.
+    const waits = waiting.get(node.id);
     const badge = round && (node.state === 'running' || node.state === 'waiting')
-      ? html`<span class="pk-round" data-process-round=${round} aria-hidden="true">↺ ${round}</span>` : null;
+      ? html`<span class="pk-round" data-process-round=${round} aria-hidden="true">↺ ${round}</span>`
+      : waits ? html`<span class="pk-round pk-join-wait" data-process-join-waiting=${waits.join(', ')} aria-hidden="true">⧗ waiting for ${waits.join(', ')}</span>` : null;
     // ↻N, after the name: an editor's step that retries N times if it fails,
     // then waits. Not on an edge, where the editor's handles sit.
     const retries = Number(node.retries) || 0;

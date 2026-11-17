@@ -91,7 +91,10 @@ export function mainEdge(view, id) {
   if (!out.length) return null;
   const node = view.template.nodes[id];
   if (node?.type === 'decision') {
-    const forward = out.filter((edge) => !loopBound(node, edge.outcome));
+    // Its way on neither loops back nor gives up.
+    const onward = out.filter((edge) => !loopBound(node, edge.outcome));
+    const passing = onward.filter((edge) => !isFailedEnd(view.template.nodes[edge.to]) && !isAskStep(view, edge.to));
+    const forward = passing.length ? passing : onward;
     const pool = forward.length ? forward : out;
     const first = (node.performer?.choices || []).find((choice) => pool.some((edge) => edge.outcome === choice));
     if (first) return pool.find((edge) => edge.outcome === first);
@@ -244,13 +247,16 @@ export function toAgentDecision(view, id) {
 export function canRunAlongside(view, id) {
   const node = view.template.nodes[id];
   if (!isStep(node)) return 'only a step runs alongside another';
+  // A step that is already a track of a fork gets another track there.
+  if (trackFork(view, id)) return '';
   if (view.template.start === id || view.edges.some((edge) => edge.from === '' && edge.to === id)) return 'the first step has no step before it to fan out from';
   if (before(view, id).length !== 1) return 'it has several steps leading to it';
   const main = mainEdge(view, id);
   if (!main) return 'it has no next step to join at';
-  // The fork must close where it opened: one way out of the step, into a
-  // node nothing else enters.
-  if (outgoing(view, id).length !== 1) return 'its other outcomes would leave the parallel branch';
+  // The fork must close where it opened: one way out of the step (a track's
+  // loop back and its way to fail the run aside), into a node nothing else
+  // enters.
+  if (sideExits(view, id).length) return 'its other outcomes would leave the parallel branch';
   if (incoming(view, main.to).length !== 1 && !widensFork(view, id)) return 'the next step is already where several paths meet';
   return '';
 }
@@ -314,7 +320,7 @@ function defaultAgentExhaustion(view, id) {
   for (const outcome of Object.keys(node.loops || {})) {
     const bound = loopBound(node, outcome);
     if (bound.onExhausted) continue;
-    const way = safeExhaustion(view, id, node, outcomes, outcome, { refuse: true });
+    const way = safeExhaustion(view, id, node, outcomes, outcome);
     if (way) setLoopBound(node, outcome, { ...bound, onExhausted: way });
   }
 }
@@ -357,20 +363,17 @@ export const FAIL_RUN = '\u0000fail';
 
 // safeExhaustion is where a gate's used-up loop goes by default: another of
 // its outcomes that neither loops nor is the agree outcome, else a give-up
-// outcome to a failed end (added here, on the view being built).
-// Inside a parallel branch a new end would leave the open fork, which the
-// server refuses: there a gate keeps its old default (the first other way,
-// which validation warns about when it is agree), and a refusable decision
-// gets none (refuse: true).
-function safeExhaustion(view, id, node, outcomes, outcome, { refuse = false } = {}) {
+// outcome to a failed end (added here, on the view being built). That holds
+// inside a track of a fork too, where reaching the failed end ends the run.
+function safeExhaustion(view, id, node, outcomes, outcome) {
   const passing = passOutcome(view, id, node);
   const ways = exhaustionChoices(node, outcomes, outcome);
   const way = ways.find((o) => o !== passing && !APPROVING.test(o));
   if (way) return way;
   const failing = failingOutcome(view, id);
   if (failing) return failing;
-  if (!inParallelBranch(view, id)) return addGiveUp(view, id);
-  return refuse ? '' : (ways.find((o) => o !== node.agree) || ways[0] || '');
+  // A failed end may sit inside a track too: reaching it ends the run.
+  return addGiveUp(view, id);
 }
 
 // failingOutcome is an outcome of id that goes to a failed end, or ''.
@@ -424,10 +427,10 @@ function isFailedEnd(node) {
 
 // exhaustionOptions are where a used-up loop on outcome may go: every other
 // outcome that does not loop, the agree outcome last and only when it is
-// already chosen (it skips the review), and FAIL_RUN ("fail the run") when no
-// outcome goes to a failed end yet and one can be added (not inside a
-// parallel branch). A person deciding may also refuse ('': asked again); a
-// gate or a lone agent may not.
+// already chosen (it skips the review), FAIL_RUN ("fail the run") when no
+// outcome goes to a failed end yet, and for a gate or a lone agent ASK_YOU
+// ("ask me": you count it as approved or fail the run). A person deciding may
+// also refuse ('': asked again); a gate or a lone agent may not.
 export function exhaustionOptions(view, id, outcome) {
   const node = view.template.nodes[id];
   const outcomes = outgoing(view, id).map((edge) => edge.outcome);
@@ -442,7 +445,17 @@ export function exhaustionOptions(view, id, outcome) {
     const failed = isFailedEnd(view.template.nodes[to]);
     options.push({ value: way, label: failed ? 'fail the run' : way, skipsReview: gate && passes(way) });
   }
-  if (!options.some((o) => o.label === 'fail the run') && !inParallelBranch(view, id)) options.push({ value: FAIL_RUN, label: 'fail the run', adds: true });
+  if (!options.some((o) => o.label === 'fail the run')) options.push({ value: FAIL_RUN, label: 'fail the run', adds: true });
+  // Nobody is there to pick when an agent decides: you can be asked instead.
+  if (gate && !options.some((o) => isAskStep(view, view.edges.find((edge) => edge.from === id && edge.outcome === o.value)?.to))) {
+    options.push({ value: ASK_YOU, label: 'ask me', adds: true });
+  }
+  for (const option of options) {
+    if (isAskStep(view, view.edges.find((edge) => edge.from === id && edge.outcome === option.value)?.to)) {
+      option.label = 'ask me';
+      option.skipsReview = false;
+    }
+  }
   return options;
 }
 
@@ -457,6 +470,7 @@ export function setExhaustion(view, id, outcome, value) {
   const outcomes = outgoing(next, id).map((edge) => edge.outcome);
   let way = value;
   if (way === FAIL_RUN) way = addGiveUp(next, id);
+  else if (way === ASK_YOU) way = addAskYou(next, id);
   else if (way && !outcomes.includes(way)) throw new Error(`${way} is not an outcome of this step`);
   if (!way && decidedAlone(node)) throw new Error('nobody but its deciders decides here: it needs somewhere to go once its rounds run out');
   setLoopBound(node, outcome, way ? { ...bound, onExhausted: way } : { maxIterations: bound.maxIterations });
@@ -488,6 +502,7 @@ export function setDecisionWho(view, id, who) {
 export function insertAfter(view, id, kind) {
   const why = canInsertAfter(view, id);
   if (why) throw new Error(why);
+  if (kind === REVIEWER_TRACK) return addReviewerTrack(view, id);
   const next = copyView(view);
   const added = addNode(next, newStepNode(kind));
   const main = mainEdge(next, id);
@@ -572,6 +587,15 @@ export function insertOnAnswer(view, id, outcome, kind) {
 export function runAlongside(view, id, kind) {
   const why = canRunAlongside(view, id);
   if (why) throw new Error(why);
+  if (kind === REVIEWER_TRACK) return addReviewerTrack(view, id);
+  const into = trackFork(view, id);
+  if (into) {
+    const next = copyView(view);
+    const added = addNode(next, newStepNode(kind));
+    next.edges.push({ from: into.fork, outcome: uniqueOutcome(next, into.fork, added), to: added });
+    linkOn(next, added, kind, into.join);
+    return { view: syncLoops(next), id: added, fork: into.fork };
+  }
   const next = copyView(view);
   const main = mainEdge(next, id);
   const added = addNode(next, newStepNode(kind));
@@ -589,6 +613,164 @@ export function runAlongside(view, id, kind) {
   linkOn(next, added, kind, main.to);
   next.template.nodes[main.to].join = 'all';
   return { view: syncLoops(next), id: added, fork };
+}
+
+// ---- tracks ----------------------------------------------------------------
+//
+// A track is one branch of a parallel fork, joined with the others before the
+// run goes on. A reviewer track is the preset review shape as a track: a
+// review an agent decides (approved, or changes) and a fix it sends the work
+// back to, which then returns to the review: a loop that starts at its
+// decision, so each track runs its rounds at its own pace.
+
+// REVIEWER_TRACK is the kind the + after and ⫴ alongside pickers offer for a
+// reviewer track.
+export const REVIEWER_TRACK = 'reviewer-track';
+
+// sideExits are id's outcomes other than its main way on that are neither a
+// loop back nor a way to fail the run: what would leave a track.
+function sideExits(view, id) {
+  const node = view.template.nodes[id];
+  const main = mainEdge(view, id);
+  return outgoing(view, id).filter((edge) => edge !== main && !loopBound(node, edge.outcome)
+    && !isFailedEnd(view.template.nodes[edge.to]) && !isAskStep(view, edge.to));
+}
+
+// reviewLoop is the loop that starts at decision id: an outcome going back
+// to work only id leads to, which returns to id. It returns { outcome, fix }
+// or null.
+export function reviewLoop(view, id) {
+  const node = view.template.nodes[id];
+  if (node?.type !== 'decision') return null;
+  for (const edge of outgoing(view, id)) {
+    if (!loopBound(node, edge.outcome) || edge.to === id) continue;
+    if (before(view, edge.to).every((from) => from === id) && outgoing(view, edge.to).some((e) => e.to === id)) {
+      return { outcome: edge.outcome, fix: edge.to };
+    }
+  }
+  return null;
+}
+
+// trackFork is the fork id is a track of and the join its tracks meet at:
+// id is entered only from a parallel node, and goes on (its main way) to a
+// node that joins. Null otherwise.
+function trackFork(view, id) {
+  const from = before(view, id).filter((f) => !reviewLoop(view, id) || f !== reviewLoop(view, id).fix);
+  if (from.length !== 1 || view.template.nodes[from[0]]?.type !== 'parallel') return null;
+  const join = mainEdge(view, id)?.to;
+  if (!join || !view.template.nodes[join]?.join || sideExits(view, id).length) return null;
+  return { fork: from[0], join };
+}
+
+// reviewedStep is the step whose work the review tracks at id review: the
+// step before them (or before their fork).
+function reviewSite(view, id) {
+  const node = view.template.nodes[id];
+  if (!node) return { why: 'no such step' };
+  if (reviewLoop(view, id)) {
+    const fork = trackFork(view, id);
+    if (fork) return { reviewed: before(view, fork.fork)[0], fork };
+    const into = before(view, id).filter((f) => f !== reviewLoop(view, id).fix);
+    const after = mainEdge(view, id)?.to;
+    if (into.length !== 1 || !after) return { why: 'its review has no single step before it and after it' };
+    if (before(view, after).length !== 1) return { why: 'what comes after the review is already where several paths meet' };
+    return { reviewed: into[0], review: id, after };
+  }
+  if (!isStep(node) && node.type !== 'start') return { why: 'only a step\'s work is reviewed' };
+  const main = mainEdge(view, id);
+  if (!main) return { why: 'nothing comes after it for the review to lead on to' };
+  const to = view.template.nodes[main.to];
+  if (to?.type === 'parallel') {
+    const heads = outgoing(view, main.to).map((edge) => edge.to);
+    if (heads.length && heads.every((head) => reviewLoop(view, head) && trackFork(view, head))) {
+      return { reviewed: id, fork: trackFork(view, heads[0]) };
+    }
+  }
+  if (reviewLoop(view, main.to)) return reviewSite(view, main.to);
+  return { reviewed: id, after: main.to };
+}
+
+export function canAddReviewerTrack(view, id) {
+  return reviewSite(view, id).why || '';
+}
+
+// addReviewerTrack reviews id's work with one more reviewer track. The first
+// is a plain review loop after id; the second puts both alongside each other
+// under a fork, joined where the review led on; later ones join that fork.
+// The fix goes to the agent that did the reviewed step (sameAs) when that is
+// an agent step, so fixes from every track queue on that one agent while the
+// reviews run alongside each other. A used-up track fails the run.
+export function addReviewerTrack(view, id) {
+  const site = reviewSite(view, id);
+  if (site.why) throw new Error(site.why);
+  const next = copyView(view);
+  const count = Object.keys(next.template.nodes).filter((nodeID) => reviewLoop(next, nodeID)).length + 1;
+  const suffix = count > 1 ? ` ${count}` : '';
+  const reviewed = next.template.nodes[site.reviewed];
+  const review = addNode(next, {
+    type: 'decision', name: `Review${suffix}`,
+    performer: { kind: 'agent', prompt: 'Review the work. Report approved, or changes with what to fix.' },
+  }, `review${suffix}`);
+  const fixPerformer = { kind: 'agent', prompt: 'Address the review feedback, then hand the work back for review.' };
+  if (reviewed?.type === 'task' && reviewed.performer?.kind === 'agent') fixPerformer.sameAs = site.reviewed;
+  const fix = addNode(next, { type: 'task', name: `Fix${suffix}`, performer: fixPerformer }, `fix${suffix}`);
+  next.edges.push({ from: review, outcome: 'changes', to: fix }, { from: fix, outcome: 'next', to: review });
+  if (site.fork) {
+    next.edges.push({ from: site.fork.fork, outcome: uniqueOutcome(next, site.fork.fork, review), to: review });
+    next.edges.push({ from: review, outcome: 'approved', to: site.fork.join });
+  } else if (site.review) {
+    // The second track: both run alongside each other and join after.
+    const fork = addNode(next, { type: 'parallel', name: 'Reviews' }, 'reviews');
+    for (const edge of next.edges) if (edge.to === site.review && edge.from !== reviewLoop(next, site.review).fix) edge.to = fork;
+    next.edges.push({ from: fork, outcome: site.review, to: site.review }, { from: fork, outcome: review, to: review });
+    next.edges.push({ from: review, outcome: 'approved', to: site.after });
+    next.template.nodes[site.after].join = 'all';
+  } else {
+    const main = mainEdge(next, site.reviewed);
+    main.to = review;
+    next.edges.push({ from: review, outcome: 'approved', to: site.after });
+  }
+  syncLoops(next);
+  const bound = loopBound(next.template.nodes[review], 'changes');
+  if (bound) setLoopBound(next.template.nodes[review], 'changes', { ...bound, onExhausted: addGiveUp(next, review) });
+  return { view: next, id: review };
+}
+
+// ASK_YOU is the exhaustion picker's value for "ask me": a used-up loop
+// goes to a decision of yours, to count the work as passed or fail the run.
+export const ASK_YOU = '\u0000ask';
+
+// isAskStep says whether id is such a decision of yours: entered only by a
+// decision's used-up loop, with two answers, one of which fails the run.
+function isAskStep(view, id) {
+  const node = view.template.nodes[id];
+  if (node?.type !== 'decision' || node.performer?.kind !== 'human') return false;
+  const out = outgoing(view, id);
+  if (out.length !== 2 || !out.some((edge) => isFailedEnd(view.template.nodes[edge.to]))) return false;
+  const into = incoming(view, id);
+  return into.length === 1 && Object.values(view.template.nodes[into[0].from]?.loops || {})
+    .some((bound) => bound?.onExhausted === into[0].outcome);
+}
+
+// addAskYou gives decision id an outcome to a decision of yours that counts
+// the work as passed (on to id's pass target) or fails the run, and returns
+// its name.
+function addAskYou(view, id) {
+  const existing = outgoing(view, id).find((edge) => isAskStep(view, edge.to));
+  if (existing) return existing.outcome;
+  const node = view.template.nodes[id];
+  const pass = passOutcome(view, id, node);
+  const passTo = outgoing(view, id).find((edge) => edge.outcome === pass)?.to;
+  const ask = addNode(view, {
+    type: 'decision', name: `${node.name || id}: rounds used up`,
+    performer: { kind: 'human', ask: `${node.name || id} ran out of rounds. Count it as approved, or fail the run?`, choices: ['count as approved', 'fail the run'] },
+  }, `${id}-used-up`);
+  let end = Object.keys(view.template.nodes).find((nodeID) => isFailedEnd(view.template.nodes[nodeID]));
+  if (!end) end = addNode(view, { type: 'end', name: 'Gave up', result: 'failed' }, 'gave-up');
+  view.edges.push({ from: ask, outcome: 'count as approved', to: passTo }, { from: ask, outcome: 'fail the run', to: end });
+  const outcome = uniqueOutcome(view, id, 'ask-you');
+  view.edges.push({ from: id, outcome, to: ask });
+  return outcome;
 }
 
 // duplicate puts a copy of `id` right after it: the copy takes over `id`'s

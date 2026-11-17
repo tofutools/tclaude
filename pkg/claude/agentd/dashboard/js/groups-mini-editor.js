@@ -23,7 +23,7 @@ import { ProcessEditModel } from './process-edit-model.js';
 import {
   addOutcome, branch, branchKinds, canBranch, canDelete, canInsertAfter, canInsertBefore, canRunAlongside, changeKind, changeSummary,
   deleteOrphans, deleteStep, draftProjection, duplicate, insertAfter, insertBefore, isStep, miniKind, outcomesOf,
-  canRemoveOutcome, removeOutcome, renameOutcome, runAlongside, setLoopRounds, setOutcomeTarget, targetsFor, updateStep,
+  canRemoveOutcome, removeOutcome, renameOutcome, runAlongside, REVIEWER_TRACK, canAddReviewerTrack, reviewLoop, setLoopRounds, setOutcomeTarget, targetsFor, updateStep,
   addDecider, canAddDecider, gateDeciders, removeDecider, setAgree, setDecider,
   exhaustionOptions, setDecisionWho, setExhaustion, declareParams, setParams, insertOnAnswer,
 } from './process-mini-edit.js';
@@ -68,6 +68,20 @@ const BRANCH_TASK_CHOICES = Object.freeze({
   decide: ['🤖', 'an agent decides next'],
   'decide-you': ['👤', 'you decide next'],
 });
+// REVIEWER_CHOICE is the reviewer-track preset: a review an agent decides
+// and a fix it sends the work back to, run alongside any other reviewer
+// tracks of the same work and joined before what comes next. + after offers
+// it on the step whose work is reviewed, ⫴ alongside on a review track.
+const REVIEWER_CHOICE = Object.freeze([REVIEWER_TRACK, '↺', 'reviewer track']);
+
+function afterChoices(view, id) {
+  return canAddReviewerTrack(view, id) ? INSERT_CHOICES : [...INSERT_CHOICES, REVIEWER_CHOICE];
+}
+
+function alongsideChoices(view, id) {
+  return reviewLoop(view, id) && !canAddReviewerTrack(view, id) ? [...KIND_CHOICES, REVIEWER_CHOICE] : KIND_CHOICES;
+}
+
 const VALIDATE_DELAY_MS = 400;
 // MAX_REFUSED is how many saves in a row a newer version may refuse before
 // the editor stops merging and saving again, and says so.
@@ -99,6 +113,7 @@ function whoLine(node, fallbackInfo) {
   if (who.mode === 'spawn') return `a new agent · ${who.profile || fallbackInfo?.defaultSpawnProfile || 'group default'}`;
   if (who.mode === 'you') return 'you';
   if (who.mode === 'command') return stepText({ node }) || 'a command';
+  if (node.performer?.sameAs) return agent(`same agent as ${node.performer.sameAs}`);
   return agent('pick who');
 }
 
@@ -463,9 +478,9 @@ function StructureMenu({ view, menu, onRun, onWrap, onClose }) {
     <${KindChips} label=${text} disabled=${reason} choices=${choices} onPick=${(kind) => onRun(() => op(view, id, kind))} /></div>`;
   return html`<div ref=${rootRef} class="gm-menu" role="menu" aria-label=${`Structure of ${node.name || id}`} style=${floating(menu, 400, 330)}>
     ${kinds('before', 'Insert step before', canInsertBefore(view, id), insertBefore)}
-    ${kinds('after', 'Insert step after', canInsertAfter(view, id), insertAfter)}
+    ${kinds('after', 'Insert step after', canInsertAfter(view, id), insertAfter, afterChoices(view, id))}
     ${kinds('branch', node.type === 'task' ? 'Branch' : 'Branch on outcome', step ? canBranch(view, id) : 'only a step branches', branch, branchChoices(view, id))}
-    ${kinds('alongside', 'Run alongside (parallel)', canRunAlongside(view, id), runAlongside, KIND_CHOICES)}
+    ${kinds('alongside', 'Run alongside (a track)', canRunAlongside(view, id), runAlongside, alongsideChoices(view, id))}
     <hr />
     ${item('duplicate', 'Duplicate', step ? '' : 'only a step can be duplicated here', () => onRun(() => duplicate(view, id)))}
     ${item('wrap', 'Wrap in a subprocess… (full editor)', step ? '' : 'only a step can be wrapped', onWrap)}
@@ -903,7 +918,8 @@ export function MiniGraphEditor({
       ${drag?.moved && html`<span class="gm-ghost" style=${`left:${drag.x}px;top:${drag.y}px`}>+ new step</span>`}
       ${picker && html`<div class="gm-picker" data-mini-picker=${picker.op} style=${floating(picker, 300, 40)}>
         <${KindChips} label=${`${{ after: 'Add after', branch: 'Branch to', alongside: 'Run alongside', before: 'Insert before', answer: `On ${picker.outcome}` }[picker.op]}`}
-          choices=${picker.op === 'branch' ? branchChoices(draft, picker.id) : picker.op === 'alongside' ? KIND_CHOICES : INSERT_CHOICES}
+          choices=${picker.op === 'branch' ? branchChoices(draft, picker.id) : picker.op === 'alongside' ? alongsideChoices(draft, picker.id)
+    : picker.op === 'after' ? afterChoices(draft, picker.id) : INSERT_CHOICES}
           onPick=${(kind) => run(() => OPS[picker.op](draft, picker.id, kind))} />
         <${Button} size="sm" variant="link" class="gq-link" aria-label="Close" onClick=${() => setPicker(null)}>✕<//>
       </div>`}
