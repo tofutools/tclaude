@@ -104,8 +104,10 @@ function PersonIcon() {
 }
 
 // PRReviewBadge renders nothing until something is known about the PR's
-// reviews, and nothing for a draft or a closed/merged PR — none of those is
-// waiting on a review decision.
+// reviews, and nothing for a closed/merged PR, which is no longer waiting on
+// a review decision. A draft keeps its pill: reviewers can approve or ask for
+// changes before it is marked ready, and the draft marker beside it already
+// says it is not asking yet.
 export function PRReviewBadge({ url, prNumber, reviews, prState = '' }) {
   const rootRef = useRef(null);
   const panelRef = useRef(null);
@@ -115,7 +117,7 @@ export function PRReviewBadge({ url, prNumber, reviews, prState = '' }) {
 
   const prURL = safeCheckURL(url).replace(/\/+$/, '');
   const state = prReviewState(reviews);
-  if (!prURL || !state || ['draft', 'merged', 'closed'].includes(prState)) return null;
+  if (!prURL || !state || ['merged', 'closed'].includes(prState)) return null;
   const panelID = `rv-panel-${instanceID.replace(/[^a-zA-Z0-9_-]+/g, '-')}`;
   const headingID = `${panelID}-heading`;
   const label = prReviewLabel(reviews);

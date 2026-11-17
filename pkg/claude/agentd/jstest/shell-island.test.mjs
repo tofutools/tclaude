@@ -177,7 +177,7 @@ test('footer open PRs disclosure pins, filters, and closes accessibly', async (t
     items: [
       { number: 1, url: 'https://github.com/acme/app/pull/1', title: 'Fails', repository: 'acme/app', agent_id: 'agt_1', agent_title: 'builder', checks: { total: 1, failed: 1, state: 'failing' } },
       { number: 2, url: 'https://github.com/acme/app/pull/2', title: 'Runs', repository: 'acme/app', checks: { total: 1, pending: 1, state: 'pending' } },
-      { number: 3, url: 'https://github.com/acme/app/pull/3', title: 'Passes', repository: 'acme/app', agent_id: 'agt_3', draft: true, checks: { total: 1, passed: 1, state: 'passing' } },
+      { number: 3, url: 'https://github.com/acme/app/pull/3', title: 'Passes', repository: 'acme/app', agent_id: 'agt_3', draft: true, checks: { total: 1, passed: 1, state: 'passing' }, reviews: { decision: 'approved', approved: 1 } },
     ],
   } }));
   const trigger = getByRole(mounted.container, 'button', { name: /Open PRs/ });
@@ -189,6 +189,7 @@ test('footer open PRs disclosure pins, filters, and closes accessibly', async (t
   assert.equal(mounted.container.querySelectorAll('.open-pr-row').length, 3);
   assert.ok(mounted.container.querySelector('.open-pr-row.is-draft .open-pr-state-draft'));
   assert.equal(mounted.container.querySelector('.open-pr-draft-label').textContent, 'Draft');
+  assert.ok(mounted.container.querySelector('.open-pr-row.is-draft .rv-badge.rv-approved'), 'a draft shows its review state too');
   assert.match(getByRole(mounted.container, 'button', { name: /Needs attention 1/ }).textContent, /Needs attention 1/);
 
   assert.equal(mounted.container.querySelector('.open-prs-include-drafts'), null,
