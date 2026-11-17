@@ -409,6 +409,32 @@ export function joinWaiting(run) {
   return out;
 }
 
+// decisionFirstRanking is, per edge, whether the layout ranks it as going
+// back. A loop that starts at its decision (review ↺ fix) reaches its fix
+// only through the loop's edge, so ranked that way the fix would sit before
+// the start: there the loop's edge ranks forward, and the fix's edges back
+// into the review go back instead.
+function decisionFirstRanking(edges) {
+  const back = edges.map((edge) => edge.back);
+  edges.forEach((loop, index) => {
+    if (!loop.loop) return;
+    const enters = edges.filter((edge) => edge.to === loop.to && !edge.back);
+    if (enters.length) return;
+    // The fix chain: forward from the loop's target, until the decision.
+    const chain = new Set([loop.to]);
+    const stack = [loop.to];
+    while (stack.length) {
+      const at = stack.pop();
+      for (const edge of edges) {
+        if (edge.from === at && !edge.back && edge.to !== loop.from && !chain.has(edge.to)) { chain.add(edge.to); stack.push(edge.to); }
+      }
+    }
+    back[index] = false;
+    edges.forEach((edge, i) => { if (edge.to === loop.from && chain.has(edge.from)) back[i] = true; });
+  });
+  return back;
+}
+
 // nodeRound is a loop body node's round ("2/3"), or '' outside loops.
 export function nodeRound(node) {
   const round = Number(node?.round) || 0;
@@ -429,11 +455,12 @@ export function miniGraphLayout(run, { compact = false } = {}) {
     ? { ...edge, back: true, loop: true, label: loopLabel(edge, known) } : edge));
   if (!nodes.length) return { width: 0, height: 0, nodes: [], edges: [] };
   const sizes = new Map(nodes.map((node) => [node.id, miniNodeSize(node, scale)]));
+  const rankBack = decisionFirstRanking(edges);
   let laid;
   try {
     laid = layoutProcessGraph({
       nodes: nodes.map((node) => ({ id: node.id, type: node.kind })),
-      edges: edges.map((edge) => ({ from: edge.from, to: edge.to, back: edge.back })),
+      edges: edges.map((edge, index) => ({ from: edge.from, to: edge.to, back: rankBack[index] })),
     }, {
       marginX: scale.margin,
       marginY: scale.margin,
@@ -478,7 +505,7 @@ export function miniGraphLayout(run, { compact = false } = {}) {
   // sits on top of the nodes it joins: widen just that gap by pushing
   // everything from the target's rank rightwards.
   const labelled = edges
-    .filter((edge) => !edge.back && String(edge.label || edge.outcome || ''))
+    .filter((edge, index) => !rankBack[index] && String(edge.label || edge.outcome || ''))
     .map((edge) => ({ edge, from: position.get(edge.from), to: position.get(edge.to) }))
     .filter(({ from, to }) => from && to && to.x > from.x)
     .sort((a, b) => a.to.x - b.to.x);
@@ -505,7 +532,7 @@ export function miniGraphLayout(run, { compact = false } = {}) {
     const b = byID.get(edge.to);
     const state = edgeVisualState(a, b);
     const label = String(edge.label || edge.outcome || '');
-    if (edge.back || b.x <= a.x) {
+    if (rankBack[index] || b.x <= a.x) {
       const lane = backLaneY + backLanes * 10;
       backLanes += 1;
       const y1 = a.y + a.height / 2;
@@ -521,7 +548,7 @@ export function miniGraphLayout(run, { compact = false } = {}) {
       const middle = points[Math.floor((points.length - 1) / 2)];
       const next = points[Math.floor((points.length - 1) / 2) + 1] || middle;
       return {
-        key: `${edge.from}->${edge.to}#${index}`, from: edge.from, to: edge.to, back: false, state, label,
+        key: `${edge.from}->${edge.to}#${index}`, from: edge.from, to: edge.to, back: false, loop: !!edge.loop, state, label,
         path: points.map((point, i) => `${i ? 'L' : 'M'}${point.x},${point.y}`).join(' '),
         labelX: (middle.x + next.x) / 2, labelY: (middle.y + next.y) / 2,
       };
@@ -530,7 +557,7 @@ export function miniGraphLayout(run, { compact = false } = {}) {
     const x2 = b.x - b.width / 2 - 3;
     const mid = (x1 + x2) / 2;
     return {
-      key: `${edge.from}->${edge.to}#${index}`, from: edge.from, to: edge.to, back: false, state, label,
+      key: `${edge.from}->${edge.to}#${index}`, from: edge.from, to: edge.to, back: false, loop: !!edge.loop, state, label,
       path: `M${x1},${a.y} C${mid},${a.y} ${mid},${b.y} ${x2},${b.y}`,
       labelX: mid, labelY: (a.y + b.y) / 2,
     };
