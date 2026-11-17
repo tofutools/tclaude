@@ -142,11 +142,23 @@ func performProgram(ctx context.Context, runID string, command engine.Command, b
 	case result.Canceled:
 		result.Observation.Error = boundedError("program canceled: " + cause.Error())
 	case runErr != nil:
-		result.Observation.Error = boundedError(runErr.Error())
+		result.Observation.Error = boundedError(withStderrTail(runErr.Error(), result.Stderr))
 	default:
-		result.Observation.Error = boundedError(fmt.Sprintf("program exited with code %d", result.Observation.ExitCode))
+		result.Observation.Error = boundedError(withStderrTail(fmt.Sprintf("program exited with code %d", result.Observation.ExitCode), result.Stderr))
 	}
 	return result, nil
+}
+
+// withStderrTail adds a failed program's last stderr line to its error, so
+// a run that stops there says why ("exit status 1: 3 tests failed"), not
+// only that it did.
+func withStderrTail(err, stderr string) string {
+	lines := strings.Split(strings.TrimRight(stderr, " \t\r\n"), "\n")
+	last := strings.TrimSpace(lines[len(lines)-1])
+	if last == "" {
+		return err
+	}
+	return err + ": " + last
 }
 
 // Observe atomically commits one worker's program observation together with

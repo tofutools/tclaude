@@ -3,9 +3,12 @@ package agentd
 import (
 	"fmt"
 	"log/slog"
+	"strings"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/process/engine"
+	"github.com/tofutools/tclaude/pkg/claude/process/model"
+	"github.com/tofutools/tclaude/pkg/claude/process/strictjson"
 )
 
 // A step that fails with nothing in its process to handle it ends the run
@@ -36,16 +39,16 @@ func notifyProcessRunFailed(runID string) {
 		slog.Warn("process run failed: find its overseer", "run", runID, "error", err)
 		return
 	}
-	name := processRunTemplateName(runID)
+	name, step := processRunNames(runID, failure.NodeID)
 	reason := sanitizeProcessText(failure.Reason)
 	if reason == "" {
 		reason = "no reason was given"
 	}
 	headline := fmt.Sprintf("run %s (%s) failed at step %s", runID, name, failure.NodeID)
-	body := fmt.Sprintf("Process %s failed at step %s (attempt %d):\n\n%s\n\n"+
+	body := fmt.Sprintf("%s (run %s) failed at its step %s (attempt %d):\n\n%s\n\n"+
 		"Nothing in the process handles this failure, so the run stopped there. "+
 		"`tclaude process show %s` has the run; `tclaude process events %s` has its history.",
-		headline, failure.NodeID, failure.Attempt, reason, runID, runID)
+		name, runID, step, failure.Attempt, reason, runID, runID)
 	if !overseer.operator() {
 		conv, _ := db.CurrentConvForAgent(overseer.AgentID)
 		if conv != "" {
@@ -79,4 +82,28 @@ func notifyProcessRunFailed(runID string) {
 		dispatchHumanMessageNotification("", m.FromTitle, m.GroupName, m.Subject, m.Body)
 		mirrorHumanMessage(id)
 	}
+}
+
+// processRunNames names a run's process and one of its steps for a person:
+// the names their author gave, else the ids.
+func processRunNames(runID, nodeID string) (process, step string) {
+	process, step = processRunTemplateName(runID), nodeID
+	record, err := db.GetProcessRun(runID)
+	if err != nil || record == nil {
+		return process, step
+	}
+	var tmpl model.Template
+	if err := strictjson.Decode(record.TemplateSnapshotJSON, &tmpl); err != nil {
+		return process, step
+	}
+	if name := strings.TrimSpace(tmpl.Name); name != "" {
+		process = sanitizeProcessText(name)
+	}
+	if node, ok := tmpl.Nodes[nodeID]; ok && strings.TrimSpace(node.Name) != "" {
+		step = sanitizeProcessText(strings.TrimSpace(node.Name))
+		if !strings.EqualFold(step, nodeID) {
+			step = fmt.Sprintf("%s (%s)", step, nodeID)
+		}
+	}
+	return process, step
 }
