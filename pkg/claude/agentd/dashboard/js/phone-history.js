@@ -136,20 +136,28 @@ export function installPhoneHistory({ view, tab = () => null, doc = globalThis.d
       const top = stepLayers().at(-1);
       const layerOnTop = top && (!phoneSheet.peek() || top.seq > sheetSeq);
       if (layerOnTop && counted() > (Number(want) || 0)) {
-        // A question on top (Back while a dialog asks Discard?) closes as
-        // Keep, leaving its form up without the entry Back just left.
+        // A question on top (Back while a dialog asks Discard?) is not
+        // counted: its answer decides whether the form under it goes (Back
+        // confirms a discard) or stays without the entry Back just left.
+        // Either way the address has left the form's entry until the close
+        // lands (closing).
         const question = quiet.has(top);
         const back = { retaken: false };
-        asking = back;
-        // Either way the address has left the form's entry until the close
-        // lands (closing). A question is not counted, so closing it changes
-        // no step.
-        depth = counted() - (question ? 0 : 1);
+        // A question's Back leaves the entry of the form that asked (the
+        // Back that raised it): that form's own close settles it.
+        if (question && asking) asking.offEntry = true;
+        else asking = back;
+        depth = counted() - 1;
         closing += 1;
         void closeTopBackLayer().then((closed) => {
+          if (question) { closing -= 1; return; }
           if (asking === back) asking = null;
           if (!back.retaken) closing -= 1;
-          if (back.retaken || (closed && !question)) return;
+          if (closed) return;
+          // Still up: kept, by a tap or a question answered Keep. It takes
+          // its entry back, unless it is still on it (a tap's Keep while
+          // its entry was there).
+          if (back.retaken && !back.offEntry) return;
           depth = counted();
           retakeStep();
         });
@@ -169,7 +177,7 @@ export function installPhoneHistory({ view, tab = () => null, doc = globalThis.d
           // page behind it.
           closing += 1;
           try {
-            requestClosePhoneSheet();
+            requestClosePhoneSheet({ back: true });
             held = !!phoneSheet.peek();
           } finally {
             if (!held) closing -= 1;
@@ -215,6 +223,7 @@ export function installPhoneHistory({ view, tab = () => null, doc = globalThis.d
     const sheet = phoneSheet.value;
     const layers = backLayers.value;
     const raised = layers.filter((layer) => !knownLayers.includes(layer));
+    const went = layers.length < knownLayers.length;
     knownLayers = layers;
     // A layer opened while Back's close is on its way is that close's
     // question: no step of its own, and the form takes its entry back now,
@@ -229,6 +238,9 @@ export function installPhoneHistory({ view, tab = () => null, doc = globalThis.d
     }
     const next = counted(page, sheet, layers);
     if (next === depth) return;
+    // A layer went, yet more are up than the router knows of: the form a
+    // Back is closing, still up while its question is answered. No step.
+    if (went && next > depth && closing > 0) return;
     const closed = next < depth;
     depth = next;
     if (!restoring) announceOverlay({ closed, doc });

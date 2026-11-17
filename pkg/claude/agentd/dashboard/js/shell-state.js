@@ -71,6 +71,8 @@ export function createShellState({ setTimer = setTimeout, clearTimer = clearTime
         cancelLabel: String(options.cancelLabel || 'Cancel'),
         busyLabel: String(options.busyLabel || 'Working…'),
         informational: !!options.informational,
+        // backConfirms: Back answers OK rather than Cancel (Discard input?).
+        backConfirms: !!options.backConfirms,
         preformatted: !!options.preformatted,
         // checks are optional checkboxes ({label, checked, hint?}). The modal
         // toggles each item's `checked` in place, so the caller reads its own
@@ -167,5 +169,8 @@ export function shellConfirmDiscard() {
     title: 'Discard input?',
     body: 'Closing the form will discard any unsaved input. Continue?',
     okLabel: 'Discard',
+    // A form's Back asks this; Back again means Discard, so Back alone can
+    // always leave a form (tk_3739e29d).
+    backConfirms: true,
   });
 }

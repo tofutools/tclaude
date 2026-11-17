@@ -959,10 +959,13 @@ function Confirm({ feedback }) {
   // — the same busy vocabulary the transaction dialogs already use.
   const busy = !!model?.busy;
   const okRef = useRef(null);
-  // Back is Cancel; a confirmed action in flight stays up.
+  // Back is Cancel, except on a question Back itself raised to confirm (a
+  // form's Discard input?: Back again confirms the discard, tk_3739e29d); a
+  // confirmed action in flight stays up.
   useBackLayer(!!model, () => {
-    if (feedback.confirmation.peek?.()?.busy ?? feedback.confirmation.value?.busy) return false;
-    feedback.resolveConfirmation(false);
+    const now = feedback.confirmation.peek?.() ?? feedback.confirmation.value;
+    if (now?.busy) return false;
+    feedback.resolveConfirmation(!!now?.backConfirms);
     return true;
   });
   useLayoutEffect(() => {

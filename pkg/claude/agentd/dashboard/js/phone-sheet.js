@@ -42,22 +42,27 @@ export function closePhoneSheet() {
 let guard = null;
 
 // requestClosePhoneSheet is a close the operator asked for: Escape, the
-// scrim, a swipe down, or a Body's Cancel. A guard may hold it.
-export function requestClosePhoneSheet() {
-  if (guard) guard();
+// scrim, a swipe down, Back ({ back: true }), or a Body's Cancel. A guard
+// may hold it.
+export function requestClosePhoneSheet(why = {}) {
+  if (guard) guard(why);
   else closePhoneSheet();
 }
 
-// useSheetGuard guards the sheet this Body renders in: onRequestClose runs
-// instead of a requested close and returns true when it held the close (a
-// draft to ask about), false to let it go. It is installed as the Body
+// useSheetGuard guards the sheet this Body renders in: onRequestClose(why)
+// runs instead of a requested close and returns true when it held the close
+// (a draft to ask about), false to let it go. why.back says it is Back.
+//
+// The rule for a draft: the first close asks "Discard?"; asked again while
+// the question is up, Back means Discard (so Back alone can always leave a
+// form) and any other close means Keep. It is installed as the Body
 // mounts and always calls the latest onRequestClose, so a close the instant
 // after a keystroke is guarded too.
 export function useSheetGuard(onRequestClose) {
   const latest = useRef(onRequestClose);
   latest.current = onRequestClose;
   useLayoutEffect(() => {
-    const mine = () => { if (!latest.current()) closePhoneSheet(); };
+    const mine = (why = {}) => { if (!latest.current(why)) closePhoneSheet(); };
     guard = mine;
     return () => { if (guard === mine) guard = null; };
   }, []);
