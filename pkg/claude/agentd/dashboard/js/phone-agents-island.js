@@ -41,7 +41,7 @@ import { Avatar, ButtonRow, Card, ChipRow, Empty, RowMore, Section, SheetHead, S
 import { ContextMeter } from './context-meter.js';
 import { dashPrefs } from './prefs.js';
 import { openBoardGroup } from './phone-board.js';
-import { Button, Check, Switch } from './ui-components.js';
+import { Check, Switch } from './ui-components.js';
 import { shellToast } from './shell-state.js';
 import { agentFocus, doneAgentFocus } from './agent-route.js';
 import { groupShellOffer, openGroupShell } from './phone-open-shell.js';
