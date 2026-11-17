@@ -2950,7 +2950,7 @@ func ProbeShellTimesInlineForTest() {
 func WebTerminalTmuxFlagsForTest() string { return webTerminalTmuxFlags() }
 
 // DashboardIndexHTMLForTest is the dashboard page as agentd serves it.
-func DashboardIndexHTMLForTest() []byte { return dashboardIndexHTML }
+func DashboardIndexHTMLForTest() []byte { return dashboardIndexHTML() }
 
 // DashboardManifestForTest is the web app manifest built for the icons in
 // fsys's pwa/ (dashboard_pwa.go).

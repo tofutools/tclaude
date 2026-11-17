@@ -52,7 +52,7 @@ func TestDashboardMarkdownVendorAssets(t *testing.T) {
 }
 
 func TestDashboardMarkdownImportMap(t *testing.T) {
-	html := unversionedStatic(string(dashboardIndexHTML))
+	html := unversionedStatic(string(dashboardIndexHTML()))
 	const mapping = `"markdown-it": "/static/third_party/markdown-it/markdown-it.esm.min.mjs"`
 	if !strings.Contains(html, mapping) {
 		t.Errorf("dashboard import map missing %s", mapping)

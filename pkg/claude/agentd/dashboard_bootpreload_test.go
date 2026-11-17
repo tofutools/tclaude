@@ -53,7 +53,7 @@ func checkBootPreloadGraph(t *testing.T, mods []string) {
 // modulepreload link per module both layouts share, and a script that adds
 // the links of the layout in force and sets the total to all of them.
 func TestInjectBootPreload_EmitsLinksAndTotal(t *testing.T) {
-	out := string(dashboardIndexHTML)
+	out := string(dashboardIndexHTML())
 	if strings.Contains(out, bootPreloadMarker) {
 		t.Fatalf("boot-preload marker was not replaced in the served HTML")
 	}
@@ -122,7 +122,7 @@ func TestInjectBootPreload_EmitsLinksAndTotal(t *testing.T) {
 // at the module-band ceiling again.
 func TestBootProgress_AppPhaseEventContract(t *testing.T) {
 	const event = "tclaude:boot-app"
-	if !strings.Contains(string(dashboardIndexHTML), event) {
+	if !strings.Contains(string(dashboardIndexHTML()), event) {
 		t.Errorf("served HTML inline boot counter does not listen for %s", event)
 	}
 	entry, err := fs.ReadFile(dashboardAssetsFS, bootPreloadEntry)

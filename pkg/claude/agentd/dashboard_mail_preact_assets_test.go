@@ -12,7 +12,7 @@ func TestDashboardMessagesPreactOwnershipAndParityHooks(t *testing.T) {
 		string(mustReadFS(dashboardAssetsFS, "js/mail-parts.js"))
 	controller := string(mustReadFS(dashboardAssetsFS, "js/mail.js"))
 	css := string(mustReadFS(dashboardAssetsFS, "dashboard.css"))
-	html := string(dashboardIndexHTML)
+	html := string(dashboardIndexHTML())
 
 	for _, forbidden := range []string{"html`<>", "</>`"} {
 		if strings.Contains(island, forbidden) {
