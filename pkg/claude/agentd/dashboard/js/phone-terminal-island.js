@@ -186,7 +186,9 @@ export const KEYBOARD_SETTLE_MS = 800;
 export function composingOutside(documentRef, root) {
   const el = documentRef?.activeElement;
   if (!el || el === documentRef.body || root?.contains?.(el)) return false;
-  return el.isContentEditable === true || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName || '');
+  if (el.isContentEditable === true || el.tagName === 'TEXTAREA') return true;
+  // Only an input that raises a keyboard: not a checkbox, or a file picker's.
+  return el.tagName === 'INPUT' && /^(|text|search|email|url|tel|number|password)$/i.test(el.getAttribute?.('type') || '');
 }
 
 // The part of the screen the on-screen keyboard leaves, so the key strip
@@ -194,11 +196,12 @@ export function composingOutside(documentRef, root) {
 // a sheet's own field over the terminal does not shrink it: the box keeps its
 // size while that field has focus, so the terminal is not refitted and the
 // agent's screen is not resized. Once the field lets go, the box follows the
-// screen again when it has grown back (or after KEYBOARD_SETTLE_MS): one
-// refit, not one per step of the keyboard closing.
+// screen again when it has grown back: one refit, not one per step of the
+// keyboard closing (after KEYBOARD_SETTLE_MS it follows anyway). A new width
+// (the phone rotated) is a new screen: the box follows it at once.
 function useTerminalBox(windowRef, documentRef, rootRef) {
   const viewport = windowRef?.visualViewport;
-  const read = () => (viewport ? { height: viewport.height, top: viewport.offsetTop } : null);
+  const read = () => (viewport ? { height: viewport.height, top: viewport.offsetTop, width: viewport.width } : null);
   const [box, setBox] = useState(read);
   const shown = useRef(box);
   useEffect(() => {
@@ -207,13 +210,17 @@ function useTerminalBox(windowRef, documentRef, rootRef) {
     let settle = null;
     const stopSettle = () => { if (settle !== null) { (windowRef.clearTimeout ? windowRef : globalThis).clearTimeout(settle); settle = null; } };
     const show = (next) => {
-      if (shown.current && next && shown.current.height === next.height && shown.current.top === next.top) return;
+      if (shown.current && next && shown.current.height === next.height && shown.current.top === next.top && shown.current.width === next.width) return;
       shown.current = next;
       setBox(next);
     };
     const sync = () => {
       const now = read();
+      if (held && now.width !== held.width) { held = null; stopSettle(); }
       if (composingOutside(documentRef, rootRef.current)) {
+        // Rotated while composing: the keyboard is up, the height unknown,
+        // so it follows the screen as it is rather than an old height.
+        if (!held && shown.current && now.width !== shown.current.width) { show(now); return; }
         if (!held) held = shown.current || now;
         stopSettle();
         return;

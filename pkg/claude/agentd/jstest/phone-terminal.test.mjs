@@ -575,7 +575,7 @@ test('an agent\'s directory shell is titled a shell, with the directory under it
 test('a compose sheet\'s keyboard leaves the terminal its size; the terminal\'s own keyboard still shrinks it', async (t) => {
   const listeners = { resize: new Set(), scroll: new Set() };
   const viewport = {
-    height: 800, offsetTop: 0, scale: 1,
+    height: 800, width: 390, offsetTop: 0, scale: 1,
     addEventListener: (type, fn) => listeners[type].add(fn),
     removeEventListener: (type, fn) => listeners[type].delete(fn),
   };
@@ -607,6 +607,34 @@ test('a compose sheet\'s keyboard leaves the terminal its size; the terminal\'s 
   await resize(800);
   assert.match(height(), /height:800px/);
   assert.equal(timers.filter((timer) => timer.fn).length, 0, 'settled: nothing left waiting');
+
+  // Hopping between two fields of one sheet keeps the hold.
+  const other = harness.document.createElement('input');
+  harness.document.body.append(other);
+  await focusIn(sheet);
+  await resize(500);
+  await focusOut(sheet);
+  await focusIn(other);
+  assert.match(height(), /height:800px/);
+  assert.equal(timers.filter((timer) => timer.fn).length, 0, 'the hop cancelled the wait');
+  // Rotated while composing: a new screen, the box follows it.
+  await harness.act(() => { viewport.width = 844; viewport.height = 300; for (const fn of listeners.resize) fn(); });
+  assert.match(height(), /height:300px/, 'not the portrait height on a landscape screen');
+  await harness.act(() => { viewport.width = 390; viewport.height = 800; for (const fn of listeners.resize) fn(); });
+  await focusOut(other);
+  await resize(800);
+  assert.match(height(), /height:800px/);
+  // A checkbox raises no keyboard: no hold.
+  const box = harness.document.createElement('input');
+  box.setAttribute('type', 'checkbox');
+  harness.document.body.append(box);
+  await focusIn(box);
+  await resize(600);
+  assert.match(height(), /height:600px/);
+  await focusOut(box);
+  await resize(800);
+  other.remove();
+  box.remove();
 
   // The terminal's own input: the keyboard shrinks it so the line stays in sight.
   const own = harness.document.createElement('textarea');
