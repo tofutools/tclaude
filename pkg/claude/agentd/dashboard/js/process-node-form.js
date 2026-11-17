@@ -14,6 +14,10 @@
 // All helpers mutate a DRAFT node inside ProcessEditModel.updateNode's gate;
 // they never touch the live model themselves.
 
+import { seedRule } from './process-rules.js';
+import { loopBound } from './process-loops.js';
+import { setStepFailure } from './process-step-list.js';
+
 export const PERFORMER_KINDS = ['human', 'agent', 'program'];
 
 // A decision has one more: a rule decides it by its cases, nobody asked
@@ -87,6 +91,27 @@ export function setPerformerKind(performer, kind) {
   }
   if (kind === RULE_KIND) delete performer.contact;
   else for (const key of RULE_KEYS) delete performer[key];
+}
+
+// setDecisionKind switches decision nodeId's decider (slot, on the draft)
+// in `model` ({template, edges}): a new rule starts with one case on the
+// nearest thing it can read, and else its next way out.
+export function setDecisionKind(model, nodeId, slot, kind) {
+  setPerformerKind(slot, kind);
+  if (kind === RULE_KIND) {
+    const node = model.template.nodes[nodeId];
+    setRule(slot, seedRule(model, nodeId, (outcome) => !!loopBound(node, outcome)));
+  }
+}
+
+// setNodeFailure applies the shared "If it fails" choice
+// (process-failure-row.js) to a draft node: its retry policy and mayFail.
+export function setNodeFailure(node, failure) {
+  const next = setStepFailure({ node }, failure).node;
+  for (const key of ['retry', 'mayFail']) {
+    if (next[key] === undefined) delete node[key];
+    else node[key] = next[key];
+  }
 }
 
 // setRule sets a rule's cases and else.

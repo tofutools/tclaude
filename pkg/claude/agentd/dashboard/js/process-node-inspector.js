@@ -19,11 +19,13 @@ import {
   defaultPerformer, setStageEnabled, setPlanApproval, addCheck, removeCheck, moveCheck, setCheckID,
   setRetryField, setCaptures, setWaitField, setNodeText, formatLines,
   MAX_GATE_DECIDERS, addGateDecider, removeGateDecider,
-  DECISION_KINDS, RULE_KIND, setPerformerKind, setRule,
+  DECISION_KINDS, RULE_KIND, setDecisionKind, setNodeFailure, setRule,
 } from './process-node-form.js';
-import { ruleOperands, seedRule } from './process-rules.js';
+import { ruleOperands } from './process-rules.js';
 import { RuleCases } from './process-rule-cases.js';
 import { loopBound } from './process-loops.js';
+import { FailureRow } from './process-failure-row.js';
+import { stepFailure } from './process-step-list.js';
 import {
   nodeBlock, visibleBlocks, addableBlocks, removeBlock, moveKey, moveKeyBefore, mergeOrder,
   upstreamInputs, stageSummary,
@@ -108,15 +110,6 @@ function RuleBlock({ node, nodeId, model, commit, readOnly, edges }) {
     onChange=${(rule) => commit('performer.rule', (draft) => setRule(draft.performer, rule))} />`;
 }
 
-// decisionKind switches a decision's decider; a new rule starts with one
-// case on the nearest thing it can read, and else its next way out.
-function decisionKind(model, nodeId, node) {
-  return (slot, kind) => {
-    setPerformerKind(slot, kind);
-    if (kind === RULE_KIND) setRule(slot, seedRule(model, nodeId, (outcome) => !!loopBound(node, outcome)));
-  };
-}
-
 function PerformerBlock({ node, nodeId, controller, commit, readOnly, edges }) {
   const type = node.type || 'task';
   const model = controller.model;
@@ -128,7 +121,7 @@ function PerformerBlock({ node, nodeId, controller, commit, readOnly, edges }) {
   }
   return html`<${PerformerEditor} path="performer" locate=${locateMain(type)} performer=${mainPerformer(node)}
     commit=${commit} readOnly=${readOnly} choiceRouting=${type !== 'decision'} omit=${[...PROMPT_FIELDS, ...BOUNDS_FIELDS]}
-    ...${type === 'decision' ? { kinds: DECISION_KINDS, setKind: decisionKind(model, nodeId, node) } : {}} />
+    ...${type === 'decision' ? { kinds: DECISION_KINDS, setKind: (slot, kind) => setDecisionKind(model, nodeId, slot, kind) } : {}} />
     ${rule && html`<${RuleBlock} node=${node} nodeId=${nodeId} model=${model} commit=${commit} readOnly=${readOnly} edges=${edges} />`}
     ${type === 'decision' && !readOnly && node.performer?.kind !== 'program' && !rule && edges.length > 1 && html`<${Button} size="sm" class="process-action process-node-add" data-node-add-decider
       title="Several decide together, and all must agree" onClick=${() => commit('deciders.add', (draft) => addGateDecider(draft, edges.map((edge) => edge.outcome)))}>+ another decider<//>`}`;
@@ -187,8 +180,13 @@ function InputsBlock({ inputs }) {
   </div>`;
 }
 
-function RetryBlock({ node, commit, readOnly }) {
-  return html`<div class="pni-row">
+function RetryBlock({ node, nodeId, commit, readOnly }) {
+  // "If it fails" is the inline editor's row, on the steps it is for there:
+  // an agent's or a command's work.
+  const failing = (node.performer?.kind || 'agent') !== 'human';
+  return html`${failing && !readOnly && html`<${FailureRow} id=${nodeId} failure=${stepFailure({ node })} staged=${!!(node.plan || node.checks?.length || node.review)}
+      onChange=${(failure) => commit('failure', (draft) => setNodeFailure(draft, failure))} />`}
+    <div class="pni-row">
     <${NodeField} fieldKey="retry.maxAttempts" label="max attempts" placeholder="unset" readOnly=${readOnly}
       value=${node.retry?.maxAttempts === undefined ? '' : String(node.retry.maxAttempts)}
       apply=${(key, raw) => commit(key, (draft) => setRetryField(draft, 'maxAttempts', raw))} />

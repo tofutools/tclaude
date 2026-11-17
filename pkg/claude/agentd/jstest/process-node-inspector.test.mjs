@@ -194,7 +194,7 @@ test('removing an optional block clears its slice as one undoable edit', async (
   await set('patience', '45m');
   assert.equal(editor.model.node('build').patience, '45m', 'the step\'s patience sits beside its retry');
   assert.ok(blocks().includes('retry'));
-  await click('[aria-label="Remove Retry · patience"]');
+  await click('[aria-label="Remove If it fails · patience"]');
   assert.equal(editor.model.node('build').retry, undefined);
   assert.equal(editor.model.node('build').patience, undefined);
   assert.ok(!blocks().includes('retry'));
@@ -305,4 +305,25 @@ test('a task added to the canvas comes with an agent doing it', async (t) => {
   const ctx = await openEditor(t);
   const { id } = ctx.editor.model.addConnectedNode('task', { connectFrom: 'spec' });
   assert.deepEqual(ctx.editor.model.saveBody().template.nodes[id].performer, { kind: 'agent' });
+});
+
+test('a step can go on as failed, for a rule to see: the inline editor\'s "If it fails" row', async (t) => {
+  const ctx = await openEditor(t);
+  await ctx.open('build');
+  ctx.editor.model.updateNode('build', (draft) => { draft.patience = '45m'; });
+  await ctx.open('spec');
+  await ctx.open('build');
+  const pick = ctx.dock().querySelector('[data-mini-failure="build"] select[aria-label="If this step fails"]');
+  assert.ok(pick, 'the shared row is in the block');
+  Object.defineProperty(pick, 'value', { configurable: true, writable: true, value: 'go-on' });
+  await ctx.harness.act(() => ctx.harness.fireEvent(pick, 'change'));
+  let build = ctx.editor.model.saveBody().template.nodes.build;
+  assert.equal(build.mayFail, true);
+  assert.equal(build.retry, undefined);
+  const again = ctx.dock().querySelector('[data-mini-failure="build"] select[aria-label="If this step fails"]');
+  Object.defineProperty(again, 'value', { configurable: true, writable: true, value: 'retry' });
+  await ctx.harness.act(() => ctx.harness.fireEvent(again, 'change'));
+  build = ctx.editor.model.saveBody().template.nodes.build;
+  assert.equal(build.mayFail, undefined);
+  assert.deepEqual(build.retry, { maxAttempts: 3 });
 });

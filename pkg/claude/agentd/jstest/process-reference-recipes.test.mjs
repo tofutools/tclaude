@@ -14,25 +14,26 @@ import * as m from '../dashboard/js/process-mini-edit.js';
 import { addReviewer } from '../dashboard/js/process-gate-deciders.js';
 import { advanced, advancedTracks, simple } from './process-reference-recipes.mjs';
 import { canonical, fullAdvanced, fullSimple } from './process-reference-full.mjs';
-import { PERFORMER_KINDS } from '../dashboard/js/process-node-form.js';
 
 const FIXTURE = new URL('./process-reference-recipes.json', import.meta.url);
 
 // BUDGET is how many inline edits each process takes today. A change that
 // makes building one harder fails here; one that makes it easier lowers
 // the number (and should lower the budget with it).
-const BUDGET = { simple: 41, advanced: 79, 'advanced-tracks': 76 };
+const BUDGET = { simple: 40, advanced: 78, 'advanced-tracks': 75 };
 // FULL_BUDGET is the same for the full editor (process-reference-full.mjs),
 // which names a node apart from adding it and has no Who picker.
-const FULL_BUDGET = { simple: 65, advanced: 126 };
+const FULL_BUDGET = { simple: 63, advanced: 124 };
 
 const built = { simple: simple(), advanced: advanced(), 'advanced-tracks': advancedTracks() };
 const full = { simple: fullSimple(), advanced: fullAdvanced() };
 
 if (process.env.UPDATE_REFERENCE_RECIPES) {
-  // The full editor's builds are not here: without rules their settings
-  // decisions have no decider, so they cannot run (see INLINE_ONLY).
-  const cases = Object.fromEntries(Object.entries(built).map(([key, e]) => [key, e.view]));
+  const cases = Object.fromEntries([
+    ...Object.entries(built).map(([key, e]) => [key, e.view]),
+    // The full editor's builds are validated and executed by the Go test too.
+    ...Object.entries(full).map(([key, e]) => [`${key}-full`, e.view()]),
+  ]);
   writeFileSync(FIXTURE, `${JSON.stringify({ cases }, null, 1)}\n`);
 }
 const fixture = JSON.parse(readFileSync(FIXTURE, 'utf8'));
@@ -166,10 +167,8 @@ for (const key of Object.keys(FULL_BUDGET)) {
   test(`${key}: the full editor builds the same process within ${FULL_BUDGET[key]} edits`, () => {
     const e = full[key];
     assert.ok(e.ops.length <= FULL_BUDGET[key], `${key} took ${e.ops.length} full-editor edits, over ${FULL_BUDGET[key]}:\n${e.ops.join('\n')}`);
-    assert.deepEqual(canonical(e.view(), { inlineOnly: true }), canonical(built[key].view, { inlineOnly: true }), 'the same steps, Who, text, answers, loops and params as the inline editor builds');
-    // A finding: the full editor makes no rule and no step that may fail.
-    // When it can, build them there too and drop inlineOnly.
-    assert.ok(!PERFORMER_KINDS.includes('rule'), 'the full editor has rules now: build Merge and Amending allowed with them');
+    assert.deepEqual(canonical(e.view()), canonical(built[key].view), 'the same steps, Who, text, answers, rules, may-fail, loops and params as the inline editor builds');
+    assert.deepEqual(e.view(), fixture.cases[`${key}-full`]);
   });
 }
 

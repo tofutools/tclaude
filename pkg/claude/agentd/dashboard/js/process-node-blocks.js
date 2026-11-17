@@ -57,11 +57,11 @@ export const NODE_BLOCKS = [
     present: (node, context) => (context?.inputs?.captures?.length || 0) > 0,
   },
   {
-    key: 'retry', label: 'Retry · patience', icon: '↻',
+    key: 'retry', label: 'If it fails · patience', icon: '↻',
     kinds: ['task'],
-    hint: 'How many attempts the work gets, how a failed attempt restarts, and how long the step may stay stuck before its overseer hears',
-    present: (node) => !!node.retry || !!node.patience,
-    clear: (node) => { delete node.retry; delete node.patience; },
+    hint: 'What a failure does (fail the run, hold it, retry, or go on as failed for a rule to see), how a failed attempt restarts, and how long the step may stay stuck before its overseer hears',
+    present: (node) => !!node.retry || !!node.patience || !!node.mayFail,
+    clear: (node) => { delete node.retry; delete node.patience; delete node.mayFail; },
   },
   {
     key: 'captures', label: 'Outputs', icon: '⇤',

@@ -8,14 +8,15 @@
 // (process-reference-recipes.mjs): the same steps, Who, text, answers,
 // loops and params, ids aside (the full editor names nodes by type).
 //
-// The full editor cannot make a rule decision or a step that may fail (its
-// performer kinds are human, agent and program, and it has no "may fail"
-// field): "Merge" and "Amending allowed" are drawn with their answers, and
-// the CI step as a command, and the comparison leaves those two out
-// (INLINE_ONLY).
+// "Merge" and "Amending allowed" are rule decisions, edited with the same
+// rows as inline (process-rule-cases.js), and CI goes on when it fails
+// through the same "If it fails" row (process-failure-row.js).
 
 import { ProcessEditModel, blankEditView } from '../dashboard/js/process-edit-model.js';
-import { addGateDecider, defaultPerformer, setPerformerField, setPerformerKind } from '../dashboard/js/process-node-form.js';
+import {
+  addGateDecider, defaultPerformer, setDecisionKind, setNodeFailure, setPerformerField, setPerformerKind, setRule,
+} from '../dashboard/js/process-node-form.js';
+import { ruleOperands, withAnd, withRow } from '../dashboard/js/process-rules.js';
 import { stepSlug } from '../dashboard/js/process-step-ids.js';
 
 export class FullEditor {
@@ -54,9 +55,29 @@ export class FullEditor {
     }));
   }
 
-  // work is a task's "add work performer" button: an agent.
-  work(id) {
-    this.op(`work ${id}`, () => this.model.updateNode(id, (draft) => { draft.performer = defaultPerformer('agent'); }));
+  // failure is the Retry block's "If it fails" row.
+  failure(id, mode) {
+    this.op(`if-fails ${id}`, () => this.model.updateNode(id, (draft) => setNodeFailure(draft, { mode })));
+  }
+
+  // rule is a decision's Performer kind set to rule: one case on the step
+  // just before it, picking its first answer, else its next.
+  rule(id) {
+    this.op(`kind ${id} rule`, () => this.model.updateNode(id, (draft) => setDecisionKind(this.model, id, draft.performer ||= defaultPerformer('human'), 'rule')));
+  }
+
+  // ruleRow and ruleAnd are the rule rows' pickers and "+ and".
+  ruleRow(id, index, row, change) {
+    this.editRule(`rule ${id}.${index}.${row}`, id, (rule, operands) => withRow(rule, operands, index, row, change));
+  }
+
+  ruleAnd(id, index) {
+    this.editRule(`rule ${id}.${index} + and`, id, (rule, operands) => withAnd(rule, operands, index));
+  }
+
+  editRule(label, id, edit) {
+    const operands = ruleOperands(this.model, id);
+    this.op(label, () => this.model.updateNode(id, (draft) => setRule(draft.performer, edit(draft.performer, operands))));
   }
 
   decider(id) {
@@ -96,8 +117,8 @@ export class FullEditor {
 // agentStep adds a task an agent does: its node and name, its performer,
 // what it does, and who (one field, or two).
 function agentStep(e, from, name, text, who) {
+  // A new task comes with an agent doing it.
   const id = e.node(from, 'task', name);
-  e.work(id);
   e.field(id, 'prompt', text);
   for (const [key, value] of Object.entries(who)) e.field(id, key, value);
   return id;
@@ -142,16 +163,26 @@ function shipIt(e, from, outcome) {
   e.kind(ci, 'program');
   e.field(ci, 'run', 'gh');
   e.field(ci, 'args', ['pr', 'checks', '--watch']);
+  e.failure(ci, 'go-on');
   const merge = e.node(ci, 'decision', 'Merge');
   const mergePR = agentStep(e, merge, 'Merge the PR', 'Merge the PR now that CI passed.', LEAD);
   e.label(merge, 'pass', 'merge');
   const end = e.node(mergePR, 'end');
   e.connect(merge, 'leave', end);
+  // CI succeeded (the seed) and auto_merge is true → merge, else leave.
+  e.rule(merge);
+  e.ruleAnd(merge, 0);
+  e.ruleRow(merge, 0, 1, { operand: 'params.auto_merge' });
   return { ready, end };
 }
 
 export function fullSimple() {
   const e = new FullEditor('Simple implementation');
+  // A rule reads only declared params: declare them first.
+  e.params({
+    idea: { type: 'string', required: true, description: 'The idea to build' },
+    auto_merge: { type: 'boolean', default: false, description: 'Merge on green CI without asking' },
+  });
   const decided = discussAndDecide(e);
   const provision = agentStep(e, decided, 'Provision an implementor', 'Bring in an implementor for the idea and brief it.', LEAD);
   e.label(decided, 'pass', 'decided');
@@ -163,15 +194,17 @@ export function fullSimple() {
   e.loop(decide, 'iterate', { maxIterations: 3, onExhausted: 'give-up' });
   shipIt(e, decide, 'move-on');
   void gaveUp;
-  e.params({
-    idea: { type: 'string', required: true, description: 'The idea to build' },
-    auto_merge: { type: 'boolean', default: false, description: 'Merge on green CI without asking' },
-  });
   return e;
 }
 
 export function fullAdvanced() {
   const e = new FullEditor('Advanced implementation');
+  // A rule reads only declared params: declare them first.
+  e.params({
+    idea: { type: 'string', required: true, description: 'The idea to build' },
+    allow_amend: { type: 'boolean', default: false, description: 'The lead may make minor changes to the criteria and design' },
+    auto_merge: { type: 'boolean', default: false, description: 'Merge on green CI without asking' },
+  });
   const decided = discussAndDecide(e);
   const criteria = agentStep(e, decided, 'Define acceptance criteria', 'Write the acceptance criteria for the decided idea.', LEAD);
   e.label(decided, 'pass', 'decided');
@@ -212,6 +245,10 @@ export function fullAdvanced() {
   e.label(allowed, 'pass', 'allowed');
   e.connect(allowed, 'rework', implement);
   e.connect(allowed, 'give-up', gaveUp);
+  // allow_amend is true → allowed, else rework (made a rule before rework
+  // is bounded, else's first pick is rework, as inline).
+  e.rule(allowed);
+  e.ruleRow(allowed, 0, 0, { operand: 'params.allow_amend' });
   e.loop(allowed, 'rework', { maxIterations: 3, onExhausted: 'give-up' });
   const amended = agentStep(e, amend, 'Amend criteria and design', 'Make the minor changes to the criteria and the design, and note them for the operator.', LEAD);
   e.label(amend, 'pass', 'amend');
@@ -219,22 +256,13 @@ export function fullAdvanced() {
   e.connect(amend, 'rework', implement);
   e.connect(amend, 'give-up', gaveUp);
   e.loop(amend, 'rework', { maxIterations: 3, onExhausted: 'give-up' });
-  e.params({
-    idea: { type: 'string', required: true, description: 'The idea to build' },
-    allow_amend: { type: 'boolean', default: false, description: 'The lead may make minor changes to the criteria and design' },
-    auto_merge: { type: 'boolean', default: false, description: 'Merge on green CI without asking' },
-  });
   return e;
 }
 
 // canonical is a view with node ids replaced by their names' slugs (an
 // unnamed end is "end"), so two editors' processes compare as the same
 // process whatever ids each minted. Task pass labels compare as one.
-// INLINE_ONLY is what only the inline editor can make: the rules deciding
-// these decisions, and a step's "may fail".
-export const INLINE_ONLY = Object.freeze(['merge', 'amending-allowed']);
-
-export function canonical(view, { inlineOnly = false } = {}) {
+export function canonical(view) {
   const { nodes } = view.template;
   const ids = {};
   for (const [id, node] of Object.entries(nodes)) ids[id] = node.name ? stepSlug(node.name) : node.type;
@@ -243,6 +271,8 @@ export function canonical(view, { inlineOnly = false } = {}) {
   const performer = (p) => {
     if (!p) return undefined;
     const out = { ...p };
+    // A rule names steps by id in its conditions.
+    if (out.cases) out.cases = out.cases.map((c) => ({ ...c, when: c.when.replace(/\bsteps\.([A-Za-z0-9_-]+)\./g, (all, id) => `steps.${ids[id] || id}.`) }));
     if (out.sameAs) out.sameAs = ids[out.sameAs];
     if (out.differentFrom) out.differentFrom = out.differentFrom.map((id) => ids[id]);
     return out;
@@ -250,8 +280,6 @@ export function canonical(view, { inlineOnly = false } = {}) {
   const out = {};
   for (const [id, node] of Object.entries(nodes)) {
     const copy = { type: node.type, name: node.name, performer: performer(node.performer), deciders: node.deciders?.map(performer), agree: node.agree, loops: node.loops, mayFail: node.mayFail };
-    if (inlineOnly && INLINE_ONLY.includes(ids[id])) copy.performer = 'a rule: inline only';
-    if (inlineOnly) delete copy.mayFail;
     if (node.type === 'end') copy.result = node.result || 'success';
     out[ids[id]] = JSON.parse(JSON.stringify(copy));
   }

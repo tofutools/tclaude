@@ -14,7 +14,7 @@
 
 import * as m from '../dashboard/js/process-mini-edit.js';
 import { setStepConstraint, setStepFailure, setStepName, setStepText, setStepWho, stepListToView, blankStepList } from '../dashboard/js/process-step-list.js';
-import { fromRows, toRows } from '../dashboard/js/process-rules.js';
+import { withAnd, withRow } from '../dashboard/js/process-rules.js';
 import { addReviewer, setDeciderAsk, withReviewerDefault } from '../dashboard/js/process-gate-deciders.js';
 import { followName } from '../dashboard/js/process-step-ids.js';
 
@@ -136,27 +136,19 @@ export class InlineEditor {
     return this.who(id, { mode: 'rule' });
   }
 
-  // ruleRow changes one picker of a rule's condition row, as RuleCases
-  // does: picking what it reads also picks that operand's first value.
+  // ruleRow changes one picker of a rule's condition row, and ruleAnd is a
+  // case's "+ and": the edits RuleCases makes (process-rules.js).
   ruleRow(id, index, row, change) {
-    const { cases } = this.view.template.nodes[id].performer;
-    const rows = toRows(cases[index].when);
-    const picked = change.operand && m.ruleOperands(this.view, id).find((o) => o.value === change.operand);
-    rows[row] = { ...rows[row], ...change, ...(picked?.values && !change.value ? { value: picked.values[0], cmp: '==' } : {}) };
-    return this.setCases(`rule ${id}.${index}.${row}`, id, cases.map((c, i) => (i === index ? { ...c, when: fromRows(rows) } : c)));
+    return this.setRule(`rule ${id}.${index}.${row}`, id, (rule, operands) => withRow(rule, operands, index, row, change));
   }
 
-  // ruleAnd is a case's "+ and": one more row, on the first thing it can read.
   ruleAnd(id, index) {
-    const { cases } = this.view.template.nodes[id].performer;
-    const first = m.ruleOperands(this.view, id)[0];
-    const rows = [...toRows(cases[index].when), { operand: first?.value || 'params.x', cmp: '==', value: first?.values?.[0] || 'yes' }];
-    return this.setCases(`rule ${id}.${index} + and`, id, cases.map((c, i) => (i === index ? { ...c, when: fromRows(rows) } : c)));
+    return this.setRule(`rule ${id}.${index} + and`, id, (rule, operands) => withAnd(rule, operands, index));
   }
 
-  setCases(label, id, cases) {
-    const rule = this.view.template.nodes[id].performer;
-    return this.land(label, m.setRule(this.view, id, { cases, else: rule.else }));
+  setRule(label, id, edit) {
+    const { cases, else: otherwise } = edit(this.view.template.nodes[id].performer, m.ruleOperands(this.view, id));
+    return this.land(label, m.setRule(this.view, id, { cases, else: otherwise }));
   }
 }
 
@@ -193,8 +185,8 @@ function shipIt(e, at) {
   const merge = e.step('after', ci, 'decide', { name: 'Merge' });
   e.rename(merge, 'yes', 'merge');
   e.rename(merge, 'no', 'leave');
+  // A new rule starts on the step just before it: CI succeeded.
   e.rule(merge);
-  e.ruleRow(merge, 0, 0, { operand: `steps.${ci}.result` });
   e.ruleAnd(merge, 0);
   e.ruleRow(merge, 0, 1, { operand: 'params.auto_merge' });
   e.step('after', merge, 'agent', { name: 'Merge the PR', who: LEAD, text: 'Merge the PR now that CI passed.' });

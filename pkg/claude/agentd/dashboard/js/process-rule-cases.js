@@ -7,7 +7,7 @@
 
 import { h } from 'preact';
 import htm from 'htm';
-import { OP_WORDS, blankRow, fromRows, ruleWords, toRows } from './process-rules.js';
+import { OP_WORDS, ruleWords, toRows, withAnd, withCase, withRow, withoutRow } from './process-rules.js';
 import { TypedField } from './typed-field.js';
 import { Button, Select } from './ui-components.js';
 
@@ -31,15 +31,13 @@ export function RuleCases({ rule, outcomes, operands, loopsBack = () => false, s
   <//>`;
   const remove = (index) => cases.length > 1 && !readOnly && html`<${Button} size="sm" icon=${true} variant="ghost danger" aria-label="Remove this case"
     onClick=${() => apply(cases.filter((_, j) => j !== index))}>✕<//>`;
+  const change = (next) => onChange({ cases: next.cases, else: next.else });
   const row = (index, rows, r, i) => {
     const operand = operands.find((o) => o.value === r.operand);
-    const setRow = (change) => setCase(index, { when: fromRows(rows.map((other, j) => (j === i ? { ...other, ...change } : other))) });
+    const setRow = (edit) => change(withRow(rule, operands, index, i, edit));
     return html`<div key=${i} class="gm-rule-row" data-mini-rule-row=${`${index}.${i}`}>
       <span class="gm-rule-and">${i === 0 ? 'if' : 'and'}</span>
-      <${Select} size="sm" aria-label="What the rule reads" value=${r.operand} disabled=${readOnly} onChange=${(event) => {
-        const picked = operands.find((o) => o.value === event.currentTarget.value);
-        setRow({ operand: event.currentTarget.value, ...(picked?.values ? { value: picked.values[0], cmp: '==' } : {}) });
-      }}>
+      <${Select} size="sm" aria-label="What the rule reads" value=${r.operand} disabled=${readOnly} onChange=${(event) => setRow({ operand: event.currentTarget.value })}>
         ${!operand && html`<option value=${r.operand}>${r.operand}</option>`}
         ${operands.map((o) => html`<option key=${o.value} value=${o.value}>${o.label}</option>`)}
       <//>
@@ -56,7 +54,7 @@ export function RuleCases({ rule, outcomes, operands, loopsBack = () => false, s
           onChange=${(event) => { const value = event.currentTarget.value.trim(); setRow({ value: value && !unquotable(value) ? value : r.value }); }} />`}
       ${i === 0 && html`<span class="gm-rule-arrow">→</span>${outcomeSelect(cases[index].then, `Case ${index + 1} picks`, (then) => setCase(index, { then }))}`}
       ${!readOnly && (rows.length > 1 || cases.length > 1) && html`<${Button} size="sm" icon=${true} variant="ghost danger" aria-label=${rows.length > 1 ? 'Remove this condition' : 'Remove this case'}
-        onClick=${() => (rows.length > 1 ? setCase(index, { when: fromRows(rows.filter((_, j) => j !== i)) }) : apply(cases.filter((_, j) => j !== index)))}>✕<//>`}
+        onClick=${() => (rows.length > 1 ? change(withoutRow(rule, index, i)) : apply(cases.filter((_, j) => j !== index)))}>✕<//>`}
     </div>`;
   };
   const whenField = (c, index) => html`<${TypedField} name="gm-rule-when" type="text" class="gm-rule-when" aria-label=${`Case ${index + 1} condition`}
@@ -72,12 +70,12 @@ export function RuleCases({ rule, outcomes, operands, loopsBack = () => false, s
     return html`<div key=${index} class="gm-rule-case" data-mini-rule-case=${index}>
       ${rows
     ? html`${rows.map((r, i) => row(index, rows, r, i))}
-          ${!readOnly && html`<${Button} size="sm" variant="link" class="gq-link" data-mini-rule-and=${index} onClick=${() => setCase(index, { when: fromRows([...rows, blankRow(operands, rows)]) })}>+ and<//>`}
+          ${!readOnly && html`<${Button} size="sm" variant="link" class="gq-link" data-mini-rule-and=${index} onClick=${() => change(withAnd(rule, operands, index))}>+ and<//>`}
           ${editText && html`<div class="gm-rule-row gm-rule-as-text"><span class="gm-rule-and">as text</span>${whenField(c, index)}</div>`}`
     : asText(c, index)}
     </div>`;
   })}
-    ${!readOnly && html`<${Button} size="sm" variant="link" class="gq-link" data-mini-rule-add onClick=${() => apply([...cases, { when: fromRows([blankRow(operands)]), then: outcomes[0] }])}>+ another case<//>`}
+    ${!readOnly && html`<${Button} size="sm" variant="link" class="gq-link" data-mini-rule-add onClick=${() => change(withCase(rule, operands, outcomes[0]))}>+ another case<//>`}
     <div class="gm-rule-row" data-mini-rule-else><span class="gm-rule-and">else</span><span class="gm-rule-arrow">→</span>${outcomeSelect(rule.else, 'Otherwise', (otherwise) => apply(cases, otherwise))}</div>
     <div class="gm-rule-words" data-mini-rule-words>${ruleWords(rule, stepName)}</div>
   </div></div>`;

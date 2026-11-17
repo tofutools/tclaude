@@ -261,3 +261,37 @@ export function blankRow(operands, rows = []) {
   const pick = operands.find((operand) => !used.has(operand.value)) || operands[0];
   return { operand: pick?.value || '', cmp: '==', value: pick?.values?.[0] || 'yes' };
 }
+
+// The rows' edits, as RuleCases makes them, on a rule ({cases, else}); each
+// returns the new rule. A case whose condition the rows cannot show is left
+// alone by the row edits.
+const mapCase = (rule, index, change) => ({ ...rule, cases: (rule.cases || []).map((c, i) => (i === index ? { ...c, ...change(c) } : c)) });
+
+// withRow changes one row of case `index`: picking what it reads also
+// picks that operand's first value when it has few.
+export function withRow(rule, operands, index, row, change) {
+  return mapCase(rule, index, (c) => {
+    const rows = toRows(c.when) || [];
+    const picked = change.operand && operands.find((o) => o.value === change.operand);
+    rows[row] = { ...rows[row], ...change, ...(picked?.values && change.value === undefined ? { value: picked.values[0], cmp: '==' } : {}) };
+    return { when: fromRows(rows) };
+  });
+}
+
+// withoutRow drops one row of case `index`.
+export function withoutRow(rule, index, row) {
+  return mapCase(rule, index, (c) => ({ when: fromRows((toRows(c.when) || []).filter((_, j) => j !== row)) }));
+}
+
+// withAnd is a case's "+ and": a row on the nearest thing it does not read yet.
+export function withAnd(rule, operands, index) {
+  return mapCase(rule, index, (c) => {
+    const rows = toRows(c.when) || [];
+    return { when: fromRows([...rows, blankRow(operands, rows)]) };
+  });
+}
+
+// withCase is "+ another case", picking `then`.
+export function withCase(rule, operands, then) {
+  return { ...rule, cases: [...(rule.cases || []), { when: fromRows([blankRow(operands)]), then }] };
+}
