@@ -183,12 +183,16 @@ test('Back is a close too: a draft holds it and takes its entry back; an empty s
   await turn();
   assert.deepEqual(announced, [{ closed: false, replace: false }], 'the sheet takes its history entry back');
 
-  await harness.act(() => routes.restoreOverlays({}));
-  assert.equal(dialog().querySelector('.phone-compose-ask'), null, 'Back again while asked means Keep');
-  // Each Back is a task of its own: the kept sheet has taken its entry back
+  // Each Back is a task of its own: the held sheet has taken its entry back
   // before the next one.
+  await harness.act(() => routes.restoreOverlays({ phone: '1' }));
+  announced.length = 0;
+  await harness.act(() => routes.restoreOverlays({}));
+  assert.equal(dialog(), null, 'Back again while asked means Discard: Back alone can leave a form');
   await turn();
-  await harness.input(field(), '');
+  assert.deepEqual(announced, [], 'that Back already left its entry: no further step');
+
+  await open();
   await harness.act(() => routes.restoreOverlays({}));
   assert.equal(dialog(), null, 'an empty sheet just closes');
 });

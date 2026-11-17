@@ -8,8 +8,9 @@
 // agent is busy, with attachments uploaded first. Saved prompts insert at the
 // caret, as on the desktop. Another node's agent takes text only.
 //
-// A draft is not lost by accident: Escape, the scrim, a swipe down on the
-// grab handle and Cancel ask first while anything is written or attached.
+// A draft is not lost by accident: Back, Escape, the scrim, a swipe down on
+// the grab handle and Cancel ask first while anything is written or attached;
+// a second Back while it asks discards it.
 
 import { h } from 'preact';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
@@ -113,10 +114,12 @@ export function ComposeSheet({ agent = '', label = '', node = '', title = '', hi
   const picking = !!recipients && !to;
 
   // A close the operator asked for waits for a yes while there is a draft.
-  // Asked again while the question is up (Escape, Back), it means Keep.
-  useSheetGuard(() => {
+  // Asked again while the question is up, Back means Discard and any other
+  // close (Escape, the scrim) Keep.
+  useSheetGuard((why) => {
     if (!dirty && !busy) return false;
     if (busy) return true;
+    if (confirming && why?.back) return false;
     if (confirming) keep();
     else setConfirming(true);
     return true;

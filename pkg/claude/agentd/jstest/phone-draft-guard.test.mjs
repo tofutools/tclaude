@@ -34,7 +34,7 @@ test('with nothing written, a close just closes', async (t) => {
   assert.equal(sheet.phoneSheet.value, null, 'nothing written: it just closes');
 });
 
-test('the question: Back (a requested close) asks, again keeps, Keep and Discard do what they say', async (t) => {
+test('the question: a requested close (Escape, the scrim) asks, again keeps, Keep and Discard do what they say', async (t) => {
   const { harness, sheet, ask, button, field, request } = await setup(t);
   await harness.input(field(), 'ship after the migration');
   await request();
@@ -74,4 +74,19 @@ test('a one-line title is not asked about', async (t) => {
   await harness.input(field(), 'Saved carts');
   await request();
   assert.equal(sheet.phoneSheet.value, null);
+});
+
+test('Back asks, and Back again while it asks discards: Back alone can leave a form', async (t) => {
+  const { harness, sheet, ask, field } = await setup(t);
+  await harness.input(field(), 'ship after the migration');
+  const back = () => harness.act(() => sheet.requestClosePhoneSheet({ back: true }));
+  await back();
+  assert.ok(ask(), 'Back asks');
+  await harness.act(() => sheet.requestClosePhoneSheet());
+  assert.equal(ask(), null, 'another close while it asks keeps');
+  assert.ok(sheet.phoneSheet.value);
+  await back();
+  assert.ok(ask());
+  await back();
+  assert.equal(sheet.phoneSheet.value, null, 'Back again while it asks discards');
 });

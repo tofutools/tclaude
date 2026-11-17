@@ -57,7 +57,7 @@ export function useBackLayer(open, close, { routed = false } = {}) {
   latest.current = close;
   useLayoutEffect(() => {
     if (!open) return undefined;
-    return registerBackLayer({ close: () => latest.current?.(), routed });
+    return registerBackLayer({ close: (why) => latest.current?.(why), routed });
   }, [!!open, routed]);
 }
 
@@ -67,13 +67,15 @@ export function stepLayers(layers = backLayers.peek()) {
   return layers.filter((layer) => !layer.routed);
 }
 
-// closeTopBackLayer asks the topmost step layer to close. Resolves true when
-// it closed, false when it stayed open or there is none.
+// closeTopBackLayer asks the topmost step layer to close, for Back. Resolves
+// true when it closed, false when it stayed open or there is none. A layer
+// marked `question` (raised by an earlier Back's close: phone-history.js) is
+// told so: close({ question: true }).
 export async function closeTopBackLayer() {
   const top = stepLayers().at(-1);
   if (!top) return false;
   try {
-    return (await top.close()) !== false;
+    return (await top.close({ question: !!top.question })) !== false;
   } catch (_) {
     return false;
   }

@@ -1,8 +1,9 @@
 // Back over a phone form holding a draft (js/phone-history.js,
 // js/back-layers.js), in a real browser, for every guarded form a phone
 // reaches. The rule: Back asks "Discard?" and the page behind never moves.
-// Kept, the form stays and Back asks again; discarded, the form closes and
-// the page behind is where it was. A form with no guard (a one-line sheet)
+// Kept, the form stays and Back asks again; Back again while it asks
+// discards, the form closes and the page behind is where it was, and a
+// further Back goes to the page before, never out of tclaude. A form with no guard (a one-line sheet)
 // just closes on Back, and the page behind stays too.
 //
 //   scripts/sandbox/ui.sh smoke phone-discard-back
@@ -195,7 +196,7 @@ const GUARDED = [
 ];
 
 for (const form of GUARDED) {
-  test(`${form.name}: Back asks to discard, and the page behind never moves`, async ({ page }) => {
+  test(`${form.name}: Back asks to discard, Back again discards, and the page behind never moves`, async ({ page }) => {
     const errors = collectErrors(page);
     await watchGestureless(page);
     await page.goto('/');
@@ -204,6 +205,8 @@ for (const form of GUARDED) {
     await expect(form.form(page)).toBeVisible();
     await form.type(page);
     const before = await behind(page);
+    const layers = () => Number(new URL(page.url()).searchParams.get('phone') || 0);
+    const withForm = layers();
 
     await back(page);
     await expect(form.ask(page), 'Back asks').toBeVisible();
@@ -221,19 +224,12 @@ for (const form of GUARDED) {
     await expect(form.ask(page), 'the next Back asks again').toBeVisible();
     await stepTaken(page);
     expect(await behind(page)).toEqual(before);
-    // Back again while it asks is Keep (the sheet's rule; a dialog's
-    // question is a layer Back cancels), and nothing behind moves.
+    // Back again while it asks confirms the discard (tk_3739e29d): Back alone
+    // can always leave a form, and the page behind stays.
     await back(page);
-    await expect(form.ask(page), 'a Back while it asks keeps the form').toBeHidden();
-    await expect(form.form(page)).toBeVisible();
-    await stepTaken(page);
-    expect(await behind(page), 'a Back while it asks moves nothing behind').toEqual(before);
-
-    await back(page);
-    await expect(form.ask(page)).toBeVisible();
-    await stepTaken(page);
-    await form.discard(page);
-    await expect(form.form(page), 'discarded, the form closes').toBeHidden();
+    await expect(form.form(page), 'Back again while it asks discards the form').toBeHidden();
+    await expect(form.ask(page)).toBeHidden();
+    await expect.poll(layers, 'off the form\'s entry').toBe(withForm - 1);
     expect(await behind(page), 'and the page behind is where it was').toEqual(before);
     expect(await gestureless(page), 'no entry added after a Back without a tap (Android would skip them all)').toEqual([]);
 

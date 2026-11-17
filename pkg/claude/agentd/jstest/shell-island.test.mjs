@@ -1128,3 +1128,29 @@ test('the footer offers Phone view only to a phone showing the desktop page', as
   assertAbsent(await link({ layout: 'desktop', detected: 'desktop', override: null }), 'a desktop never has it');
   assertAbsent(await link({ layout: 'phone', detected: 'phone', override: null }), 'nor a phone already in the phone layout');
 });
+
+// Back over a phone form asks Discard input?; Back again confirms it
+// (tk_3739e29d). One a tap raised (another prompt picked mid-edit) keeps
+// Back as Cancel, as does every other confirmation.
+test('Back answers a Discard input? a Back raised with Discard, and is Cancel otherwise', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createShellState }, { Confirm }, layers] = await Promise.all([
+    harness.importDashboardModule('js/shell-state.js'),
+    harness.importDashboardModule('js/shell-island.js'),
+    harness.importDashboardModule('js/back-layers.js'),
+  ]);
+  const feedback = createShellState();
+  await harness.mount(harness.html`<${Confirm} feedback=${feedback} />`);
+  const discardInput = () => feedback.confirm({ title: 'Discard input?', okLabel: 'Discard', backConfirms: true });
+  const ask = async (open, question) => {
+    let answered;
+    await harness.act(() => { answered = open(); });
+    const top = layers.stepLayers().at(-1);
+    if (question) top.question = true;
+    await harness.act(() => layers.closeTopBackLayer());
+    return answered;
+  };
+  assert.equal(await ask(discardInput, true), true, 'raised by a Back: Back again discards');
+  assert.equal(await ask(discardInput, false), false, 'raised by a tap: Back is Cancel');
+  assert.equal(await ask(() => feedback.confirm({ title: 'Shutdown?' }), true), false, 'any other confirmation: Back is Cancel');
+});

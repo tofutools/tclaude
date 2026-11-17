@@ -959,10 +959,14 @@ function Confirm({ feedback }) {
   // — the same busy vocabulary the transaction dialogs already use.
   const busy = !!model?.busy;
   const okRef = useRef(null);
-  // Back is Cancel; a confirmed action in flight stays up.
-  useBackLayer(!!model, () => {
-    if (feedback.confirmation.peek?.()?.busy ?? feedback.confirmation.value?.busy) return false;
-    feedback.resolveConfirmation(false);
+  // Back is Cancel, except on a Discard input? a Back itself raised
+  // (why.question, phone-history.js): Back again confirms the discard
+  // (tk_3739e29d). One a tap raised (another prompt picked mid-edit) keeps
+  // Back as Cancel. A confirmed action in flight stays up.
+  useBackLayer(!!model, (why) => {
+    const now = feedback.confirmation.peek?.() ?? feedback.confirmation.value;
+    if (now?.busy) return false;
+    feedback.resolveConfirmation(!!(why?.question && now?.backConfirms));
     return true;
   });
   useLayoutEffect(() => {

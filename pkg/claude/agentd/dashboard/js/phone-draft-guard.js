@@ -1,8 +1,9 @@
 // phone-draft-guard.js -- a phone sheet's guard for a short draft (a comment,
 // a note, an agent's prompt), the message sheet's rule (phone-compose-sheet.js)
 // for any sheet: a close the operator asked for (Back, Escape, the scrim, a
-// swipe down, Cancel) asks "Discard?" while there is a draft, and asked again
-// while the question is up it means Keep. Nothing written goes without a yes.
+// swipe down, Cancel) asks "Discard?" while there is a draft. Asked again
+// while the question is up, Back means Discard (the yes: Back alone can
+// always leave a form) and any other close Keep.
 //
 //   const guard = useDraftGuard(!!text.trim(), busy, () => field.current);
 //   ...
@@ -27,6 +28,8 @@ const html = htm.bind(h);
 // up, and Keep.
 export function useDraftGuard(dirty, busy = false, focusField = null) {
   const [asking, setAsking] = useState(false);
+  const askingNow = useRef(false);
+  askingNow.current = asking;
   const field = useRef(focusField);
   field.current = focusField;
   const wasAsking = useRef(false);
@@ -34,10 +37,12 @@ export function useDraftGuard(dirty, busy = false, focusField = null) {
     if (wasAsking.current && !asking) field.current?.()?.focus?.();
     wasAsking.current = asking;
   }, [asking]);
-  useSheetGuard(() => {
+  useSheetGuard((why) => {
     if (typeof busy === 'function' ? busy() : busy) return true;
     if (!(typeof dirty === 'function' ? dirty() : dirty)) return false;
-    setAsking((now) => !now);
+    if (askingNow.current && why?.back) return false;
+    askingNow.current = !askingNow.current;
+    setAsking(askingNow.current);
     return true;
   });
   return { asking, keep: () => setAsking(false) };
