@@ -133,7 +133,7 @@ function ProfileModal({ state, actions }) {
 function CaptureList({ current, actions, now }) {
   if (!current.loaded) {
     if (current.request.phase === 'error') {
-      return html`<div class="island-error" role="alert">Failed to load profile captures: ${current.request.error}</div>`;
+      return html`<div class="island-error ui-error-box" role="alert">Failed to load profile captures: ${current.request.error}</div>`;
     }
     return html`<div class="empty">Loading profile captures…</div>`;
   }
@@ -196,7 +196,7 @@ export function ProfilesApp({
           onClick=${() => state.openModal()}>${running ? '⏱ profiling…' : '⏱ Profile daemon…'}<//>
       </div>
       ${current.notice && html`<div class="muted profile-notice" aria-live="polite">${current.notice}</div>`}
-      ${current.loaded && current.request.phase === 'error' && html`<div class="island-error" role="alert">Refresh failed: ${current.request.error}</div>`}
+      ${current.loaded && current.request.phase === 'error' && html`<div class="island-error ui-error-box" role="alert">Refresh failed: ${current.request.error}</div>`}
       <div id="profile-list"><${CaptureList} current=${current} actions=${actions} now=${now} /></div>
     </div>
     <${ProfileModal} state=${state} actions=${actions} />

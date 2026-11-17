@@ -166,7 +166,7 @@ function Preview({ row, anchor, groups, onClose, onChanged, onDelete, fetchImpl 
       <span class="dpp-spacer"></span>
       <${Button} size="sm" variant="danger" class="process-action" data-dock-process-delete onClick=${() => onDelete(row)}>${wizWord('Delete', 'Dispel')}<//>
     </div>
-    ${error && html`<div class="island-error" role="alert">${error}</div>`}
+    ${error && html`<div class="island-error ui-error-box" role="alert">${error}</div>`}
   </div>`;
 }
 

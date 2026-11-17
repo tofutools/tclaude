@@ -974,6 +974,11 @@ button.tool:where(:hover) { background: var(--ui-bg-hover); }
   margin: 8px; padding: 8px 10px;
 }
 .messages-error button, .mail-error button { margin-left: 8px; }
+/* An island's read or action error: the markup pairs .island-error with
+   .ui-error-box (the banner's paint), and this gives it .mail-error's
+   spacing. Long server errors wrap. */
+.island-error.ui-error-box { margin: 8px 0; padding: 8px 10px; overflow-wrap: anywhere; }
+.island-error.ui-error-box .ui-btn { margin-left: 8px; }
 
 main { padding: 16px 24px; }
 section { display: none; }

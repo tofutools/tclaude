@@ -1067,7 +1067,7 @@ function pathIdentity(path, home = '') {
 function RequestList({ request, label, retry, children }) {
   if ((request.phase === 'idle' || request.phase === 'loading') && !request.data?.length) return html`<div class="ui-empty-block">Loading ${label}…</div>`;
   if (request.phase === 'error' && !request.data?.length) return html`<div class="ui-empty-block" role="alert">Could not load ${label}: ${request.error} <${Button} onClick=${retry}>retry<//></div>`;
-  return html`${request.phase === 'error' && html`<div class="island-error" role="alert">Refresh failed: ${request.error} <${Button} onClick=${retry}>retry<//></div>`}${children}`;
+  return html`${request.phase === 'error' && html`<div class="island-error ui-error-box" role="alert">Refresh failed: ${request.error} <${Button} onClick=${retry}>retry<//></div>`}${children}`;
 }
 
 function Manager({ kind, current, state, actions, confirmDiscard }) {

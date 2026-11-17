@@ -85,7 +85,7 @@ test('tableState shows loading, then an error, then the empty note, else nothing
   const markup = async (vnode) => (await harness.mount(html`<div>${vnode}</div>`)).container.innerHTML;
   assert.equal(await markup(tableState({ loading: 'Loading…', error: 'x', empty: 'y' })), '<div><div class="empty">Loading…</div></div>');
   assert.equal(await markup(tableState({ loading: false, error: html`Failed: ${'boom'}`, empty: 'y' })),
-    '<div><div class="island-error" role="alert">Failed: boom</div></div>');
+    '<div><div class="island-error ui-error-box" role="alert">Failed: boom</div></div>');
   assert.equal(await markup(tableState({ loading: false, error: false, empty: 'Nothing yet.' })), '<div><div class="empty">Nothing yet.</div></div>');
   assert.equal(tableState({ loading: false, error: false, empty: false }), null);
 });

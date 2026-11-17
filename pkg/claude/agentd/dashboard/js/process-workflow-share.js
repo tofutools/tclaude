@@ -282,7 +282,7 @@ function ImportDialog({ file, source, bytes, preview: initialPreview, group: ini
     ${review.summary && html`<p class="pwf-summary">${review.summary}</p>`}
     ${review.credit && html`<p class="muted" data-pwf-credit>${review.credit}</p>`}
     <p class=${`pwf-signer ${review.trusted ? 'is-trusted' : 'is-untrusted'}`} data-pwf-signer>${review.signer}</p>
-    ${review.refused && html`<div class="island-error" role="alert" data-pwf-refused>Import refused: ${review.refused}. Change this in Config › Experimental.</div>`}
+    ${review.refused && html`<div class="island-error ui-error-box" role="alert" data-pwf-refused>Import refused: ${review.refused}. Change this in Config › Experimental.</div>`}
     <div class="pwf-section"><h4 class="ui-eyebrow">Commands it would run</h4>
       ${review.programs.length === 0 ? html`<p class="muted">None. Every step is an agent or you.</p>` : html`<ul class="pwf-commands">${review.programs.map((p) => html`<li key=${p.step} data-pwf-command=${p.step}><code>${p.command}</code> <span class="muted">· ${p.step} · program profile <b>${p.profile || 'default'}</b></span></li>`)}</ul>
       <p class="muted">Nothing runs on import. Starting a run asks you to allow each program profile first.</p>`}
@@ -313,7 +313,7 @@ function ImportDialog({ file, source, bytes, preview: initialPreview, group: ini
       <label class="pwf-group">Pin it to <${GroupCombobox} attrs=${{ 'data-pwf-group': '' }} disabled=${busy} value=${choices.group}
         groups=${[...new Set([...(choices.group ? [choices.group] : []), ...groups])]} noneLabel="no group (library only)"
         ariaLabel="Pin it to group" onChange=${(group) => choose({ group })} /></label></div>`}
-    ${error && html`<div class="island-error" role="alert">${error}</div>`}
+    ${error && html`<div class="island-error ui-error-box" role="alert">${error}</div>`}
     <div class="modal-buttons"><${Button} disabled=${busy} onClick=${onClose}>Cancel</${Button}>
       <${Button} variant="primary" data-pwf-import disabled=${busy || reviewing || imported || blocked || (review.nothingToDo && !choices.group)} onClick=${submit}>${imported ? 'Imported' : review.refused ? 'Refused' : reviewing ? 'Reviewing…' : review.nothingToDo && !choices.group ? 'Already imported' : busy ? 'Importing…' : 'Import'}</${Button}></div>
   </${Dialog}>`;
@@ -351,7 +351,7 @@ export function WorkflowImportButton({
   return html`<span class="pwf-import-entry">
     <input name="process-workflow-share-input" ref=${input} type="file" accept=".pwf,.paf,${PWF_TYPE}" hidden data-pwf-file onChange=${choose} />
     <${Button} id=${id || undefined} class=${className} variant=${variant} size=${size} title="Import a shared .pwf workflow file, or a .paf carrying one: you review what it runs before anything is stored" onClick=${() => (from ? void load(from) : input.current?.click())}>${label}<//>
-    ${error && html`<span class="island-error pwf-inline-error" role="alert">${error}</span>`}
+    ${error && html`<span class="island-error ui-error pwf-inline-error" role="alert">${error}</span>`}
     ${state && html`<${ImportDialog} ...${state} group=${group} onClose=${() => setState(null)} onImported=${onImported} />`}
   </span>`;
 }

@@ -60,7 +60,7 @@ export function ColGroup({ cols, colClass }) {
 // should render.
 export function tableState({ loading, error, empty }) {
   if (loading) return html`<div class="empty">${loading}</div>`;
-  if (error) return html`<div role="alert" class="island-error">${error}</div>`;
+  if (error) return html`<div role="alert" class="island-error ui-error-box">${error}</div>`;
   if (empty) return html`<div class="empty">${empty}</div>`;
   return null;
 }

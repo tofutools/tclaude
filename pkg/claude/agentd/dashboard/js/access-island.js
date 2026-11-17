@@ -110,7 +110,7 @@ function SudoView({ state, actions, current }) {
       <${Button} id="sudo-grant-open" variant="primary" title="Proactively grant a time-bounded sudo elevation to an agent"
         onClick=${actions.openGrant}>+ Grant sudo<//>
     </div>
-    ${current.mutation.error && html`<div role="alert" class="island-error access-mutation-error">${current.mutation.error}</div>`}
+    ${current.mutation.error && html`<div role="alert" class="island-error ui-error-box access-mutation-error">${current.mutation.error}</div>`}
     <div id="sudo-list">
       ${tableState({
         loading: !current.snapshotLoaded && 'Loading sudo grants…',

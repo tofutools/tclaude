@@ -33,7 +33,7 @@ const html = htm.bind(h);
 function RequestBody({ request, label, retry, children }) {
   if (request.phase === 'loading' && !request.hasPayload) return html`<div class="process-placeholder">Loading ${label}…</div>`;
   if (request.phase === 'error' && !request.hasPayload) return html`<div class="process-placeholder island-error" role="alert">Could not load ${label}: ${request.error} <${Button} class="process-action" onClick=${retry}>retry<//></div>`;
-  return html`<div class="process-request-body">${request.phase === 'error' && html`<div class="island-error" role="alert">Refresh failed: ${request.error}</div>`}${children}</div>`;
+  return html`<div class="process-request-body">${request.phase === 'error' && html`<div class="island-error ui-error-box" role="alert">Refresh failed: ${request.error}</div>`}${children}</div>`;
 }
 
 function InlineTemplateField({ id, value, emptyLabel, placeholder, className, editAttr, inputAttr, editTitle, editLabel, busy, commit }) {
