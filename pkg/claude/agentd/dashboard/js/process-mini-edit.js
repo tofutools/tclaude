@@ -547,6 +547,24 @@ export function branch(view, id, kind) {
   return { view: syncLoops(next), id: added, outcome };
 }
 
+// insertOnAnswer puts a new step on one answer of a decision, before where
+// that answer went: the answer leads to the new step, which goes on there.
+// One edit for "this answer gets its own step" (⑂ on the answer's row).
+export function insertOnAnswer(view, id, outcome, kind) {
+  const node = view.template.nodes[id];
+  if (node?.type !== 'decision') throw new Error('only a decision\'s answer gets its own step');
+  const next = copyView(view);
+  const edge = next.edges.find((e) => e.from === id && e.outcome === outcome);
+  if (!edge) throw new Error(`no outcome ${outcome}`);
+  if (loopBound(node, outcome)) throw new Error(`${outcome} goes back; give it a step where it goes back to`);
+  const added = addNode(next, newStepNode(kind));
+  const target = edge.to;
+  edge.to = added;
+  linkOn(next, added, kind, target);
+  dropStaleJoins(next);
+  return { view: syncLoops(next), id: added };
+}
+
 // runAlongside runs a new step in parallel with `id`: the edge into `id`
 // goes to a new parallel node that fans out to both, and both join at what
 // came after `id`. On a one-step branch of a fork already there, the new step

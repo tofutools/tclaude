@@ -489,6 +489,11 @@
      "to": "ready-the-pr"
     },
     {
+     "from": "meets-the-criteria",
+     "outcome": "misses",
+     "to": "amend-the-criteria"
+    },
+    {
      "from": "ready-the-pr",
      "outcome": "next",
      "to": "merge"
@@ -507,11 +512,6 @@
      "from": "merge-the-pr",
      "outcome": "next",
      "to": "end"
-    },
-    {
-     "from": "meets-the-criteria",
-     "outcome": "misses",
-     "to": "amend-the-criteria"
     },
     {
      "from": "amend-the-criteria",
@@ -551,6 +551,571 @@
    ],
    "layout": {
     "nodes": {}
+   }
+  },
+  "simple-full": {
+   "template": {
+    "apiVersion": "tclaude.dev/v1alpha1",
+    "kind": "ProcessTemplate",
+    "id": "",
+    "name": "Simple implementation",
+    "params": {
+     "idea": {
+      "type": "string",
+      "required": true,
+      "description": "The idea to build"
+     },
+     "auto_merge": {
+      "type": "boolean",
+      "default": false,
+      "description": "Merge on green CI without asking"
+     }
+    },
+    "start": "start",
+    "nodes": {
+     "start": {
+      "type": "start"
+     },
+     "task": {
+      "type": "task",
+      "name": "Discuss the idea",
+      "performer": {
+       "kind": "agent",
+       "prompt": "Discuss {{params.idea}} with the operator until the high-level idea is clear. Write it down.",
+       "lead": true
+      }
+     },
+     "decision": {
+      "type": "decision",
+      "name": "Idea decided",
+      "performer": {
+       "kind": "human",
+       "ask": "Is the high-level idea decided?",
+       "choices": [
+        "decided",
+        "not-yet"
+       ]
+      },
+      "loops": {
+       "not-yet": {
+        "maxIterations": 3
+       }
+      }
+     },
+     "task-2": {
+      "type": "task",
+      "name": "Provision an implementor",
+      "performer": {
+       "kind": "agent",
+       "prompt": "Bring in an implementor for the idea and brief it.",
+       "lead": true
+      }
+     },
+     "task-3": {
+      "type": "task",
+      "name": "Build the feature",
+      "performer": {
+       "kind": "agent",
+       "prompt": "Build the agreed idea on a branch and open a draft PR.",
+       "role": "implementor"
+      }
+     },
+     "task-4": {
+      "type": "task",
+      "name": "Cold review",
+      "performer": {
+       "kind": "agent",
+       "prompt": "Review the PR cold, as someone who did not build it. List what you find.",
+       "anyone": true,
+       "differentFrom": [
+        "task-3"
+       ]
+      }
+     },
+     "decision-2": {
+      "type": "decision",
+      "name": "Iterate or move on",
+      "performer": {
+       "kind": "agent",
+       "prompt": "Does the review warrant another round of changes, or does it move ahead?",
+       "lead": true
+      },
+      "loops": {
+       "iterate": {
+        "maxIterations": 3,
+        "onExhausted": "give-up"
+       }
+      }
+     },
+     "end": {
+      "type": "end",
+      "result": "failed",
+      "name": "Gave up"
+     },
+     "task-5": {
+      "type": "task",
+      "name": "Ready the PR",
+      "performer": {
+       "kind": "agent",
+       "prompt": "Mark the PR ready for review and notify the operator with a short summary.",
+       "lead": true
+      }
+     },
+     "decision-3": {
+      "type": "decision",
+      "name": "Merge",
+      "performer": {
+       "kind": "agent",
+       "prompt": "Auto-merge is {{params.auto_merge}}. Answer merge only if it is true and CI on the PR passed; otherwise leave it for the operator.",
+       "lead": true
+      }
+     },
+     "task-6": {
+      "type": "task",
+      "name": "Merge the PR",
+      "performer": {
+       "kind": "agent",
+       "prompt": "Merge the PR now that CI passed.",
+       "lead": true
+      }
+     },
+     "end-2": {
+      "type": "end",
+      "result": "success"
+     }
+    }
+   },
+   "edges": [
+    {
+     "from": "",
+     "outcome": "start",
+     "to": "start"
+    },
+    {
+     "from": "start",
+     "outcome": "pass",
+     "to": "task"
+    },
+    {
+     "from": "task",
+     "outcome": "pass",
+     "to": "decision"
+    },
+    {
+     "from": "decision",
+     "outcome": "not-yet",
+     "to": "task"
+    },
+    {
+     "from": "decision",
+     "outcome": "decided",
+     "to": "task-2"
+    },
+    {
+     "from": "task-2",
+     "outcome": "pass",
+     "to": "task-3"
+    },
+    {
+     "from": "task-3",
+     "outcome": "pass",
+     "to": "task-4"
+    },
+    {
+     "from": "task-4",
+     "outcome": "pass",
+     "to": "decision-2"
+    },
+    {
+     "from": "decision-2",
+     "outcome": "iterate",
+     "to": "task-3"
+    },
+    {
+     "from": "decision-2",
+     "outcome": "give-up",
+     "to": "end"
+    },
+    {
+     "from": "decision-2",
+     "outcome": "move-on",
+     "to": "task-5"
+    },
+    {
+     "from": "task-5",
+     "outcome": "pass",
+     "to": "decision-3"
+    },
+    {
+     "from": "decision-3",
+     "outcome": "merge",
+     "to": "task-6"
+    },
+    {
+     "from": "task-6",
+     "outcome": "pass",
+     "to": "end-2"
+    },
+    {
+     "from": "decision-3",
+     "outcome": "leave",
+     "to": "end-2"
+    }
+   ],
+   "layout": {
+    "nodes": {
+     "start": {
+      "x": 120,
+      "y": 90
+     }
+    }
+   }
+  },
+  "advanced-full": {
+   "template": {
+    "apiVersion": "tclaude.dev/v1alpha1",
+    "kind": "ProcessTemplate",
+    "id": "",
+    "name": "Advanced implementation",
+    "params": {
+     "idea": {
+      "type": "string",
+      "required": true,
+      "description": "The idea to build"
+     },
+     "allow_amend": {
+      "type": "boolean",
+      "default": false,
+      "description": "The lead may make minor changes to the criteria and design"
+     },
+     "auto_merge": {
+      "type": "boolean",
+      "default": false,
+      "description": "Merge on green CI without asking"
+     }
+    },
+    "start": "start",
+    "nodes": {
+     "start": {
+      "type": "start"
+     },
+     "task": {
+      "type": "task",
+      "name": "Discuss the idea",
+      "performer": {
+       "kind": "agent",
+       "prompt": "Discuss {{params.idea}} with the operator until the high-level idea is clear. Write it down.",
+       "lead": true
+      }
+     },
+     "decision": {
+      "type": "decision",
+      "name": "Idea decided",
+      "performer": {
+       "kind": "human",
+       "ask": "Is the high-level idea decided?",
+       "choices": [
+        "decided",
+        "not-yet"
+       ]
+      },
+      "loops": {
+       "not-yet": {
+        "maxIterations": 3
+       }
+      }
+     },
+     "task-2": {
+      "type": "task",
+      "name": "Define acceptance criteria",
+      "performer": {
+       "kind": "agent",
+       "prompt": "Write the acceptance criteria for the decided idea.",
+       "lead": true
+      }
+     },
+     "task-3": {
+      "type": "task",
+      "name": "Provision an implementor",
+      "performer": {
+       "kind": "agent",
+       "prompt": "Bring in an implementor and brief it with the idea and the criteria.",
+       "lead": true
+      }
+     },
+     "task-4": {
+      "type": "task",
+      "name": "Implement",
+      "performer": {
+       "kind": "agent",
+       "prompt": "Implement the idea on a branch to meet the criteria, and open a draft PR.",
+       "role": "implementor"
+      }
+     },
+     "decision-2": {
+      "type": "decision",
+      "name": "Review",
+      "loops": {
+       "changes": {
+        "maxIterations": 3,
+        "onExhausted": "give-up"
+       }
+      },
+      "deciders": [
+       {
+        "kind": "agent",
+        "prompt": "Cold review of the PR, as someone who did not build it. Approve it or ask for changes, with your reasons.",
+        "anyone": true,
+        "differentFrom": [
+         "task-4"
+        ]
+       },
+       {
+        "kind": "agent",
+        "prompt": "Security review of the PR: injection, secrets, permissions. Approve it or ask for changes, with your reasons.",
+        "anyone": true,
+        "differentFrom": [
+         "task-4"
+        ]
+       },
+       {
+        "kind": "agent",
+        "prompt": "Product review of the PR: is the feature usable as the idea meant it? Approve it or ask for changes, with your reasons.",
+        "anyone": true,
+        "differentFrom": [
+         "task-4"
+        ]
+       },
+       {
+        "kind": "agent",
+        "prompt": "Engineering review of the PR: structure, tests, maintainability. Approve it or ask for changes, with your reasons.",
+        "anyone": true,
+        "differentFrom": [
+         "task-4"
+        ]
+       }
+      ],
+      "agree": "approved"
+     },
+     "decision-3": {
+      "type": "decision",
+      "name": "Fix minors or proceed",
+      "performer": {
+       "kind": "agent",
+       "prompt": "The reviewers approved. Are their minor findings worth fixing first?",
+       "lead": true
+      }
+     },
+     "end": {
+      "type": "end",
+      "result": "failed",
+      "name": "Gave up"
+     },
+     "task-5": {
+      "type": "task",
+      "name": "Fix the minors",
+      "performer": {
+       "kind": "agent",
+       "prompt": "Fix the minor review findings on the same branch.",
+       "role": "implementor",
+       "sameAs": "task-4"
+      }
+     },
+     "decision-4": {
+      "type": "decision",
+      "name": "Meets the criteria",
+      "performer": {
+       "kind": "agent",
+       "prompt": "Does the implementation, as reviewed, meet the acceptance criteria?",
+       "lead": true
+      }
+     },
+     "task-6": {
+      "type": "task",
+      "name": "Ready the PR",
+      "performer": {
+       "kind": "agent",
+       "prompt": "Mark the PR ready for review and notify the operator with a short summary.",
+       "lead": true
+      }
+     },
+     "decision-5": {
+      "type": "decision",
+      "name": "Merge",
+      "performer": {
+       "kind": "agent",
+       "prompt": "Auto-merge is {{params.auto_merge}}. Answer merge only if it is true and CI on the PR passed; otherwise leave it for the operator.",
+       "lead": true
+      }
+     },
+     "task-7": {
+      "type": "task",
+      "name": "Merge the PR",
+      "performer": {
+       "kind": "agent",
+       "prompt": "Merge the PR now that CI passed.",
+       "lead": true
+      }
+     },
+     "end-2": {
+      "type": "end",
+      "result": "success"
+     },
+     "decision-6": {
+      "type": "decision",
+      "name": "Amend the criteria",
+      "performer": {
+       "kind": "agent",
+       "prompt": "The operator allowed amending: {{params.allow_amend}}. Only if that is true and the gap is minor, answer amend; otherwise rework.",
+       "lead": true
+      },
+      "loops": {
+       "rework": {
+        "maxIterations": 3,
+        "onExhausted": "give-up"
+       }
+      }
+     },
+     "task-8": {
+      "type": "task",
+      "name": "Amend criteria and design",
+      "performer": {
+       "kind": "agent",
+       "prompt": "Make the minor changes to the criteria and the design, and note them for the operator.",
+       "lead": true
+      }
+     }
+    }
+   },
+   "edges": [
+    {
+     "from": "",
+     "outcome": "start",
+     "to": "start"
+    },
+    {
+     "from": "start",
+     "outcome": "pass",
+     "to": "task"
+    },
+    {
+     "from": "task",
+     "outcome": "pass",
+     "to": "decision"
+    },
+    {
+     "from": "decision",
+     "outcome": "not-yet",
+     "to": "task"
+    },
+    {
+     "from": "decision",
+     "outcome": "decided",
+     "to": "task-2"
+    },
+    {
+     "from": "task-2",
+     "outcome": "pass",
+     "to": "task-3"
+    },
+    {
+     "from": "task-3",
+     "outcome": "pass",
+     "to": "task-4"
+    },
+    {
+     "from": "task-4",
+     "outcome": "pass",
+     "to": "decision-2"
+    },
+    {
+     "from": "decision-2",
+     "outcome": "approved",
+     "to": "decision-3"
+    },
+    {
+     "from": "decision-2",
+     "outcome": "changes",
+     "to": "task-4"
+    },
+    {
+     "from": "decision-2",
+     "outcome": "give-up",
+     "to": "end"
+    },
+    {
+     "from": "decision-3",
+     "outcome": "fix-minors",
+     "to": "task-5"
+    },
+    {
+     "from": "task-5",
+     "outcome": "pass",
+     "to": "decision-4"
+    },
+    {
+     "from": "decision-3",
+     "outcome": "proceed",
+     "to": "decision-4"
+    },
+    {
+     "from": "decision-4",
+     "outcome": "meets",
+     "to": "task-6"
+    },
+    {
+     "from": "task-6",
+     "outcome": "pass",
+     "to": "decision-5"
+    },
+    {
+     "from": "decision-5",
+     "outcome": "merge",
+     "to": "task-7"
+    },
+    {
+     "from": "task-7",
+     "outcome": "pass",
+     "to": "end-2"
+    },
+    {
+     "from": "decision-5",
+     "outcome": "leave",
+     "to": "end-2"
+    },
+    {
+     "from": "decision-4",
+     "outcome": "misses",
+     "to": "decision-6"
+    },
+    {
+     "from": "decision-6",
+     "outcome": "amend",
+     "to": "task-8"
+    },
+    {
+     "from": "task-8",
+     "outcome": "pass",
+     "to": "task-6"
+    },
+    {
+     "from": "decision-6",
+     "outcome": "rework",
+     "to": "task-4"
+    },
+    {
+     "from": "decision-6",
+     "outcome": "give-up",
+     "to": "end"
+    }
+   ],
+   "layout": {
+    "nodes": {
+     "start": {
+      "x": 120,
+      "y": 90
+     }
+    }
    }
   }
  }

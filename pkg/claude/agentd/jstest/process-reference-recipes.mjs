@@ -20,6 +20,8 @@ import { addReviewer, setDeciderAsk, withReviewerDefault } from '../dashboard/js
 import { followName } from '../dashboard/js/process-step-ids.js';
 
 const OPS = { after: m.insertAfter, before: m.insertBefore, branch: m.branch, alongside: m.runAlongside };
+// answer is ⑂ on one answer's row: (view, decision, outcome, kind).
+const onAnswer = (view, at, kind, outcome) => m.insertOnAnswer(view, at, outcome, kind);
 
 // offered is what the card's kind picker offers for an operation
 // (groups-mini-editor.js: KIND_CHOICES, INSERT_CHOICES, branchChoices), so a
@@ -48,17 +50,27 @@ export class InlineEditor {
 
   // add is a handle (+ after, ⑂ branch, ⫴ alongside, insert before) and the
   // kind picked: one edit.
-  add(op, at, kind) {
-    if (!offered(op, this.view, at).includes(kind)) throw new Error(`the card does not offer ${kind} for ${op} at ${at}`);
-    return this.land(`${op} ${kind} at ${at}`, OPS[op](this.view, at, kind));
+  add(op, at, kind, outcome = '') {
+    return this.land(`${op} ${kind} at ${at}`, this.added(op, at, kind, outcome));
   }
 
-  // step adds a step and fills it in: its name, what it does and who does it,
-  // each one edit, as in the inspector. Returns the step's id (it follows
-  // the name in a draft that has never run).
-  step(op, at, kind, { name, text, who, constraint } = {}) {
-    let { id } = this.add(op, at, kind);
-    if (name) id = this.name(id, name);
+  added(op, at, kind, outcome) {
+    if (!offered(op, this.view, at).includes(kind)) throw new Error(`the card does not offer ${kind} for ${op} at ${at}`);
+    return op === 'answer' ? onAnswer(this.view, at, kind, outcome) : OPS[op](this.view, at, kind);
+  }
+
+  // step adds a step and fills it in: its name (typed straight into the
+  // name field a new step opens on, so one edit with adding it), what it
+  // does and who does it, each one edit, as in the inspector. Returns the
+  // step's id (it follows the name in a draft that has never run). On
+  // 'answer', `outcome` is the decision's answer the step goes on.
+  step(op, at, kind, { name, text, who, constraint, outcome = '' } = {}) {
+    let id;
+    if (name) {
+      const added = this.added(op, at, kind, outcome);
+      const named = m.updateStep(added.view, added.id, (s) => setStepName(s, name));
+      id = this.land(`${op} ${kind} "${name}" at ${at}`, followName(named.view, added.id)).id;
+    } else id = this.add(op, at, kind, outcome).id;
     if (text) this.text(id, text);
     if (who) this.who(id, who);
     if (constraint) this.land(`constraint ${id}`, m.updateStep(this.view, id, (s) => setStepConstraint(s, constraint)));
@@ -210,12 +222,14 @@ export function advanced() {
   });
   e.rename(conform, 'yes', 'meets');
   shipIt(e, conform);
-  const amend = e.add('branch', conform, 'decide').id;
-  e.drop(conform, 'no');
-  const amendGate = e.name(amend, 'Amend the criteria');
-  e.text(amendGate, 'The operator allowed amending: {{params.allow_amend}}. Only if that is true and the gap is minor, answer amend; otherwise rework.');
-  e.who(amendGate, LEAD);
-  e.rename(conform, 'other', 'misses');
+  const ready = nodeNamed(e.view, 'Ready the PR');
+  e.rename(conform, 'no', 'misses');
+  // Missing the criteria still ends in a ready PR, once amended.
+  e.aim(conform, 'misses', ready);
+  const amendGate = e.step('answer', conform, 'decide', {
+    outcome: 'misses', name: 'Amend the criteria', who: LEAD,
+    text: 'The operator allowed amending: {{params.allow_amend}}. Only if that is true and the gap is minor, answer amend; otherwise rework.',
+  });
   e.rename(amendGate, 'yes', 'amend');
   e.rename(amendGate, 'no', 'rework');
   e.aim(amendGate, 'rework', implement);
@@ -227,13 +241,11 @@ export function advanced() {
     name: 'Fix minors or proceed', who: LEAD, text: 'The reviewers approved. Are their minor findings worth fixing first?',
   });
   e.rename(minors, 'yes', 'proceed');
-  const fix = e.add('branch', minors, 'agent').id;
-  e.drop(minors, 'no');
-  e.rename(minors, 'other', 'fix-minors');
-  const fixed = e.name(fix, 'Fix the minors');
-  e.text(fixed, 'Fix the minor review findings on the same branch.');
-  e.who(fixed, IMPLEMENTOR);
-  e.land(`constraint ${fixed}`, m.updateStep(e.view, fixed, (s) => setStepConstraint(s, { mode: 'same', step: implement })));
+  e.rename(minors, 'no', 'fix-minors');
+  e.step('answer', minors, 'agent', {
+    outcome: 'fix-minors', name: 'Fix the minors', who: IMPLEMENTOR, constraint: { mode: 'same', step: implement },
+    text: 'Fix the minor review findings on the same branch.',
+  });
   e.params({
     idea: { type: 'string', required: true, description: 'The idea to build' },
     allow_amend: { type: 'boolean', default: false, description: 'The lead may make minor changes to the criteria and design' },

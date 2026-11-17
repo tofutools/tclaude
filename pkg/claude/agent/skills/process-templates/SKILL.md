@@ -145,7 +145,7 @@ Top-level fields:
 |---|---|
 | `id` | Stable template key and route id. |
 | `name`, `description`, `doc` | Optional human-facing prose. |
-| `params` | Map of parameter ids to `{type, name?, description?, doc?, required?, default?}`. |
+| `params` | Map of parameter ids to `{type, name?, description?, doc?, required?, default?}`. `type` is `string`, `number` or `boolean` (validation does not check it, so use exactly these); a run binds each from `--param name=value`. |
 | `start` | Entry node id. A separate start-typed node is optional. |
 | `nodes` | Map keyed by stable node id. |
 | `fallback` | Default for agent steps nobody can take; see Performers. |
@@ -159,7 +159,10 @@ warns when placed in inert fields such as profile, timeout, or backoff.
 
 ### Node types
 
-- `task`: require `performer`; usually route `pass` and `fail`. Optionally add
+- `task`: require `performer` (`agent` or `program`: a person's step is a
+  `decision`), and exactly one route, e.g. `next: {next: review}`. A task
+  does not branch, on failure either: a failed task fails the run (or
+  retries, with `retry`); put a decision after it to branch. Optionally add
   `plan`, ordered `checks`, `review`, `retry`, and `captures` (outputs: a
   plain agent task's performer reports each with `--output name=value`, and a
   later prompt reads it as `{{ outputs.name }}`; params stay `{{ params.x }}`).
@@ -167,14 +170,40 @@ warns when placed in inert fields such as profile, timeout, or backoff.
   exact outcome key in `next`. For an agreement gate, give `deciders` (2..8
   agent or human performers) and `agree: <outcome>` instead of `performer`:
   all must choose `agree` for the gate to take it, else the first dissent's
-  outcome in decider order wins; a gate's `loops` need `onExhausted`.
+  outcome in decider order wins; a gate's `loops` need `onExhausted`. All
+  deciders vote at once, so a gate is how several reviewers review in
+  parallel and must all approve; on a dissent that goes back, the re-run
+  work is told every decider's vote and note.
 - `wait`: require `wait.duration`, `wait.until`, or `wait.signal`, plus `next`.
-- `parallel`: fan out to concurrent branches, then reduce them at a node with
-  `join: all` or `join: any`.
+- `parallel`: fan out to concurrent branches, one `next` outcome per branch,
+  which all meet at one node carrying `join: all` (wait for every branch) or
+  `join: any` (the first wins):
+
+  ```yml
+  together: {type: parallel, next: {docs: write-docs, tests: write-tests}}
+  write-docs: {type: task, performer: {...}, next: {next: merge-up}}
+  write-tests: {type: task, performer: {...}, next: {next: merge-up}}
+  merge-up: {type: task, join: all, performer: {...}, next: {next: done}}
+  ```
+
+  Branches are tasks, so they report no verdict: for parallel reviewers who
+  vote, use an agreement gate instead.
 - `subprocess`: run a nested graph as one node, inline or by `templateRef`.
 - `start`: optional explicit entry marker; require `next`.
 - `end`: no `next`; optional `result` such as `success`, `failed`, or
   `canceled`.
+
+Branching on a param or on an earlier result (a setting the operator gives
+at run time, such as "merge only if auto-merge is on", or "only if CI
+passed") has no rule decision yet: make it a decision whose decider (often
+`lead: true`) is told the value, e.g. `prompt: "Auto-merge is {{
+params.auto_merge }}. Answer merge only if it is true and CI passed; else
+leave."`, with one outcome per way. Keep it its own decision node, so it
+becomes a rule decision in one step when the engine has them.
+
+What the engine executes today (sequences, decisions, parallel joins,
+program and agent tasks, retries, loops) is in `docs/processes.md`, "What
+executes today"; validation errors name anything outside it.
 
 Keep node ids stable during ordinary edits. Every non-end reachable node needs
 a route that the runtime can take. Use bounded `retry.maxAttempts` for retry
@@ -203,7 +232,11 @@ decide:
   the last round and the decider has to pick another one.
 - Every cycle needs a bounded outcome; an unbounded one is a `graph_cycle`
   error. A poison-escalation `retry` edge is exempt. The body is entered only at the target, left only through decisions,
-  holds no `join: any`, and two loops nest or are disjoint.
+  holds no `join: any`, and two loops nest or are disjoint. So a side path
+  that should rerun the work ("adjust, then build again") goes back to the
+  loop's own target through a decision of its own, never into the middle.
+- A decider, agent or gate voter, is told the decision's outcomes and picks
+  one; its prompt need not list them.
 - Only decisions take `loops`. Rename or delete the outcome together with its
   `loops` entry.
 - The decider may be an agent (`performer: {kind: agent, role: reviewer,
@@ -242,61 +275,65 @@ an `id` and a `performer`. Only `plan` accepts `approval: human|auto` and
 
 ### Generation example
 
+A runnable review process: the lead agrees the idea with the operator, an
+implementor builds it, two reviewers must both approve, and the lead merges
+it only if the run allows it.
+
 ```yaml
 apiVersion: tclaude.dev/v1alpha1
 kind: ProcessTemplate
 id: code-change
 name: Code change
-description: Implement, test, review, and request merge approval.
+description: Agree, implement, review, and merge if allowed.
 params:
   issue:
     type: string
     required: true
-start: implement
+  auto_merge:
+    type: boolean
+    default: false
+start: agree
 nodes:
+  agree:
+    type: decision
+    performer:
+      kind: human
+      ask: Is {{ params.issue }} ready to build as described?
+      choices: [build, drop]
+    next: {build: implement, drop: canceled}
   implement:
     type: task
     performer:
       kind: agent
-      profile: dev
-      prompt: Implement {{ params.issue }}
-    checks:
-      - id: tests
-        performer:
-          kind: program
-          run: go
-          args: [test, ./...]
-        retry:
-          maxAttempts: 2
-      - id: cold-review
-        performer:
-          kind: agent
-          profile: reviewer
-          prompt: Cold-review the diff for {{ params.issue }}
-    review:
-      id: merge-approval
-      performer:
-        kind: human
-        profile: operator
-        ask: Approve merge?
-    retry:
-      maxAttempts: 3
-      onFail: feedback-same-session
-    next:
-      pass: done
-      fail: escalate
-  escalate:
+      role: dev
+      prompt: Implement {{ params.issue }} on a branch and open a PR.
+    next: {next: review}
+  review:
+    type: decision
+    agree: approved
+    deciders:
+      - {kind: agent, role: reviewer, differentFrom: [implement], prompt: Review the PR for correctness.}
+      - {kind: agent, role: reviewer, differentFrom: [implement], prompt: Review the PR for security.}
+    next: {approved: merge-gate, changes: implement, give-up: failed}
+    loops:
+      changes: {maxIterations: 3, onExhausted: give-up}
+  merge-gate:
     type: decision
     performer:
-      kind: human
-      profile: operator
-      ask: Retries exhausted. Continue?
-    next:
-      retry: implement
-      cancel: canceled
+      kind: agent
+      lead: true
+      prompt: Auto-merge is {{ params.auto_merge }}. Answer merge only if it is true and CI passed; otherwise leave.
+    next: {merge: merge, leave: done}
+  merge:
+    type: task
+    performer: {kind: agent, lead: true, prompt: Merge the PR.}
+    next: {next: done}
   done:
     type: end
     result: success
+  failed:
+    type: end
+    result: failed
   canceled:
     type: end
     result: canceled
