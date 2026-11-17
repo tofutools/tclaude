@@ -379,7 +379,7 @@ func TestLoopExitSaysWhichRouteAndHowToFixIt(t *testing.T) {
 		}
 	}
 	want := `step "review" is inside the loop that "decide" sends back to "implement", but its "fail" route goes to "escalated", outside the loop. ` +
-		`Only the decision "decide" may lead out of the loop: point "fail" at a step inside the loop, or remove that route (a "fail" with no route fails the run)`
+		`Only a decision may lead out of a loop: point "fail" at the decision "decide" instead (or remove it: a step whose fail has no route fails the run)`
 	if message != want {
 		t.Fatalf("loop_exit message =\n%s\nwant\n%s", message, want)
 	}
