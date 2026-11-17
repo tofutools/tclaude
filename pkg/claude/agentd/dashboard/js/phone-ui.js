@@ -127,6 +127,14 @@ export function ScopeBadge({ kind = 'ro', children }) {
   return html`<span class=${`phone-scope phone-scope-${SCOPE_KINDS.includes(kind) ? kind : 'ro'}`}>${children}</span>`;
 }
 
+// RowMore is a row's ⋯: an IconButton, muted, that opens the row's menu.
+// popup says what it opens ('dialog', a sheet, by default); null when the ⋯
+// goes to a page instead (a group's ⋯).
+export function RowMore({ label, onClick, popup = 'dialog', class: extra, ...rest }) {
+  return html`<${IconButton} ...${rest} icon="⋯" label=${label} aria-haspopup=${popup || undefined}
+    class=${join('phone-row-more', extra)} onClick=${onClick} />`;
+}
+
 // IconButton is an app-bar action: a 44px square with a glyph, its label for
 // screen readers and as a tooltip. badge is a count in its corner; dot a
 // plain dot there instead (something is off its defaults).

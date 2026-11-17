@@ -56,6 +56,11 @@
   --phone-bad: #f85149;
   --phone-purple: #a371f7;
   --phone-r: 12px;
+  /* A list row's parts: the line between rows, the gap before its ⋯
+     (RowMore), and its chevron's size. One of each across the phone. */
+  --phone-row-sep: 1px solid var(--ui-line);
+  --phone-row-gap: 4px;
+  --phone-row-chev: 20px;
   --phone-btn-r: 10px;
   /* The column a desktop preview (?layout=phone) keeps the phone shell in. */
   --phone-col: 480px;
@@ -245,7 +250,9 @@
 :root[data-layout="phone"] .phone-empty { margin: 6px 0; }
 :root[data-layout="phone"] .phone-wide { width: 100%; min-height: var(--phone-tap); margin-bottom: 10px; }
 :root[data-layout="phone"] .phone-list { list-style: none; margin: 0; padding: 0; }
-:root[data-layout="phone"] .phone-list > li { border-bottom: 1px solid var(--ui-line); }
+:root[data-layout="phone"] .phone-list > li { border-bottom: var(--phone-row-sep); }
+/* A row's ⋯ (RowMore). */
+:root[data-layout="phone"] .phone-row-more { flex: none; color: var(--ui-muted-text); }
 
 /* A chip row (phone-ui.js ChipRow, or any tab row with .phone-chips): rounded
    chips in a row that scrolls sideways, edge to edge. A chip is drawn 32px
@@ -304,7 +311,7 @@
 :root[data-layout="phone"] .phone-sheet-subhead { margin: 14px 4px 6px; font-size: 12px; font-weight: 700; }
 :root[data-layout="phone"] .phone-menu-item {
   display: flex; align-items: center; gap: 14px; width: 100%; min-height: 58px; padding: 0 6px;
-  background: none; border: 0; border-bottom: 1px solid var(--phone-tile);
+  background: none; border: 0; border-bottom: var(--phone-row-sep);
   color: var(--ui-text-strong); font: inherit; font-size: 16px; text-align: left; cursor: pointer;
 }
 :root[data-layout="phone"] .phone-menu-item:disabled { opacity: .5; cursor: default; }

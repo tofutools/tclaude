@@ -29,7 +29,7 @@ import htm from 'htm';
 import { readTerminalFont, useTerminalFont } from './terminal-zoom.js';
 import { announceOverlay, registerOverlayRoute } from './overlay-routes.js';
 import { VARIANT_LABELS } from './phone-agents-model.js';
-import { IconButton, StatePill } from './phone-ui.js';
+import { RowMore, StatePill } from './phone-ui.js';
 import { TerminalText, indexAt, linkAt, openLinkSheet, screenLines, useTerminalTouch, wordAt } from './phone-terminal-text.js';
 import { writeClipboard } from './insecure-origin.js';
 import { shellToast } from './shell-state.js';
@@ -459,7 +459,7 @@ export function PhoneTerminal({ seed, deps, onClose }) {
         ? html`<${StatePill} state=${row.variant} title=${live ? undefined : `Terminal: ${status}`}>${row.waking ? 'waking' : VARIANT_LABELS[row.variant]}<//>`
         : html`<span class=${`phone-bar-live ${live ? 'connected' : status === 'disconnected' ? 'disconnected' : ''}`} role="status"
           aria-label=${live ? 'Connected' : `Terminal: ${status}`} title=${status}></span>`}
-      ${row && deps.agentMenu && html`<${IconButton} icon="⋯" label=${`${row.name}: more`} onClick=${() => deps.agentMenu(row, { selectText: () => openSelect() })} />`}
+      ${row && deps.agentMenu && html`<${RowMore} label=${`${row.name}: more`} onClick=${() => deps.agentMenu(row, { selectText: () => openSelect() })} />`}
     </header>
     <div class="phone-term-body">
       ${runtime === 'ready' && visible && html`<${TerminalSurface} key=${key} seed=${seed} deps=${deps} kindRef=${kindRef} labelRef=${labelRef} onWidget=${onWidget}

@@ -23,7 +23,7 @@ import { defaultRowContext, railRowActions } from './collab-rail-menu.js';
 import { onPeerPage } from './node-api.js';
 import { openPhoneSheet } from './phone-sheet.js';
 import { useHold } from './phone-hold.js';
-import { Avatar, Card, IconButton, Section } from './phone-ui.js';
+import { Avatar, Card, RowMore, Section } from './phone-ui.js';
 import { terminalShellState } from './terminal-shell-state.js';
 import { openShellResource } from './terminals-tab.js';
 import { writeClipboard } from './insecure-origin.js';
@@ -160,7 +160,7 @@ function ShellRow({ shell, onOpen, onMenu }) {
       <span class="phone-row-text"><span class="phone-who-name">${shell.title}</span>
         <span class="phone-now-when">${shell.sub}</span></span>
     </button>
-    <${IconButton} icon="⋯" label=${`${shell.title}: more`} aria-haspopup="dialog" class="phone-now-more" onClick=${() => onMenu(shell.item)} />
+    <${RowMore} label=${`${shell.title}: more`} class="phone-now-more" onClick=${() => onMenu(shell.item)} />
   </div>`;
 }
 

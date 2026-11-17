@@ -27,7 +27,7 @@
 :root[data-layout="phone"] .phone-mail-search { width: 100%; min-height: var(--phone-tap); }
 :root[data-layout="phone"] .phone-mail-count { margin: 6px 0 0; color: var(--ui-muted-text); font-size: 12px; }
 
-:root[data-layout="phone"] .phone-mail-list > li { border-bottom: 1px solid var(--ui-line); }
+:root[data-layout="phone"] .phone-mail-list > li { border-bottom: var(--phone-row-sep); }
 /* A row slides over its swipe action; vertical drags stay the page's. */
 :root[data-layout="phone"] .phone-mail-row { position: relative; overflow: hidden; touch-action: pan-y; user-select: none; -webkit-touch-callout: none; }
 :root[data-layout="phone"] .phone-mail-slide { position: relative; padding: 0 var(--phone-gutter); background: var(--ui-bg); }
@@ -157,7 +157,7 @@
 }
 /* A plain access request: its card, then what it asks for, stacked. */
 :root[data-layout="phone"] .phone-mail-facts { margin: 14px 0 0; }
-:root[data-layout="phone"] .phone-mail-facts > div { padding: 8px 0; border-bottom: 1px solid var(--phone-tile); }
+:root[data-layout="phone"] .phone-mail-facts > div { padding: 8px 0; border-bottom: var(--phone-row-sep); }
 :root[data-layout="phone"] .phone-mail-facts dt { color: var(--ui-muted-text); font-size: 12px; }
 :root[data-layout="phone"] .phone-mail-facts dd { margin: 2px 0 0; color: var(--ui-text-strong); overflow-wrap: anywhere; white-space: pre-wrap; }
 :root[data-layout="phone"] .phone-mail-facts dd.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 14px; }
