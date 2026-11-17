@@ -343,6 +343,20 @@ func validateCaptures(node Node, path string, diagnostics *templateDiagnosticCol
 	return true
 }
 
+// EndsRunEarly reports whether a node is an end whose result is failed or
+// canceled. Reaching one ends the run even while other tracks of a parallel
+// fork still have work: the run drains and finishes with that result.
+func EndsRunEarly(node Node) bool {
+	if node.Type != NodeTypeEnd {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(node.Result)) {
+	case "fail", "failed", "failure", "error", "cancel", "canceled", "cancelled":
+		return true
+	}
+	return false
+}
+
 func validateEndResult(result string, path string) Diagnostics {
 	if isBlank(result) {
 		return nil

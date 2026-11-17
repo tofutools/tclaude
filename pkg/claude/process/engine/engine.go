@@ -243,6 +243,14 @@ func apply(checkpoint Checkpoint, definition *Definition, transition Transition)
 				return Checkpoint{}, err
 			}
 		case definitionEnd:
+			// A failed or canceled end does not wait for the rest of the run:
+			// it ends the run early, which then drains (EndedEarly).
+			if _, _, remains := remainingWork(next, definition, node.id); remains && endsEarly(node) {
+				next.Nodes[node.id] = NodeDone
+				next.EndedEarly = node.id
+				abandonAfterDoom(&next, definition)
+				break
+			}
 			if err := requireNoWorkRemains(next, definition, node.id); err != nil {
 				return Checkpoint{}, err
 			}
@@ -332,7 +340,7 @@ func apply(checkpoint Checkpoint, definition *Definition, transition Transition)
 				if err := settleVerdict(&next, definition, index, observation.Verdict); err != nil {
 					return Checkpoint{}, err
 				}
-				abandonAfterDoom(&next)
+				abandonAfterDoom(&next, definition)
 				break
 			}
 			// Per-entry removal only: sibling branches' commands are untouched.
@@ -353,7 +361,7 @@ func apply(checkpoint Checkpoint, definition *Definition, transition Transition)
 			// off, settling must not park the run on a new human decision, and
 			// this is the transition that may empty the last outbox entry and
 			// let the failed run finalize.
-			abandonAfterDoom(&next)
+			abandonAfterDoom(&next, definition)
 		case ProgramFailed:
 			// Per-entry removal only, exactly like a success: a failing branch
 			// must never erase a sibling command whose program is still
@@ -415,7 +423,7 @@ func apply(checkpoint Checkpoint, definition *Definition, transition Transition)
 			// — and this is the transition that may empty the last outbox entry
 			// and let the doomed run finalize.
 			next.Nodes[node.id] = NodeFailed
-			abandonAfterDoom(&next)
+			abandonAfterDoom(&next, definition)
 		default:
 			return invalid("unknown program outcome %q", observation.Outcome)
 		}
@@ -555,7 +563,7 @@ func apply(checkpoint Checkpoint, definition *Definition, transition Transition)
 			// programs may still be running, and their real observations are still
 			// accepted while the run drains to RunCanceled.
 			next.Nodes[node.id] = NodeCanceled
-			abandonAfterDoom(&next)
+			abandonAfterDoom(&next, definition)
 		default:
 			return invalid("unknown blocked resolution action %q", resolution.Action)
 		}
@@ -570,7 +578,7 @@ func apply(checkpoint Checkpoint, definition *Definition, transition Transition)
 		// Commands stay, as for a blocked branch's cancel: their work may still
 		// be running, and their observations are accepted while the run drains.
 		next.Canceled = true
-		abandonAfterDoom(&next)
+		abandonAfterDoom(&next, definition)
 	case TransitionBlockMarked:
 		mark := transition.Mark
 		if mark == nil || transition.Command != nil || transition.Observation != nil ||
@@ -1089,7 +1097,7 @@ func Draining(checkpoint Checkpoint) bool { return doomed(checkpoint) }
 // the node-status map (one entry per prepared node), not a graph walk, and it
 // reads no edges.
 func doomed(checkpoint Checkpoint) bool {
-	if checkpoint.Canceled {
+	if checkpoint.Canceled || checkpoint.EndedEarly != "" {
 		return true
 	}
 	for _, status := range checkpoint.Nodes {
@@ -1119,7 +1127,7 @@ func doomed(checkpoint Checkpoint) bool {
 // failure it always was.
 //
 // The run itself becomes terminal only when the last command has drained.
-func abandonAfterDoom(checkpoint *Checkpoint) {
+func abandonAfterDoom(checkpoint *Checkpoint, definition *Definition) {
 	if !doomed(*checkpoint) {
 		return
 	}
@@ -1131,14 +1139,14 @@ func abandonAfterDoom(checkpoint *Checkpoint) {
 	}
 	checkpoint.Blocked = nil
 	if len(checkpoint.Commands) == 0 {
-		checkpoint.Status = doomStatus(*checkpoint)
+		checkpoint.Status = doomStatus(*checkpoint, definition)
 	}
 }
 
 // doomStatus names how a doomed run finishes. An operator cancel is the reason
 // the run is over whenever one happened, so it outranks a failure a draining
 // sibling reported afterwards.
-func doomStatus(checkpoint Checkpoint) RunStatus {
+func doomStatus(checkpoint Checkpoint, definition *Definition) RunStatus {
 	if checkpoint.Canceled {
 		return RunCanceled
 	}
@@ -1146,6 +1154,16 @@ func doomStatus(checkpoint Checkpoint) RunStatus {
 		if status == NodeCanceled {
 			return RunCanceled
 		}
+	}
+	// A run an end ended early finishes with that end's result, unless a
+	// node failed or was canceled before it.
+	if end, ok := definitionNodeByID(definition, checkpoint.EndedEarly); ok {
+		for _, status := range checkpoint.Nodes {
+			if status == NodeFailed {
+				return RunFailed
+			}
+		}
+		return end.terminal
 	}
 	return RunFailed
 }
@@ -1230,13 +1248,21 @@ func nextEngineTransition(checkpoint Checkpoint, definition *Definition) (Transi
 			// The end is not refused — it is simply not the engine's to advance
 			// yet, so the scan continues looking for engine-owned work on another
 			// branch and the run stays running until the last loser settles.
-			if _, _, remains := remainingWork(checkpoint, definition, node.id); remains {
+			// A failed or canceled end is the exception: it ends the run early.
+			if _, _, remains := remainingWork(checkpoint, definition, node.id); remains && !endsEarly(node) {
 				continue
 			}
 			return Transition{Kind: TransitionAdvance, NodeID: node.id}, true
 		}
 	}
 	return Transition{}, false
+}
+
+// endsEarly reports whether an end node, reached while other work is still
+// live, ends the run at once rather than waiting for it: a failed or canceled
+// end does, since the run cannot finish any better.
+func endsEarly(node definitionNode) bool {
+	return node.kind == definitionEnd && (node.terminal == RunFailed || node.terminal == RunCanceled)
 }
 
 // joinAlreadyWon reports whether a join: any reducer already holds its one

@@ -137,6 +137,11 @@ func validateParallelScopePlan(tmpl *Template, edges []Edge) Diagnostics {
 		if !reachable[nodeID] {
 			continue
 		}
+		// A failed or canceled end ends the whole run, so a track of a fork
+		// may stop there without reducing at the fork's join.
+		if EndsRunEarly(tmpl.Nodes[nodeID]) {
+			continue
+		}
 
 		var output scopeSignature
 		switch len(incomingSignatures) {

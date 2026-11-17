@@ -829,6 +829,14 @@ name and needs the same permission.
   `join: any`. Branches execute concurrently, bounded to four external
   programs at a time; ready branches past the bound wait for a slot. A branch
   parked on a human decision does not block its siblings.
+- **A failed or canceled end ends the run early.** A branch of a fork
+  (a track) may stop at an end whose `result` is `failed` or `canceled`
+  instead of reaching the join, for example a review that gives up. Reaching
+  it ends the whole run without waiting for the other tracks. Nothing more is
+  planned, decisions still open are dropped, agent work in other tracks is
+  withdrawn, and the run finishes with that end's result once programs still
+  running have reported. The join never runs. An end that succeeds still has
+  to come after the join.
 - **`join: any` races its branches.** The first arrival wins and alone
   activates the reducer and everything downstream. Losing branches are not
   cancelled — they run to their own settled outcome and are recorded as
