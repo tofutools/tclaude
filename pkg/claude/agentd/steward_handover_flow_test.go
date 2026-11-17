@@ -393,6 +393,10 @@ func TestSteward_SnapshotRosterForksNoHasSession(t *testing.T) {
 	s.f.MarkOffline("tclaude-hand1")
 	fresh := s.summon()
 	s.f.HaveAliveSession(fresh, "stwd", "tclaude-stwd", s.f.TestCwd("stwd"))
+	// The handover and the summon leave message deliveries draining in the
+	// background, and a delivery probes its recipient's session: let them
+	// finish so the count is the snapshot's own.
+	agentd.WaitForBackgroundForTest()
 
 	before := s.f.World.Tmux.CommandCount("has-session")
 	roster := s.rosterRows()
