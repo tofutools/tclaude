@@ -374,12 +374,16 @@ test("a task's page names who worked on it, each a tap from their terminal or me
   assert.match(people[0].textContent, /assignee · took it · reported done/);
   assert.match(people[1].textContent, /commented/);
   assert.match(people[1].textContent, /offline/, 'an agent the snapshot does not list is offline');
+  assert.equal(people[1].querySelector('.phone-task-person-open').disabled, true, 'and is no jump: it has no terminal or menu here');
+  assert.equal(people[1].querySelector('.phone-task-person-more'), null);
   await tap(people[0].querySelector('.phone-task-person-open'));
-  await tap(people[1].querySelector('.phone-task-person-open'));
-  assert.deepEqual(opened, [['terminal', AGENT], ['menu', GONE]], 'online: its terminal; offline: its menu');
+  assert.deepEqual(opened, [['terminal', AGENT]], 'an online agent: its terminal');
+  await tap(people[0].querySelector('.phone-task-person-more'));
+  assert.deepEqual(opened.at(-1), ['menu', AGENT], '⋯ is its menu');
   // An actor in the Activity is the same jump; the operator is plain text.
   const names = [...c.querySelectorAll('.phone-task-activity .phone-task-who')];
   assert.equal(names[0].tagName, 'SPAN', 'you are not a link');
+  assert.equal(c.querySelector(`.phone-task-activity .phone-task-who-link[data-person="${GONE}"]`), null, 'nor an unlisted agent');
   await tap(c.querySelector(`.phone-task-activity .phone-task-who-link[data-person="${AGENT}"]`));
   assert.deepEqual(opened.at(-1), ['terminal', AGENT]);
 });
@@ -392,6 +396,8 @@ test("a task's page lists its files, and a comment its kind, edits and own files
         at: '2026-11-14T00:01:00Z', edited_at: '2026-11-14T00:05:00Z', attachments: [file('a2', 'ci.log')] } },
     { id: 2, at: '2026-11-14T00:02:00Z', actor: 'human:operator', kind: 'comment',
       comment: { id: 2, author: 'human:operator', body: 'gone', at: '2026-11-14T00:02:00Z', deleted_at: '2026-11-14T00:03:00Z' } },
+    { id: 3, at: '2026-11-14T00:05:00Z', actor: `agent:${AGENT}`, kind: 'comment_edited', comment_id: 1, previous_body: 'Shipped.',
+      comment: { id: 1, kind: 'report_note', author: `agent:${AGENT}`, body: 'Shipped, log attached.', at: '2026-11-14T00:01:00Z', edited_at: '2026-11-14T00:05:00Z' } },
   ];
   const { c, tap, settle, card } = await setupView(t, { activity: async () => ({ events: activity }), row: { attachments: [file('a1', 'notes.txt')] } });
   await tap(card('tk_ready').querySelector('.phone-board-open'));
@@ -401,6 +407,7 @@ test("a task's page lists its files, and a comment its kind, edits and own files
   assert.ok(files, 'a Files section');
   assert.match(files.textContent, /notes\.txt/);
   const items = [...c.querySelectorAll('.phone-task-activity > li')];
+  assert.equal(items.length, 2, 'an edit is shown on its comment, not as a second copy');
   assert.equal(items[0].querySelector('[data-comment-kind]')?.textContent, 'report');
   assert.match(items[0].textContent, /edited/);
   assert.match(items[0].querySelector('.phone-task-comment-files').textContent, /ci\.log/, "the comment's own file");

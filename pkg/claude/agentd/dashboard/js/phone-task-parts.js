@@ -28,17 +28,23 @@ export function jumpTo(actions, agent) {
   else if (typeof actions?.agentMenu === 'function') actions.agentMenu(agent);
 }
 
-// canJump says whether a tap on agent goes somewhere.
+// canJump says whether a tap on agent goes somewhere: an agent the
+// snapshot lists (one it does not, retired or another node's, has no
+// terminal or menu here).
 function canJump(actions, agent) {
-  return !!agent?.agentId && (typeof actions?.agentMenu === 'function' || (agent.online && typeof actions?.openTerminal === 'function'));
+  if (!agent?.agentId || agent.unlisted) return false;
+  return typeof actions?.agentMenu === 'function' || (agent.online && typeof actions?.openTerminal === 'function');
 }
+
+// unlisted is an agent the snapshot does not know, named by its id.
+const unlisted = (agentId) => ({ agentId, name: agentId.slice(0, 12), online: false, unlisted: true });
 
 // agentFor is the agent an actor names, as the snapshot knows it, or a bare
 // { agentId, name } for one it does not list (another node's, retired).
 function agentFor(actor, names) {
   const id = agentOfActor(actor);
   if (!id) return null;
-  return names.get(id) || { agentId: id, name: id.slice(0, 12), online: false };
+  return names.get(id) || unlisted(id);
 }
 
 // PersonName is an actor's name in the Activity: an agent's is a link to it
@@ -60,7 +66,7 @@ export function PeopleSection({ task, entries, names, actions }) {
   return html`<${Section} title="People" count=${people.length}>
     <ul class="phone-list phone-task-people">
       ${people.map((person) => {
-        const agent = names.get(person.agentId) || { agentId: person.agentId, name: person.agentId.slice(0, 12), online: false };
+        const agent = names.get(person.agentId) || unlisted(person.agentId);
         const state = agent.online ? rowState(agent) : 'offline';
         const jump = canJump(actions, agent);
         const roles = person.roles.join(' · ');
@@ -72,7 +78,7 @@ export function PeopleSection({ task, entries, names, actions }) {
               ${roles && html`<span class="phone-task-person-roles">${roles}${person.at ? ` · ${relTime(person.at)}` : ''}</span>`}</span>
             <${StatePill} state=${state} />
           </button>
-          ${typeof actions?.agentMenu === 'function' && html`<${IconButton} icon="⋯" label=${`${agent.name}: more`} aria-haspopup="dialog"
+          ${jump && typeof actions?.agentMenu === 'function' && html`<${IconButton} icon="⋯" label=${`${agent.name}: more`} aria-haspopup="dialog"
             class="phone-task-person-more" onClick=${() => actions.agentMenu(agent)} />`}
         </li>`;
       })}
