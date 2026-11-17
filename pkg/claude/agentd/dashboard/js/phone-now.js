@@ -2,14 +2,14 @@
 // A row of chips picks what it shows: All (below), Needs you (the cards
 // only), Idle (online idle agents by group), Recent (every online agent, the
 // latest heard from first) and Problems (one go-look list: errors, CI failed,
-// at work but quiet). A row's context meter sits by its state pill (context-meter.js):
-// a full context is no problem. All is a one-line usage strip that opens Usage, then what needs the operator as
-// cards (access requests, decisions, process gates, agents asking), the
-// online agents in one card of rows (every one when there are few, else the
-// ones at work or in error, with Show all), and the operator's open PRs
-// behind a collapsed header, then the shells running (phone-now-shells.js),
-// folded too. The shell (phone-shell-island.js) shows it as
-// its home view.
+// at work but quiet). A row's context meter sits by its state pill
+// (context-meter.js): a full context is no problem. All is a one-line usage
+// strip that opens Usage, then what needs the operator as cards (access
+// requests, decisions, process gates, agents asking), the online agents in
+// one card of rows (every one when there are few, else the ones at work or in
+// error, with Show all), and the operator's open PRs behind a collapsed
+// header, then the shells running (phone-now-shells.js), folded too. The
+// shell (phone-shell-island.js) shows it as its home view.
 
 import { h } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
@@ -61,7 +61,7 @@ function UsageStrip({ snapshot, onOpen }) {
 
 // AgentRows is one card of plain rows, one per agent, with its state pill;
 // an error row says what went wrong, and a row may carry a time or reason
-// line (when) in a tone (ok, bad, info, warn). A row opens the agent's
+// line (when) in a tone (bad, or quiet for a quiet busy agent). A row opens the agent's
 // terminal. heads put a heading over a row (Idle's groups, Problems' kinds),
 // and the agent's context meter sits by its state pill.
 // NowRow is one agent's row: a tap opens its terminal; a hold, or its ⋯,
