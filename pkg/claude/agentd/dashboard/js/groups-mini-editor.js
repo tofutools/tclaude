@@ -451,8 +451,8 @@ function Inspector({ view, id, roster, roles, fallbackInfo, onApply, onRename, o
       value=${constraint} onChange=${(event) => onApply(updateStep(view, id, (s) => setStepConstraint(s, constraintFromValue(event.currentTarget.value))))}>
       <option value="">whoever fits</option>
       ${!constraintKnown && html`<option value=${constraint}>${constraint.startsWith('same:') ? `same as ${stepName(constraint.slice(5))}` : `not the agent of ${constraint.slice(10).split(',').map(stepName).join(', ')}`}</option>`}
-      <optgroup label="The same agent as">${others.filter((other) => !view.template.nodes[other]?.deciders?.length).map((other) => html`<option key=${`same:${other}`} value=${`same:${other}`}>${stepName(other)}</option>`)}</optgroup>
-      <optgroup label="Not the agent of">${others.map((other) => html`<option key=${`different:${other}`} value=${`different:${other}`}>${stepName(other)}</option>`)}</optgroup>
+      <optgroup label="The same agent as">${others.filter((other) => !view.template.nodes[other]?.deciders?.length).map((other) => html`<option key=${`same:${other}`} value=${`same:${other}`}>same as ${stepName(other)}</option>`)}</optgroup>
+      <optgroup label="Not the agent of">${others.map((other) => html`<option key=${`different:${other}`} value=${`different:${other}`}>not ${stepName(other)}</option>`)}</optgroup>
     <//></div>`}
     ${kind === 'agent' && !spawns && html`<div class="gm-field" data-mini-fallback=${id}><span>If nobody</span><${FallbackPicker} value=${stepFallbackValue(step)}
       label="If no member can take this step" inherit=${inheritLabel(fallbackInfo.fallback, fallbackInfo.defaultSpawnProfile)}
