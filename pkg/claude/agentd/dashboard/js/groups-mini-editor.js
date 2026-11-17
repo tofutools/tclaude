@@ -53,9 +53,19 @@ import {
 import { templateHeadFromEditView } from './process-external-change.js';
 import { processActorPresentation } from './processes-actions.js';
 import { dashboardState } from './snapshot-store.js';
-import { LIVE_POLL_MS, changeList, inlineHelpNote, mergeIncoming } from './groups-mini-live.js';
+import {
+  EDITING_IDLE_MS, FRESH_MS, LIVE_POLL_MS, changeList, freshNodeIds, inlineHelpNote, mergeIncoming, stopAgent,
+} from './groups-mini-live.js';
 
 const html = htm.bind(h);
+
+// agentStatus is an agent's status ('working' while in a turn) as the
+// snapshot has it, from its own row or a group's member row.
+function agentStatus(snapshot, agentId) {
+  if (!agentId) return '';
+  const rows = [...(snapshot?.agents || []), ...(snapshot?.groups || []).flatMap((group) => group.members || [])];
+  return String(rows.find((row) => row?.agent_id === agentId)?.state?.status || '');
+}
 
 const KIND_CHOICES = Object.freeze([['agent', '🤖', 'agent'], ['you', '👤', 'you'], ['command', '⌘', 'command']]);
 // INSERT_CHOICES adds a decision (yes / no, an agent decides until you pick
@@ -548,6 +558,22 @@ export function MiniGraphEditor({
   const resync = useRef(false);
   // helper is the agent asked from this editor's ✨ With an agent menu.
   const [helper, setHelper] = useState(null);
+  // fresh is the steps the last agent save added or changed, highlighted for
+  // a moment; editing is the agent saving into this draft lately, shown with
+  // a Stop; stopped is the agent the operator stopped, until it saves again.
+  const [fresh, setFresh] = useState(null);
+  const [editing, setEditing] = useState(null);
+  const [stopped, setStopped] = useState('');
+  useEffect(() => {
+    if (!fresh) return undefined;
+    const timer = setTimeout(() => setFresh(null), FRESH_MS);
+    return () => clearTimeout(timer);
+  }, [fresh]);
+  useEffect(() => {
+    if (!editing) return undefined;
+    const timer = setTimeout(() => setEditing(null), EDITING_IDLE_MS);
+    return () => clearTimeout(timer);
+  }, [editing]);
   const nameRef = useRef(null);
   const canvas = useRef(null);
   // dragged swallows the click that ends a handle drag.
@@ -719,8 +745,8 @@ export function MiniGraphEditor({
     if (!mounted.current) return;
     const ours = viewOf(model.current);
     const head = templateHeadFromEditView(theirs);
-    const who = head.actor === 'human:operator' ? 'You (elsewhere)'
-      : processActorPresentation(dashboardState.snapshot.value, head.actor)?.label || 'Someone';
+    const presented = head.actor === 'human:operator' ? null : processActorPresentation(dashboardState.snapshot.value, head.actor);
+    const who = head.actor === 'human:operator' ? 'You (elsewhere)' : presented?.label || 'Someone';
     const result = base.current ? mergeIncoming({ base: base.current, ours, theirs, choice })
       : wholeChoice(ours, theirs, choice);
     if (!result.merged) { setIncoming({ theirs, who, conflicts: result.conflicts }); return; }
@@ -734,6 +760,12 @@ export function MiniGraphEditor({
     setError('');
     if (result.merged.template?.name !== ours.template?.name) setTitle(result.merged.template?.name || name);
     setNotice(result.changes.length ? { who, what: changeList(result.changes), kept: choice === 'mine' } : null);
+    if (presented?.agentId) {
+      const ids = freshNodeIds(result.changes);
+      if (ids.size) setFresh({ ids });
+      setEditing({ agentId: presented.agentId, who: presented.label });
+      setStopped('');
+    }
     setRev(model.current.rev);
   };
   // sync reads the head and adopts it when it is a version this editor has
@@ -947,6 +979,22 @@ export function MiniGraphEditor({
   };
   const scribe = scribes.find((session) => session.scope?.id === process.templateId && session.online) || null;
   const agent = scribe ? { id: scribe.agentId, label: scribe.name, status: scribe.status } : helper;
+  // The agent is editing while it is in a turn or saved here lately, until
+  // the operator stops it.
+  const working = agent && agentStatus(dashboardState.snapshot.value, agent.id) === 'working';
+  const busyAgent = editing || (working ? { agentId: agent.id, who: agent.label } : null);
+  const shownEditing = busyAgent && busyAgent.agentId !== stopped ? busyAgent : null;
+  const stop = async () => {
+    const { agentId, who } = shownEditing;
+    try {
+      await stopAgent(agentId);
+      setStopped(agentId);
+      setEditing(null);
+      notify(`Stopped ${who}. Ask it in its chat window to carry on.`);
+    } catch (cause) {
+      notify(`Could not stop ${who}: ${cause.message}`, true);
+    }
+  };
   const agentChip = agent && html`<${Button} size="sm" variant="link" class="gq-link gm-agent" data-mini-agent=${agent.id}
     title=${`Open ${agent.label}'s chat window: ask it for changes there; what it saves shows here`}
     onClick=${() => void openHelperWindow(agent.id, agent.label)}>💬 ${agent.label}${agent.status === 'working' ? ' · working…' : ''}<//>`;
@@ -1008,6 +1056,12 @@ export function MiniGraphEditor({
       <${Button} size="sm" variant="primary" data-mini-save disabled=${!!busy || !dirty} title=${dirty ? 'Save as a new version' : 'Nothing changed'}
         onClick=${async () => { if (await saveFirst(false)) onClose(); }}>${busy === 'save' ? 'saving…' : 'Save new version'}<//>`}
     </div>
+    ${shownEditing && html`<div class="gm-live gm-editing" role="status" data-mini-editing=${shownEditing.agentId}>
+      <span class="gm-editing-dot" aria-hidden="true"></span>
+      <span>✨ ${shownEditing.who} is editing this process. New and changed steps light up as they land.</span>
+      <${Button} size="sm" variant="link" class="gq-link" data-mini-editing-chat title="Open its chat window" onClick=${() => void openHelperWindow(shownEditing.agentId, shownEditing.who)}>💬 chat<//>
+      <${Button} size="sm" data-mini-stop title="Stop its current turn; your draft keeps what it saved so far" onClick=${() => void stop()}>■ Stop<//>
+    </div>`}
     ${incoming && html`<div class="gm-live gm-live-conflict" role="alert" data-mini-incoming>
       <span>${incoming.who} saved a version that also changes what you changed: ${changeList(incoming.conflicts)}.</span>
       <${Button} size="sm" variant="primary" data-mini-take-theirs onClick=${() => adopt(incoming.theirs, 'theirs')}>Use theirs<//>
@@ -1032,7 +1086,7 @@ export function MiniGraphEditor({
       onClick=${(event) => {
         if (event.target === canvas.current || event.target?.classList?.contains?.('pk-mini-graph')) { setSelected(''); setMenu(null); setPicker(null); }
       }}>
-      <${ProcessMiniGraph} run=${projection} wizard=${wizard} selectedId=${selected} problemIds=${problemIds}
+      <${ProcessMiniGraph} run=${projection} wizard=${wizard} selectedId=${selected} problemIds=${problemIds} freshIds=${fresh?.ids || null}
         onNodeClick=${(node) => { if (node.id === FIRST_STEP) { addFirst(); return; } setMenu(null); setPicker(null); setSelected(node.id === selected ? '' : node.id); }}
         onNodeContextMenu=${(node, event) => (node.id === FIRST_STEP ? event.preventDefault() : openMenu(node, event))}
         onNodeHover=${(id) => setHover(id === FIRST_STEP ? '' : id)} overlay=${overlay} />

@@ -1761,6 +1761,49 @@ test('confirmed external Reload swaps in the new head without fitting the viewpo
   }
 });
 
+test('an agent\'s save lands on a full editor with no unsaved edits as it is made, its new steps lit up; unsaved edits get the banner', async () => {
+  const previousFetch = globalThis.fetch;
+  globalThis.fetch = async () => ({
+    ok: true, status: 200, statusText: 'OK',
+    json: async () => ({
+      template: { id: 'alpha', name: 'Loaded', start: 'a', nodes: { a: { type: 'start' }, gone: { type: 'task' }, review: { type: 'task', name: 'Review' } } },
+      edges: [{ from: '', outcome: 'start', to: 'a' }], layout: {},
+      sourceHash: 'source-new', semanticHash: 'semantic-new', currentRef: 'alpha@sha256:new',
+    }),
+  });
+  const watch = (dirty) => {
+    const editor = externalReloadEditor({ dirty });
+    editor.options = { ...editor.options, followAgents: true, describeActor: () => ({ label: 'agent steward' }) };
+    editor.externalChange = { kind: 'none', ref: '' };
+    editor.loadedView = { template: structuredClone(editor.model.template), edges: structuredClone(editor.model.edges), layout: {} };
+    editor.reviews = 0;
+    editor.loadExternalReview = () => { editor.reviews += 1; return Promise.resolve(false); };
+    editor.reloadExternalChange = () => ProcessTemplateEditor.prototype.reloadExternalChange.call(editor);
+    ProcessTemplateEditor.prototype.observeExternalHead.call(editor, {
+      ref: 'alpha@sha256:new', sourceHash: 'source-new', actor: 'agent:agt_0123456789abcdef0123456789abcdef',
+    });
+    return editor;
+  };
+  try {
+    const editor = watch(false);
+    for (let i = 0; i < 50 && editor.model.currentRef !== 'alpha@sha256:new'; i += 1) await new Promise((resolve) => setTimeout(resolve, 1));
+    assert.equal(editor.model.currentRef, 'alpha@sha256:new', 'the agent\'s version is applied without a click');
+    assert.ok(editor.model.template.nodes.review, 'its new step is on the canvas');
+    assert.equal(editor.reviews, 0, 'no review banner for a canvas with nothing unsaved');
+    assert.deepEqual([...editor.freshIds], ['review'], 'the new step is lit up');
+    assert.match(editor.lastStatus.message, /agent steward saved: \+ /, 'the status says who and what');
+    clearTimeout(editor.freshTimer);
+
+    const dirty = watch(true);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    assert.equal(dirty.model.currentRef, 'alpha@sha256:old', 'unsaved edits are never replaced');
+    assert.equal(dirty.reviews, 1, 'they get the review banner instead');
+  } finally {
+    if (previousFetch === undefined) delete globalThis.fetch;
+    else globalThis.fetch = previousFetch;
+  }
+});
+
 test('external Reload and Save are mutually exclusive while the GET is pending', async () => {
   const previousFetch = globalThis.fetch;
   const reload = deferred(); let fetches = 0;

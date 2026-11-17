@@ -107,6 +107,8 @@ export function processEditorConfig({ mount, readable = false, state, actions, c
     // An editor's helper counts while the snapshot lists it running.
     helperLive: (helper) => liveHelpers(dashboardState.snapshot.value).some((agent) => agent.id === helper.id),
     describeActor: actions?.describeActor, onOpenActor: actions?.openActor,
+    // An agent's save lands on a canvas without unsaved edits as it is made.
+    followAgents: true,
   };
 }
 

@@ -35,6 +35,30 @@ export function mergeIncoming({ base, ours, theirs, choice = '' } = {}) {
   return { changes, conflicts, merged, clean: sameDraftContent(merged, theirs) };
 }
 
+// FRESH_MS is how long a step an agent just added or changed stays
+// highlighted on the canvas; EDITING_IDLE_MS is how long after its last save
+// the editor still says the agent is editing.
+export const FRESH_MS = 8000;
+export const EDITING_IDLE_MS = 30000;
+
+// freshNodeIds is the steps a merged version added or changed, to highlight.
+export function freshNodeIds(changes = []) {
+  return new Set(changes.filter((change) => change.kind === 'node' && change.op !== 'removed' && change.nodeId)
+    .map((change) => change.nodeId));
+}
+
+// stopAgent stops an agent's current turn, the way the phone's Interrupt does
+// (Esc in a Claude Code pane). It carries on from there when next asked.
+export async function stopAgent(agentId, fetchImpl = globalThis.fetch) {
+  const response = await fetchImpl(`/api/agents/${encodeURIComponent(agentId)}/interrupt`, { method: 'POST', credentials: 'same-origin' });
+  if (!response.ok) {
+    const text = await response.text().catch(() => '');
+    let body = {};
+    try { body = JSON.parse(text); } catch { /* plain error */ }
+    throw new Error(body.error || text || `${response.status}`);
+  }
+}
+
 // changeList is the notice's short list of what changed.
 export function changeList(changes = []) {
   const labels = changes.map((change) => `${change.op === 'added' ? '+ ' : change.op === 'removed' ? '− ' : ''}${change.label}`);
@@ -51,6 +75,7 @@ export function inlineHelpNote() {
   return [
     'The human has this process open in their group\'s inline editor. It saves their edits as they go and merges each version you save onto their canvas, as one change they can undo.',
     'So a moved sourceHash is usually their own edit: reread, apply your change on top of the newest version, validate, and save. Never revert what they changed; if you disagree with it, say so in chat.',
-    'Save in small steps, so they see each one land, and explain each change in chat.',
+    'They watch the graph grow as you save, with each new or changed step highlighted, so build it a piece at a time: add one step or one decision, validate, CAS-save, then the next. Do not hold the whole process back for one big save at the end. Say in chat what each save added. If they press Stop, your turn ends; wait for them.',
+    'They may describe the process in chat, as a list, a long paste, or an attached file (a spec, a runbook, an approval policy). Read an attached file in full before you start. Model what the engine can run; ask short questions in chat where the description is ambiguous (who decides, what happens on a no, how many rounds) instead of guessing, and keep building the parts that are clear meanwhile. When you finish, list in chat what you could not model and why, naming the missing engine feature (see "Building a process live" in the process-templates skill).',
   ].join('\n\n');
 }

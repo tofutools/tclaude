@@ -54,6 +54,7 @@ import {
   overlayDraftDiff, pendingDraftChanges, sameDraftContent,
 } from './process-draft-diff.js';
 import { requestCommandPalette } from './command-registry.js';
+import { FRESH_MS } from './groups-mini-live.js';
 import { openProcessNodeTypeChooser } from './process-node-chooser.js';
 import {
   prepareProcessConnectionFeedback, resolveProcessConnectionFeedback,
@@ -869,11 +870,35 @@ export class ProcessTemplateEditor {
       currentRef, currentSourceHash, actor, authoredAt, dirty: this.dirty,
     });
     this.renderExternalChange();
+    if (followsExternalChange(this)) {
+      void ProcessTemplateEditor.prototype.followExternalChange.call(this);
+      return this.externalChange;
+    }
     if ((this.externalChange.kind === 'clean' || this.externalChange.kind === 'dirty')
         && (!sameTemplateGeneration(previous, this.externalChange) || !this.externalChange.review)) {
       void this.loadExternalReview();
     }
     return this.externalChange;
+  }
+
+  async followExternalChange() {
+    const before = this.loadedView;
+    const actor = this.options.describeActor?.(this.externalChange.actor) || null;
+    if (!(await this.reloadExternalChange())) return false;
+    const changes = before ? diffTemplateDrafts({ base: before, ours: before, theirs: this.loadedView }) : [];
+    this.freshIds = new Set(changes.filter((change) => change.kind === 'node' && change.op !== 'removed').map((change) => change.nodeId));
+    clearTimeout(this.freshTimer);
+    if (this.freshIds.size) {
+      this.refresh();
+      this.freshTimer = setTimeout(() => {
+        this.freshIds = null;
+        if (!this.destroyed) this.refresh();
+      }, FRESH_MS);
+    }
+    const labels = changes.map((change) => `${change.op === 'added' ? '+ ' : change.op === 'removed' ? '− ' : ''}${change.label}`);
+    const what = labels.length > 3 ? `${labels.slice(0, 3).join(', ')} and ${labels.length - 3} more` : labels.join(', ');
+    this.status(`✨ ${actor?.label || 'An agent'} saved${what ? `: ${what}` : ' a new version'}.`);
+    return true;
   }
 
   // setAgentsLocked records a lock toggled from the header until the next read.
@@ -1222,7 +1247,9 @@ export class ProcessTemplateEditor {
     const painted = review ? overlayDraftDiff(graph, {
       theirs: review.view, changes: review.changes, decisions: review.decisions, cursor: review.cursor,
     }) : graph;
-    const out = this.model.inScope ? overlayScopePorts(painted, this.model.scopePorts()) : painted;
+    const lit = this.freshIds?.size && !review
+      ? { ...painted, nodes: painted.nodes.map((node) => (this.freshIds.has(node.id) ? { ...node, fresh: true } : node)) } : painted;
+    const out = this.model.inScope ? overlayScopePorts(lit, this.model.scopePorts()) : lit;
     // The overlays rebuild the graph object; every repaint (validation's too)
     // must keep the template's flow direction.
     return { ...out, direction: this.model.layoutDirection?.() || 'down' };
@@ -2966,4 +2993,15 @@ export async function openTemplateEditor(mount, { id, name = '', blank = false, 
   });
   if (handoff) editor.adoptHandoff(handoff);
   return editor;
+}
+
+// followsExternalChange: an agent's save is applied as it lands, so the
+// operator watches it build the process, while nothing of theirs is at
+// stake: no unsaved edits, no dialog, inline edit, drag or review open.
+// Their edits make it the usual banner (Review on canvas) instead.
+function followsExternalChange(editor) {
+  const change = editor.externalChange;
+  return change.kind === 'clean' && /^agent:/.test(change.actor || '') && editor.options?.followAgents === true
+    && !editor.dirty && !editor.diffReview && !editor.modalDispose && !editor.inlineState?.open && !editor.inlineCommit
+    && !graphInteraction(editor).active && !editor.savePending && !externalInteractionPending(editor);
 }

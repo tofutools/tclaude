@@ -343,6 +343,45 @@ Start with the smallest graph that expresses the request. Add compound stages,
 waits, contact schedules, programs, or retries only when the process needs
 them. Do not invent execution side effects while authoring.
 
+## Building a process live
+
+Often the human asks you from the dashboard's process editor (its
+*With an agent* button) and watches the graph while you build it: each version
+you save is merged onto their open canvas, with the steps you added or changed
+highlighted and your name shown as editing. Work so that is worth watching:
+
+- **Save a piece at a time.** Add one step or one decision (with its routes),
+  `validate`, CAS-save with the `sourceHash` from your last `show`, re-`show`,
+  then the next piece. Do not build the whole process locally and save it once
+  at the end. An unfinished graph is fine to save (see *Save work in
+  progress*). Say in chat what each save added.
+- **Expect their edits in between.** The human edits the same draft, and it
+  saves itself, so a CAS conflict usually means their edit: re-`show`, apply
+  your next piece on top, and never revert what they changed.
+- **Stop when stopped.** If your turn is interrupted, they pressed *Stop*:
+  wait for their next message rather than resuming on your own.
+
+The description can come as a short typed list, a long pasted document, or an
+attached file (a spec, a runbook, an approval or incident policy). Read an
+attached file in full before modelling. Then:
+
+1. Map it to what executes (`docs/processes.md`, "What executes today"): the
+   steps become tasks with a performer, the approvals and yes/no checks become
+   decisions, the parts done at the same time become a parallel fork and join,
+   and the "send it back" parts become bounded loops.
+2. Ask short questions in chat where the document is ambiguous — who decides,
+   what happens on a rejection, how many rounds before escalating — rather
+   than guessing. Keep building the parts that are clear while you wait.
+3. When done, list in chat what you could not model, each with the engine
+   gap that blocks it, for example: a deadline or "within 4 hours" (no timers
+   or wait nodes), a step a person performs that is not a decision (no human
+   task performers), "notify the on-call" (no notification step; use an agent
+   or program task), or an automatic rule such as "if the change is
+   low-risk, skip approval" (no rule decisions yet: model it as a decision an
+   agent takes, told the value). Leave such parts as an agent or
+   decision step named after what it stands for, rather than dropping them
+   silently.
+
 ## Preserve editor-owned layout
 
 `layout` is presentation metadata attached to `(id, semanticHash)` and excluded
