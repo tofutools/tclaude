@@ -930,7 +930,7 @@ test('hover handles add a step after; undo takes it back', async (t) => {
   await fire(node('implement'), 'mouseenter');
   const handles = card().querySelector('[data-mini-handles="implement"]');
   assert.ok(handles, 'hovering shows the handles');
-  assert.ok(handles.querySelector('[data-mini-handle="branch"]').hasAttribute('disabled'), 'a task does not branch');
+  assert.ok(!handles.querySelector('[data-mini-handle="branch"]').hasAttribute('disabled'), 'a task branches, through a decision after it');
   await click(handles.querySelector('[data-mini-handle="after"]'));
   await click(card().querySelector('[data-mini-picker="after"] [data-mini-kind="command"]'));
   assert.ok(node('command'), 'the new command step is drawn');
@@ -938,6 +938,40 @@ test('hover handles add a step after; undo takes it back', async (t) => {
   assert.match(card().querySelector('[data-mini-changes]').textContent, /added “Command”/);
   await click(card().querySelector('[data-mini-undo]'));
   assert.equal(node('command'), null);
+});
+
+test('⑂ on a task picks who decides next: a decision goes after it and opens to pick who', async (t) => {
+  const { card, node, click, fire } = await openMini(t);
+  // On an agent step that can decide, its agent deciding is offered first.
+  await fire(node('review'), 'mouseenter');
+  await click(card().querySelector('[data-mini-handles="review"] [data-mini-handle="branch"]'));
+  assert.equal(card().querySelector('[data-mini-picker="branch"] [data-mini-kind]').dataset.miniKind, 'review');
+  await fire(node('implement'), 'mouseenter');
+  await click(card().querySelector('[data-mini-handles="implement"] [data-mini-handle="branch"]'));
+  const picker = card().querySelector('[data-mini-picker="branch"]');
+  const kinds = [...picker.querySelectorAll('[data-mini-kind]')].map((el) => el.dataset.miniKind);
+  assert.deepEqual(kinds, ['decide', 'decide-you'], 'implement follows start, so its own agent cannot decide; a decision after it can');
+  await click(picker.querySelector('[data-mini-kind="decide"]'));
+  assert.ok(node('decision'), 'the decision is drawn');
+  const inspector = card().querySelector('[data-mini-inspector="decision"]');
+  assert.ok(inspector, 'and opened, to pick who decides');
+  assert.ok(inspector.querySelector('[data-mini-decided-by="decision"]'), 'an agent decides it');
+  assert.ok(inspector.querySelector('[data-mini-outcome="yes"]') && inspector.querySelector('[data-mini-outcome="no"]'), 'it starts with yes and no');
+});
+
+test('the menu inserts a decision step, and a disabled item says why in plain text', async (t) => {
+  const { card, node, click, fire } = await openMini(t);
+  await fire(node('merge'), 'contextmenu');
+  let menu = card().querySelector('.gm-menu');
+  assert.ok(menu.querySelector('[data-mini-menu="after"] [data-mini-kind="decide"]'), 'a decision is one of the kinds to insert');
+  assert.equal(menu.querySelector('[data-mini-menu="alongside"] [data-mini-kind="decide"]'), null, 'but not alongside, where both answers would meet at the join');
+  await click(menu.querySelector('[data-mini-menu="after"] [data-mini-kind="decide"]'));
+  assert.ok(node('decision'));
+  await fire(node('implement'), 'contextmenu');
+  menu = card().querySelector('.gm-menu');
+  const why = menu.querySelector('[data-mini-menu="alongside"] [data-mini-why]');
+  assert.ok(why, 'run alongside is off for implement');
+  assert.match(why.textContent, /several steps leading/);
 });
 
 test('right-click structure: branch a "you" step, and delete names what goes with it', async (t) => {

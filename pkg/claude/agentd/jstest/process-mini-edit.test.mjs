@@ -31,6 +31,27 @@ function agentDecides() {
 // fill writes the text an operator types into the new step.
 const fill = ({ view, id }) => m.updateStep(view, id, (step) => setStepText(step, step.node.performer.kind === 'program' ? 'make test' : 'Do the thing.')).view;
 
+// operatorsCase is the case that made branching hard to find: a first step
+// right after start, with Outputs and nobody picked yet, which ⑂ branches
+// through an agent decision put after it.
+function operatorsCase() {
+  const first = m.insertAfter(ship, 'start', 'agent');
+  const view = m.updateStep(fill(first), first.id, (step) => ({ ...step, node: { ...step.node, captures: ['banana'] } })).view;
+  return { first: first.id, out: m.branch(view, first.id, 'decide') };
+}
+
+// threeWay is a decision after implement with three named answers, the
+// third going straight to the end.
+function threeWay(kind = 'decide') {
+  const out = m.insertAfter(ship, 'implement', kind);
+  let view = fill(out);
+  view = m.renameOutcome(view, out.id, 'yes', 'small').view;
+  view = m.renameOutcome(view, out.id, 'no', 'large').view;
+  const added = m.addOutcome(view, out.id, 'end');
+  view = m.renameOutcome(added.view, out.id, added.outcome, 'skip').view;
+  return { view, id: out.id };
+}
+
 function cases() {
   return {
     'after-implement-agent': fill(m.insertAfter(ship, 'implement', 'agent')),
@@ -48,7 +69,15 @@ function cases() {
     'before-join-agent': fill(m.insertBefore(fill(m.runAlongside(ship, 'review', 'agent')), 'approve', 'agent')),
     'delete-join': m.deleteStep(fill(m.insertAfter(fill(m.runAlongside(ship, 'review', 'agent')), 'approve', 'agent')), 'approve').view,
     'agent-decider-loop': agentDecides(),
-    'branch-review-decides': m.branch(ship, 'review').view,
+    'branch-review-decides': m.branch(ship, 'review', m.REVIEW).view,
+    'branch-first-step-with-outputs': fill(operatorsCase().out),
+    'branch-merge-you-decide': fill(m.branch(ship, 'merge', 'decide-you')),
+    'first-step-decision': fill(m.insertAfter(ship, 'start', 'decide')),
+    'decision-three-way-agent': threeWay('decide').view,
+    'decision-three-way-you': threeWay('decide-you').view,
+    'alongside-after-decision': fill(m.runAlongside(fill(m.insertAfter(ship, 'implement', 'decide')), 'review', 'agent')),
+    'kind-decision-command': fill(m.changeKind(fill(m.insertAfter(ship, 'implement', 'decide')), 'decision', 'command')),
+    'kind-decision-you': m.changeKind(fill(m.insertAfter(ship, 'implement', 'decide')), 'decision', 'you').view,
     'loop-approve-rounds': m.setLoopRounds(ship, 'approve', 'changes', 4).view,
   };
 }
@@ -75,18 +104,83 @@ test('insert after and before keep the main path connected', () => {
   assert.equal(m.canInsertAfter(ship, 'end'), 'nothing runs after an end');
 });
 
-test('a "you" step branches on a new answer that rejoins; a task does not branch', () => {
+test('a "you" step branches on a new answer that rejoins; a task branches through a decision after it', () => {
   const out = m.branch(ship, 'approve', 'agent');
   assert.equal(out.outcome, 'option');
   assert.deepEqual(out.view.template.nodes.approve.performer.choices, ['ship', 'changes', 'hold', 'option']);
   assert.equal(edge(out.view, 'approve', 'option'), out.id);
   assert.equal(edge(out.view, out.id, 'next'), 'merge', 'the branch rejoins the main path');
-  assert.equal(m.canBranch(ship, 'implement'), 'it needs exactly one step before it to send changes back to');
-  assert.match(m.canBranch(ship, 'merge'), /a command continues one way/);
+  // Every step branches now; a task that cannot decide itself offers only a
+  // decision after it.
+  assert.equal(m.canBranch(ship, 'implement'), '');
+  assert.equal(m.canBranch(ship, 'merge'), '');
+  assert.deepEqual(m.branchKinds(ship, 'implement'), ['decide', 'decide-you']);
+  assert.deepEqual(m.branchKinds(ship, 'merge'), ['decide', 'decide-you']);
+  assert.deepEqual(m.branchKinds(ship, 'review'), [m.REVIEW, 'decide', 'decide-you']);
+  assert.equal(m.branchKinds(ship, 'approve'), null, 'a decision branches on a new outcome');
+  assert.throws(() => m.branch(ship, 'merge', 'agent'), /through a decision/);
+  // A command branches through a decision you take.
+  const you = m.branch(ship, 'merge', 'decide-you');
+  const decision = you.view.template.nodes[you.id];
+  assert.equal(decision.type, 'decision');
+  assert.deepEqual(decision.performer.choices, ['yes', 'no']);
+  assert.equal(edge(you.view, 'merge', 'next'), you.id);
+  assert.equal(edge(you.view, you.id, 'yes'), 'end');
+  assert.equal(edge(you.view, you.id, 'no'), 'end');
+});
+
+test('⑂ on the operator\'s first step with outputs and nobody yet puts an agent decision after it', () => {
+  const { first, out } = operatorsCase();
+  const node = out.view.template.nodes[first];
+  assert.equal(node.type, 'task', 'the step stays a task');
+  assert.deepEqual(node.captures, ['banana'], 'with its outputs');
+  const decision = out.view.template.nodes[out.id];
+  assert.equal(decision.type, 'decision');
+  assert.equal(decision.performer.kind, 'agent');
+  assert.equal(m.miniKind(decision), 'agent');
+  assert.equal(edge(out.view, first, 'next'), out.id);
+  assert.equal(edge(out.view, out.id, 'yes'), 'implement');
+  assert.equal(edge(out.view, out.id, 'no'), 'implement');
+  assert.equal(decision.loops, undefined, 'no answer goes back, so no loop');
+  // Who decides is picked on the new decision; it stays a decision.
+  const who = m.setDecisionWho(out.view, out.id, { mode: 'you' }).view.template.nodes[out.id];
+  assert.equal(who.type, 'decision');
+  assert.deepEqual(who.performer.choices, ['yes', 'no']);
+});
+
+test('the step after a new decision has one step before it, and its answers draw as one edge', () => {
+  const view = m.insertAfter(ship, 'implement', 'decide').view;
+  assert.equal(m.canRunAlongside(view, 'review'), '', 'yes and no both lead to review, from one step');
+  assert.equal(m.canDecide(view, 'review'), '', 'and its agent can still decide, sending changes back to the decision');
+  const along = m.runAlongside(view, 'review', 'agent');
+  assert.equal(edge(along.view, 'decision', 'yes'), along.fork);
+  assert.equal(edge(along.view, 'decision', 'no'), along.fork);
+  const drawn = m.draftProjection(view).edges.filter((e) => e.from === 'decision');
+  assert.deepEqual(drawn.map((e) => [e.to, e.label]), [['review', 'yes / no']], 'one arrow, both answers named');
+});
+
+test('a decision changes kind: to a command it continues one way, to you it keeps its answers', () => {
+  const view = threeWay('decide').view;
+  const command = m.changeKind(view, 'decision', 'command').view;
+  assert.equal(command.template.nodes.decision.type, 'task');
+  assert.deepEqual(command.edges.filter((e) => e.from === 'decision').map((e) => [e.outcome, e.to]), [['next', 'review']]);
+  const you = m.changeKind(view, 'decision', 'you').view.template.nodes.decision;
+  assert.equal(you.type, 'decision');
+  assert.deepEqual(you.performer.choices, ['small', 'large', 'skip']);
+});
+
+test('a decision step has named answers: renamed, added to, each with its own next step', () => {
+  const { view, id } = threeWay('decide-you');
+  assert.deepEqual(view.template.nodes[id].performer.choices, ['small', 'large', 'skip']);
+  assert.equal(edge(view, id, 'small'), 'review');
+  assert.equal(edge(view, id, 'skip'), 'end');
+  const first = m.insertAfter(ship, 'start', 'decide');
+  assert.equal(edge(first.view, 'start', 'next'), first.id, 'a decision can be the first step');
+  assert.equal(edge(first.view, first.id, 'yes'), 'implement');
 });
 
 test('⑂ on an agent step makes its agent decide: approved goes on, changes go back, then the run fails', () => {
-  const out = m.branch(ship, 'review');
+  const out = m.branch(ship, 'review', m.REVIEW);
   const review = out.view.template.nodes.review;
   assert.equal(out.id, 'review');
   assert.equal(review.type, 'decision');
@@ -107,22 +201,23 @@ test('⑂ on an agent step makes its agent decide: approved goes on, changes go 
 
 test('an agent step with outputs, a first step, or a command does not decide', () => {
   const captures = m.updateStep(ship, 'review', (step) => ({ ...step, node: { ...step.node, captures: ['pr'] } })).view;
-  assert.match(m.canBranch(captures, 'review'), /clear its outputs/);
+  assert.match(m.canDecide(captures, 'review'), /clear its outputs/);
+  assert.deepEqual(m.branchKinds(captures, 'review'), ['decide', 'decide-you'], 'it branches through a decision after it instead');
   assert.throws(() => m.toAgentDecision(ship, 'implement'), /one step before it/);
   assert.throws(() => m.toAgentDecision(ship, 'merge'), /command/);
   const checks = m.updateStep(ship, 'review', (step) => ({ ...step, node: { ...step.node, checks: [{ run: 'make test' }] } })).view;
-  assert.match(m.canBranch(checks, 'review'), /full editor/, 'a compound task keeps its stages');
+  assert.match(m.canDecide(checks, 'review'), /full editor/, 'a compound task keeps its stages');
   const twoWays = { ...ship, edges: [...ship.edges, { from: 'review', outcome: 'other', to: 'merge' }] };
-  assert.match(m.canBranch(twoWays, 'review'), /more than one way out/);
+  assert.match(m.canDecide(twoWays, 'review'), /more than one way out/);
 });
 
-test('⑂ is not offered where going back would overlap another loop', () => {
+test('its agent does not decide where going back would overlap another loop', () => {
   // A step after approve: going back to approve would share only approve
   // with approve's own loop back to implement (loop_overlap).
   const after = m.insertAfter(ship, 'approve', 'agent');
-  assert.match(m.canBranch(after.view, after.id), /cross another loop/);
+  assert.match(m.canDecide(after.view, after.id), /cross another loop/);
   // review → implement nests inside approve's loop: fine.
-  assert.equal(m.canBranch(ship, 'review'), '');
+  assert.equal(m.canDecide(ship, 'review'), '');
 });
 
 test('alongside fans out through a parallel node and joins at what came next', () => {

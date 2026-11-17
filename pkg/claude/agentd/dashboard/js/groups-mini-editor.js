@@ -20,7 +20,7 @@ import htm from 'htm';
 import { ProcessMiniGraph } from './process-kit.js';
 import { ProcessEditModel } from './process-edit-model.js';
 import {
-  addOutcome, branch, canBranch, toAgentDecision, canDelete, canInsertAfter, canInsertBefore, canRunAlongside, changeKind, changeSummary,
+  addOutcome, branch, branchKinds, canBranch, canDelete, canInsertAfter, canInsertBefore, canRunAlongside, changeKind, changeSummary,
   deleteOrphans, deleteStep, draftProjection, duplicate, insertAfter, insertBefore, isStep, miniKind, outcomesOf,
   canRemoveOutcome, removeOutcome, renameOutcome, runAlongside, setLoopRounds, setOutcomeTarget, targetsFor, updateStep,
   addDecider, canAddDecider, gateDeciders, removeDecider, setAgree, setDecider,
@@ -57,6 +57,16 @@ import { LIVE_POLL_MS, changeList, inlineHelpNote, mergeIncoming } from './group
 const html = htm.bind(h);
 
 const KIND_CHOICES = Object.freeze([['agent', '🤖', 'agent'], ['you', '👤', 'you'], ['command', '⌘', 'command']]);
+// INSERT_CHOICES adds a decision (yes / no, an agent decides until you pick
+// otherwise) to what a new step can be.
+const INSERT_CHOICES = Object.freeze([...KIND_CHOICES, ['decide', '◇', 'decision']]);
+// BRANCH_TASK_CHOICES are ⑂'s choices on a task, by kind (branchKinds says
+// which apply): its own agent decides, or a decision goes after it.
+const BRANCH_TASK_CHOICES = Object.freeze({
+  review: ['↺', 'its agent decides (approved / changes)'],
+  decide: ['🤖', 'an agent decides next'],
+  'decide-you': ['👤', 'you decide next'],
+});
 const VALIDATE_DELAY_MS = 400;
 // MAX_REFUSED is how many saves in a row a newer version may refuse before
 // the editor stops merging and saving again, and says so.
@@ -91,11 +101,12 @@ function whoLine(node, fallbackInfo) {
   return agent('pick who');
 }
 
-// decides says whether ⑂ on id makes an agent step an agent decision
-// rather than adding an outcome to a decision.
-function decides(view, id) {
-  const node = view.template.nodes[id];
-  return node?.type === 'task' && node.performer?.kind === 'agent';
+// branchChoices are the chips ⑂ offers on id: on a task, how it branches
+// (a decision after it, or its agent deciding); on a decision, what the new
+// outcome leads to.
+function branchChoices(view, id) {
+  const kinds = branchKinds(view, id);
+  return kinds ? kinds.map((kind) => [kind, ...BRANCH_TASK_CHOICES[kind]]) : INSERT_CHOICES;
 }
 
 function viewOf(model) {
@@ -134,10 +145,10 @@ function floating(at, width, height) {
   return `left:${left}px;top:${top}px`;
 }
 
-// KindChips is a row of agent / you / command buttons.
-function KindChips({ onPick, disabled = '', label = '' }) {
+// KindChips is a row of agent / you / command (/ decision) buttons.
+function KindChips({ onPick, disabled = '', label = '', choices = KIND_CHOICES }) {
   return html`<span class="gm-kinds" role="group" aria-label=${label || 'Pick a kind'}>
-    ${KIND_CHOICES.map(([kind, glyph, text]) => html`<button data-ui-exempt key=${kind} type="button" class="gm-kind" data-mini-kind=${kind}
+    ${choices.map(([kind, glyph, text]) => html`<button data-ui-exempt key=${kind} type="button" class="gm-kind" data-mini-kind=${kind}
       disabled=${!!disabled} title=${disabled || `${label ? `${label}: ` : ''}${text}`} onClick=${() => onPick(kind)}>${glyph} ${text}</button>`)}
   </span>`;
 }
@@ -428,17 +439,17 @@ function StructureMenu({ view, menu, onRun, onWrap, onClose }) {
   if (!node) return null;
   const step = isStep(node);
   const orphans = step || node.type === 'end' ? deleteOrphans(view, id) : [];
-  const item = (key, text, why, onClick) => html`<button data-ui-exempt type="button" role="menuitem" class="gm-menu-item" data-mini-menu=${key}
-    disabled=${!!why} title=${why} onClick=${onClick}>${text}</button>`;
-  const kinds = (key, text, why, op) => html`<div class="gm-menu-kinds" data-mini-menu=${key}><span class=${why ? 'gm-off' : ''} title=${why}>${text}</span>
-    <${KindChips} label=${text} disabled=${why} onPick=${(kind) => onRun(() => op(view, id, kind))} /></div>`;
+  // A disabled item says why in visible text under it, not only on hover.
+  const why = (text) => text && html`<span class="gm-menu-why" data-mini-why>${text}</span>`;
+  const item = (key, text, reason, onClick) => html`<button data-ui-exempt type="button" role="menuitem" class="gm-menu-item" data-mini-menu=${key}
+    disabled=${!!reason} title=${reason} onClick=${onClick}>${text}${why(reason)}</button>`;
+  const kinds = (key, text, reason, op, choices = INSERT_CHOICES) => html`<div class="gm-menu-kinds" data-mini-menu=${key}><span class=${reason ? 'gm-off' : ''}>${text}${why(reason)}</span>
+    <${KindChips} label=${text} disabled=${reason} choices=${choices} onPick=${(kind) => onRun(() => op(view, id, kind))} /></div>`;
   return html`<div ref=${rootRef} class="gm-menu" role="menu" aria-label=${`Structure of ${node.name || id}`} style=${floating(menu, 400, 330)}>
     ${kinds('before', 'Insert step before', canInsertBefore(view, id), insertBefore)}
     ${kinds('after', 'Insert step after', canInsertAfter(view, id), insertAfter)}
-    ${decides(view, id)
-    ? item('branch', 'Branch: let its agent decide (approved / changes)', canBranch(view, id), () => onRun(() => toAgentDecision(view, id)))
-    : kinds('branch', 'Branch on outcome', step ? canBranch(view, id) : 'only a step branches', branch)}
-    ${kinds('alongside', 'Run alongside (parallel)', canRunAlongside(view, id), runAlongside)}
+    ${kinds('branch', node.type === 'task' ? 'Branch' : 'Branch on outcome', step ? canBranch(view, id) : 'only a step branches', branch, branchChoices(view, id))}
+    ${kinds('alongside', 'Run alongside (parallel)', canRunAlongside(view, id), runAlongside, KIND_CHOICES)}
     <hr />
     ${item('duplicate', 'Duplicate', step ? '' : 'only a step can be duplicated here', () => onRun(() => duplicate(view, id)))}
     ${item('wrap', 'Wrap in a subprocess… (full editor)', step ? '' : 'only a step can be wrapped', onWrap)}
@@ -811,8 +822,6 @@ export function MiniGraphEditor({
     onClick=${(event) => {
       if (dragged.current) { dragged.current = false; return; }
       const box = event.currentTarget?.getBoundingClientRect?.() || { left: 0, bottom: 0 };
-      // ⑂ on an agent step makes it decide: no new step to pick.
-      if (!why && op === 'branch' && decides(draft, id)) { setPicker(null); run(() => toAgentDecision(draft, id)); return; }
       if (!why) setPicker({ op, id, cx: box.left, cy: box.bottom + 4 });
     }}>${glyph}<span>${text}</span></button>`;
   const OPS = { after: insertAfter, branch, alongside: runAlongside, before: insertBefore };
@@ -828,12 +837,13 @@ export function MiniGraphEditor({
     return html`${handles && html`<span class="gm-handles" data-mini-handles=${id}>
       ${handle('after', id, right, node.y - 9, '+', 'after', canInsertAfter(draft, id))}
       ${isStep(data) && handle('branch', id, node.x - 9, node.y + node.height / 2 + 2, '⑂', 'branch', canBranch(draft, id),
-    decides(draft, id) ? 'branch: its agent decides, approved goes on, changes go back' : '')}
+    draft.template.nodes[id]?.type === 'task' ? 'branch: a decision after this step, or its agent decides' : '')}
       ${isStep(data) && handle('alongside', id, node.x - 9, node.y - node.height / 2 - 20, '⫴', 'alongside', canRunAlongside(draft, id))}
     </span>`}
       ${drag?.moved && html`<span class="gm-ghost" style=${`left:${drag.x}px;top:${drag.y}px`}>+ new step</span>`}
       ${picker && html`<div class="gm-picker" data-mini-picker=${picker.op} style=${floating(picker, 300, 40)}>
         <${KindChips} label=${`${{ after: 'Add after', branch: 'Branch to', alongside: 'Run alongside', before: 'Insert before' }[picker.op]}`}
+          choices=${picker.op === 'branch' ? branchChoices(draft, picker.id) : picker.op === 'alongside' ? KIND_CHOICES : INSERT_CHOICES}
           onPick=${(kind) => run(() => OPS[picker.op](draft, picker.id, kind))} />
         <${Button} size="sm" variant="link" class="gq-link" aria-label="Close" onClick=${() => setPicker(null)}>✕<//>
       </div>`}

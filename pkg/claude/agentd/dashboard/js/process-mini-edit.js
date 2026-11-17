@@ -20,6 +20,24 @@ const PASS_LABELS = ['pass', 'done', 'success', 'next'];
 // A new step's continuing outcome: a task passes on, a "you" decision
 // continues.
 const CONTINUE = { agent: 'next', command: 'next', you: 'continue' };
+// DECISION_KINDS are the kinds that insert a decision with named answers:
+// 'decide' is decided by an agent (pick who), 'decide-you' by you. Both
+// start with yes and no, each going on to what came next; the answers are
+// renamed, re-aimed and added to in the inspector.
+export const DECISION_KINDS = Object.freeze(['decide', 'decide-you']);
+const DECISION_OUTCOMES = Object.freeze(['yes', 'no']);
+// REVIEW is branch's kind for "this agent step decides" (toAgentDecision).
+export const REVIEW = 'review';
+
+// continuesOn is the outcomes a new step of kind leaves by, all to the
+// same next node.
+function continuesOn(kind) {
+  return DECISION_KINDS.includes(kind) ? [...DECISION_OUTCOMES] : [CONTINUE[kind]];
+}
+
+function linkOn(view, from, kind, to) {
+  for (const outcome of continuesOn(kind)) view.edges.push({ from, outcome, to });
+}
 
 // A gate is an agreement gate: a decision several deciders take together.
 export const MINI_KINDS = Object.freeze(['agent', 'you', 'command', 'gate']);
@@ -60,6 +78,12 @@ function incoming(view, id) {
   return view.edges.filter((edge) => edge.to === id && edge.from !== '');
 }
 
+// before is the distinct nodes with an edge into id: a decision whose
+// several answers lead to id is one step before it, not several.
+function before(view, id) {
+  return [...new Set(incoming(view, id).map((edge) => edge.from))];
+}
+
 // mainEdge is the edge a step continues along: a task's pass edge, a
 // decision's first answer that does not loop back, a start's only edge.
 export function mainEdge(view, id) {
@@ -92,7 +116,9 @@ function uniqueOutcome(view, id, base) {
 
 // newStepNode is a fresh step of `kind`.
 export function newStepNode(kind, name = '') {
-  const label = name || { agent: 'New step', you: 'Decide', command: 'Command' }[kind] || 'New step';
+  const label = name || { agent: 'New step', you: 'Decide', command: 'Command', decide: 'Decision', 'decide-you': 'Decision' }[kind] || 'New step';
+  if (kind === 'decide') return { type: 'decision', name: label, performer: { kind: 'agent', prompt: '' } };
+  if (kind === 'decide-you') return { type: 'decision', name: label, performer: { kind: 'human', ask: '', choices: [...DECISION_OUTCOMES] } };
   if (kind === 'you') return { type: 'decision', name: label, performer: { kind: 'human', ask: '', choices: [CONTINUE.you] } };
   if (kind === 'command') return { type: 'task', name: label, performer: { kind: 'program', run: '' } };
   return { type: 'task', name: label, performer: { kind: 'agent', prompt: '' } };
@@ -131,10 +157,19 @@ export function canInsertBefore(view, id) {
 export function canBranch(view, id) {
   const node = view.template.nodes[id];
   if (!isStep(node)) return 'only a step branches';
-  // The engine routes a task one way only; branching is a decision's. An
-  // agent step branches by becoming an agent decision (see toAgentDecision).
-  if (node.type === 'task') return canDecide(view, id);
+  // The engine routes a task one way only; branching is a decision's. A
+  // task branches through a decision put after it (branchKinds), or, when
+  // canDecide allows, by its agent deciding (toAgentDecision).
   return '';
+}
+
+// branchKinds are the kinds ⑂ offers on id: on a decision, a new step of
+// any kind on a new outcome; on a task, a decision after it (an agent's or
+// yours), plus REVIEW when its own agent can decide.
+export function branchKinds(view, id) {
+  const node = view.template.nodes[id];
+  if (node?.type !== 'task') return null;
+  return [...(canDecide(view, id) ? [] : [REVIEW]), ...DECISION_KINDS];
 }
 
 // canDecide says why an agent step cannot become an agent decision, or ''.
@@ -148,9 +183,9 @@ export function canDecide(view, id) {
   // Plan, checks, review and retry are a task's; a decision would drop them.
   if (['plan', 'checks', 'review', 'retry'].some((key) => node[key] !== undefined)) return 'its plan, checks, review or retry are a task\'s; change it in the full editor';
   if (outgoing(view, id).length > 1) return 'it already has more than one way out; change it in the full editor';
-  const into = incoming(view, id);
-  if (into.length !== 1 || !isStep(view.template.nodes[into[0].from])) return 'it needs exactly one step before it to send changes back to';
-  if (overlapsALoop(view, [into[0].from, id])) return 'going back from it would cross another loop; the server refuses loops that overlap';
+  const into = before(view, id);
+  if (into.length !== 1 || !isStep(view.template.nodes[into[0]])) return 'it needs exactly one step before it to send changes back to';
+  if (overlapsALoop(view, [into[0], id])) return 'going back from it would cross another loop; the server refuses loops that overlap';
   return '';
 }
 
@@ -192,7 +227,7 @@ export function toAgentDecision(view, id) {
   const next = copyView(view);
   const node = next.template.nodes[id];
   const main = mainEdge(next, id);
-  const previous = incoming(next, id)[0].from;
+  const previous = before(next, id)[0];
   node.type = 'decision';
   let after = main?.to;
   next.edges = next.edges.filter((edge) => edge.from !== id);
@@ -210,7 +245,7 @@ export function canRunAlongside(view, id) {
   const node = view.template.nodes[id];
   if (!isStep(node)) return 'only a step runs alongside another';
   if (view.template.start === id || view.edges.some((edge) => edge.from === '' && edge.to === id)) return 'the first step has no step before it to fan out from';
-  if (incoming(view, id).length !== 1) return 'it has several steps leading to it';
+  if (before(view, id).length !== 1) return 'it has several steps leading to it';
   const main = mainEdge(view, id);
   if (!main) return 'it has no next step to join at';
   // The fork must close where it opened: one way out of the step, into a
@@ -445,7 +480,7 @@ export function insertAfter(view, id, kind) {
   if (main) {
     const target = main.to;
     main.to = added;
-    next.edges.push({ from: added, outcome: CONTINUE[kind], to: target });
+    linkOn(next, added, kind, target);
   } else {
     next.edges.push({ from: id, outcome: next.template.nodes[id].type === 'decision' ? uniqueOutcome(next, id, 'next') : 'next', to: added });
   }
@@ -464,19 +499,24 @@ export function insertBefore(view, id, kind) {
   const added = addNode(next, node);
   for (const edge of next.edges) if (edge.to === id) edge.to = added;
   if (next.template.start === id) next.template.start = added;
-  next.edges.push({ from: added, outcome: CONTINUE[kind], to: id });
+  linkOn(next, added, kind, id);
   dropStaleJoins(next);
   return { view: syncLoops(next), id: added };
 }
 
 // branch adds an outcome to a decision that leads to a new step, which then
 // rejoins its main path: a "you" step gains an answer, an agent decision an
-// outcome. On an agent step it makes the step decide (toAgentDecision), and
-// `kind` is unused.
+// outcome. On a task it puts a decision of `kind` after it (the task keeps
+// its outputs and the rest), or with REVIEW makes its agent decide
+// (toAgentDecision).
 export function branch(view, id, kind) {
   const why = canBranch(view, id);
   if (why) throw new Error(why);
-  if (view.template.nodes[id].type === 'task') return toAgentDecision(view, id);
+  if (view.template.nodes[id].type === 'task') {
+    if (kind === REVIEW) return toAgentDecision(view, id);
+    if (!DECISION_KINDS.includes(kind)) throw new Error('a step branches through a decision after it');
+    return insertAfter(view, id, kind);
+  }
   const next = copyView(view);
   const node = next.template.nodes[id];
   const main = mainEdge(next, id);
@@ -489,7 +529,7 @@ export function branch(view, id, kind) {
   }
   const added = addNode(next, newStepNode(kind));
   next.edges.push({ from: id, outcome, to: added });
-  if (main) next.edges.push({ from: added, outcome: CONTINUE[kind], to: main.to });
+  if (main) linkOn(next, added, kind, main.to);
   return { view: syncLoops(next), id: added, outcome };
 }
 
@@ -500,13 +540,14 @@ export function runAlongside(view, id, kind) {
   const why = canRunAlongside(view, id);
   if (why) throw new Error(why);
   const next = copyView(view);
-  const [into] = incoming(next, id);
   const main = mainEdge(next, id);
   const added = addNode(next, newStepNode(kind));
   const fork = addNode(next, { type: 'parallel', name: 'Together' }, 'together');
-  into.to = fork;
+  // Every edge in comes from the one step before it (a decision's answers
+  // may be several): they all lead to the fork now.
+  for (const into of incoming(next, id)) into.to = fork;
   next.edges.push({ from: fork, outcome: id, to: id }, { from: fork, outcome: added, to: added });
-  next.edges.push({ from: added, outcome: CONTINUE[kind], to: main.to });
+  linkOn(next, added, kind, main.to);
   next.template.nodes[main.to].join = 'all';
   return { view: syncLoops(next), id: added, fork };
 }
@@ -548,7 +589,10 @@ export function changeKind(view, id, kind) {
   const step = setStepWho({ id, node: next.template.nodes[id] }, who);
   const changed = step.node;
   const main = mainEdge(next, id);
-  if (kind === 'you') {
+  if (kind === 'you' && node.type === 'decision') {
+    // An agent's decision becomes yours with the same answers.
+    changed.performer.choices = outgoing(next, id).map((edge) => edge.outcome);
+  } else if (kind === 'you') {
     changed.type = 'decision';
     if (main) main.outcome = CONTINUE.you;
     const answers = outgoing(next, id).map((edge) => edge.outcome);
@@ -562,7 +606,7 @@ export function changeKind(view, id, kind) {
   if (changed.type !== 'task') delete changed.retry;
   else if (kind === 'command' && changed.retry?.onFail && changed.retry.onFail !== 'fresh-attempt') delete changed.retry.onFail;
   let orphans = [];
-  if (from === 'you') {
+  if (node.type === 'decision' && kind !== 'you') {
     // A task continues one way: only the main answer's path stays, and the
     // steps only the other answers led to go.
     const before = reachable(next);
@@ -840,7 +884,23 @@ export function draftProjection(view, { whoOf = () => '', noteOf = () => '', nam
     const exhausted = after ? (isFailedEnd(view.template.nodes[after]) ? 'fail' : bound.onExhausted) : '';
     return { ...projected, label: projected.label || edge.outcome, back: true, maxIterations: max, ...(exhausted ? { exhausted } : {}) };
   });
-  return { id: 'draft', name: name || view.template?.name || 'draft', status: 'planned', nodes, edges };
+  return { id: 'draft', name: name || view.template?.name || 'draft', status: 'planned', nodes, edges: mergeParallel(edges) };
+}
+
+// mergeParallel draws a decision's answers that go to the same step as one
+// edge labelled with all of them ("yes / no"): drawn apart they would share
+// one path, and their labels would print over each other.
+function mergeParallel(edges) {
+  const out = [];
+  const seen = new Map();
+  for (const edge of edges) {
+    if (edge.back) { out.push(edge); continue; }
+    const key = `${edge.from}\u0000${edge.to}`;
+    const first = seen.get(key);
+    if (!first) { seen.set(key, edge); out.push(edge); continue; }
+    first.label = [first.label, edge.label].filter(Boolean).join(' / ');
+  }
+  return out;
 }
 
 // changeSummary names what a draft changed against the stored view: steps
