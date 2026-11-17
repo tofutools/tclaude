@@ -14,6 +14,11 @@
 #   scripts/sandbox/ui.sh smoke [--peer] [NAME]            Playwright tests on a fresh sandbox
 #   scripts/sandbox/ui.sh tour [--peer]                    the route tour (smoke tour)
 #
+# TCLAUDE_SANDBOX_AGENT_SOCKET=<agent title or conv id> in the environment of `up` also serves
+# the agent API as that seeded agent on a unix socket, whose path is written to
+# the state dir's serve/agent-socket: a real agent with TCLAUDE_AGENTD_SOCKET
+# set to it runs `tclaude agent ...` as that agent against the sandbox.
+#
 # Fixtures: full (the default: every page and tab has data), or any docshots
 # fixture (fleet, collab, steward, learn, page, collab-fleet, collab-quiet).
 # --port binds 127.0.0.1 only; the default is a random free port.

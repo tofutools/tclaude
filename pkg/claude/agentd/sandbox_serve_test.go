@@ -88,7 +88,52 @@ func TestSandboxServe(t *testing.T) {
 	if os.Getenv("TCLAUDE_SANDBOX_REMOTE") != "" {
 		sandboxRemoteListener(t, dir)
 	}
+	if who := os.Getenv("TCLAUDE_SANDBOX_AGENT_SOCKET"); who != "" {
+		sandboxAgentSocket(t, dir, sandboxAgentConv(t, sandboxStageReferer(mux), who))
+	}
 	serveDocFixture(t, dir, sandboxLogFailures(t, sandboxStageReferer(mux)), page, ln)
+}
+
+// sandboxAgentConv is the conversation of the seeded agent titled who (the
+// steward's id is minted at seed time), or who itself.
+func sandboxAgentConv(t *testing.T, mux http.Handler, who string) string {
+	t.Helper()
+	for _, agent := range fetchSnapshotOnly(t, mux).Agents {
+		if agent.Title == who {
+			return agent.ConvID
+		}
+	}
+	return who
+}
+
+// sandboxAgentSocket (TCLAUDE_SANDBOX_AGENT_SOCKET=<agent title or conv id>) serves the
+// daemon's agent API on a unix socket as that seeded agent, and writes the
+// socket's path to <dir>/agent-socket. A real agent pointed at it with
+// TCLAUDE_AGENTD_SOCKET drives the real `tclaude agent ...` CLI as that
+// agent, which is how an agent building a process live is watched in the
+// dashboard (its saves carry the agent as their author).
+func sandboxAgentSocket(t *testing.T, dir, conv string) {
+	t.Helper()
+	sockDir, err := os.MkdirTemp("", "sa")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(sockDir) })
+	sock := filepath.Join(sockDir, "s")
+	ln, err := net.Listen("unix", sock)
+	if err != nil {
+		t.Fatalf("sandbox agent socket: %v", err)
+	}
+	handler := agentd.BuildHandlerForTest()
+	srv := &http.Server{
+		Handler:           http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { handler.ServeHTTP(w, agentd.AsAgentPeer(r, conv)) }),
+		ReadHeaderTimeout: 10 * time.Second,
+	}
+	go func() { _ = srv.Serve(ln) }()
+	t.Cleanup(func() { _ = srv.Close() })
+	if err := os.WriteFile(filepath.Join(dir, "agent-socket"), []byte(sock+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 }
 
 // sandboxRemoteListener also serves the seeded world on the remote-access

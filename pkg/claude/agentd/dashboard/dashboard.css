@@ -16469,6 +16469,7 @@ body.wizard .pni-add { border-color: #4a3d6b; }
 /* A run's own copy: the steps the run has reached stay as they are. */
 .process-node.is-locked .process-node-shape { fill: #161b22; stroke: #6e7681; stroke-dasharray: 3 3; }
 .process-node.is-locked .process-node-label { fill: #8b949e; }
+.process-node.is-fresh .process-node-shape { stroke: #3fb950; stroke-width: 3; filter: drop-shadow(0 0 6px rgba(63, 185, 80, .8)); }
 .process-editor-run-copy { color: #d2a8ff; border-color: #6e40c9; white-space: nowrap; }
 .process-node.is-diff-added .process-node-shape { stroke: #3fb950; stroke-dasharray: 6 3; }
 .process-node.is-diff-changed .process-node-shape { stroke: #d29922; }
@@ -19784,6 +19785,10 @@ body.wizard .md-ed .tok-heading { color: var(--ui-wizard-gold, #d9b45a); }
 .gm-live { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; padding: 6px 14px; border-bottom: 1px solid #21262d; font-size: 12px; color: #c9d1d9; background: rgba(56, 139, 253, .08); }
 .gm-live-conflict { background: rgba(227, 179, 65, .1); color: #e3b341; }
 .gm-agent { font-size: 12px; }
+.gm-editing { background: rgba(63, 185, 80, .08); }
+.gm-editing-dot { width: 8px; height: 8px; border-radius: 50%; background: #3fb950; animation: gm-editing-pulse 1.2s ease-in-out infinite; }
+@keyframes gm-editing-pulse { 50% { opacity: .3; } }
+@media (prefers-reduced-motion: reduce) { .gm-editing-dot { animation: none; } }
 /* A parked step, with its reason, where the operator looks (BlockedSteps). */
 .pov-blocked { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
 .pov-blocked-item { border: 1px solid #30363d; border-left: 3px solid #f0883e; border-radius: 6px; padding: 8px 10px; background: #1c1610; display: flex; flex-direction: column; gap: 6px; }

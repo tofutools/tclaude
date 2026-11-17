@@ -705,12 +705,13 @@ const ARROW_IDS = { done: 'done', running: 'running', planned: 'planned', skippe
 // editing surface (the inline mini editor) adds `onNodeContextMenu`,
 // `onNodeHover` (a node id, never cleared here) and `overlay`, a render prop
 // given the laid-out graph that draws extra positioned elements on top.
-// `problemIds` (a Set) outlines the nodes an editor's diagnostics name. A
+// `problemIds` (a Set) outlines the nodes an editor's diagnostics name, and
+// `freshIds` (a Set) lights up the ones an agent just added or changed. A
 // decision's `caption` (a gate's "2 deciders · all approve") is drawn over
 // its diamond.
 export function ProcessMiniGraph({
   run, compact = false, performerId = '', onNodeClick = null, selectedId = '', wizard = false,
-  onNodeContextMenu = null, onNodeHover = null, overlay = null, problemIds = null,
+  onNodeContextMenu = null, onNodeHover = null, overlay = null, problemIds = null, freshIds = null,
 }) {
   // Marker ids are per instance: the same run can be drawn on two surfaces
   // in one document, and a hidden copy must not own the visible arrowheads.
@@ -722,7 +723,8 @@ export function ProcessMiniGraph({
     const here = performerId && performs(node, performerId);
     const selected = selectedId !== '' && node.id === String(selectedId);
     const problem = !!problemIds?.has?.(node.id);
-    const cls = `pk-gnode pk-state-${node.state} pk-kind-${node.kind}${isTerminalKind(node.kind) ? ' terminal' : ''}${here ? ' here' : ''}${selected ? ' selected' : ''}${problem ? ' problem' : ''}`;
+    const fresh = !!freshIds?.has?.(node.id);
+    const cls = `pk-gnode pk-state-${node.state} pk-kind-${node.kind}${isTerminalKind(node.kind) ? ' terminal' : ''}${here ? ' here' : ''}${selected ? ' selected' : ''}${problem ? ' problem' : ''}${fresh ? ' fresh' : ''}`;
     const style = `left:${node.x}px;top:${node.y}px;width:${node.width}px;height:${node.height}px`;
     const round = nodeRound(node);
     const title = `${node.label} · ${kindLabel(node.kind, wizard)} · ${stateLabel(node.state)}${round ? ` · round ${round.replace('/', ' of ')}` : ''}${node.sub ? ` · ${node.sub}` : ''}${node.caption ? ` · ${node.caption}` : ''}${Number(node.retries) > 0 ? ` · retries ${node.retries}× if it fails, then waits for you` : ''}${waiting.has(node.id) ? ` · waiting for ${waiting.get(node.id).join(', ')}` : ''}${problem ? ' · has a problem' : ''}`;

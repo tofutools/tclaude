@@ -5,7 +5,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { installFastClock } from './fast-clock.mjs';
 import { createPreactHarness } from './preact-harness.mjs';
-import { changeList, inlineHelpNote, mergeIncoming } from '../dashboard/js/groups-mini-live.js';
+import { changeList, freshNodeIds, inlineHelpNote, mergeIncoming } from '../dashboard/js/groups-mini-live.js';
 
 installFastClock(0.05);
 
@@ -61,6 +61,57 @@ test('the agent brief says the operator watches and that a moved hash is their e
   assert.match(note, /open in their group's inline editor/);
   assert.match(note, /moved sourceHash is usually their own edit/);
   assert.match(note, /Never revert what they changed/);
+  assert.match(note, /add one step or one decision, validate, CAS-save, then the next/, 'it builds a piece at a time');
+  assert.match(note, /attached file .* Read an attached file in full/, 'it reads an attached spec');
+  assert.match(note, /list in chat what you could not model/, 'it lists the gaps');
+});
+
+test('the steps a merged version added or changed are the ones lit up; a removed one is not', () => {
+  const base = view(BASE_NODES);
+  const theirs = view({ start: { type: 'start' }, build: agentStep('Build it', { name: 'Build the thing' }), review: agentStep('Review it'), done: { type: 'end', result: 'success' } }, { hash: 'h2' });
+  const { changes } = mergeIncoming({ base, ours: base, theirs });
+  assert.deepEqual([...freshNodeIds(changes)].sort(), ['build', 'review']);
+  const gone = mergeIncoming({ base: theirs, ours: theirs, theirs: base }).changes;
+  assert.deepEqual([...freshNodeIds(gone)], ['build'], 'review was removed: nothing to light up');
+});
+
+test('while an agent builds the process its new steps light up and the editor says it is editing, with a Stop', async (t) => {
+  let head = view(BASE_NODES);
+  const api = {
+    getTemplateHead: async () => structuredClone(head),
+    saveTemplate: async () => { throw new Error('nothing to save'); },
+  };
+  const interrupts = [];
+  const previousFetch = globalThis.fetch;
+  globalThis.fetch = async (path, init) => {
+    interrupts.push({ path, method: init?.method });
+    return { ok: true, status: 200, json: async () => ({ via: 'escape' }), text: async () => '' };
+  };
+  t.after(() => { globalThis.fetch = previousFetch; });
+  const toasts = [];
+  const { harness, root } = await mountEditor(t, api, { notify: (text) => toasts.push(text) });
+  assert.equal(root.querySelector('[data-mini-editing]'), null, 'nobody is editing yet');
+
+  const helper = 'agt_0123456789abcdef0123456789abcdef';
+  const store = await harness.importDashboardModule('js/snapshot-store.js');
+  store.dashboardState.snapshot.value = { ...(store.dashboardState.snapshot.value || {}), agents: [{ agent_id: helper, title: 'steward', online: true }] };
+  head = {
+    ...view({ start: { type: 'start' }, build: agentStep('Build it'), review: agentStep('Review it'), done: { type: 'end', result: 'success' } }, { hash: 'h2', rev: 'b' }),
+    authorship: [{ ref: 'tpl_1@sha256:b', sourceHash: 'h2', actor: `agent:${helper}`, authoredAt: '2026-11-17T02:00:00Z' }],
+  };
+  await waitFor(harness, () => root.querySelector('[data-process-node="review"]'), 'the agent\'s new step lands on the canvas');
+  assert.ok(root.querySelector('[data-process-node="review"]').classList.contains('fresh'), 'the new step is lit up');
+  assert.ok(!root.querySelector('[data-process-node="build"]').classList.contains('fresh'), 'an untouched step is not');
+  const editing = root.querySelector('[data-mini-editing]');
+  assert.equal(editing?.getAttribute('data-mini-editing'), helper);
+  assert.match(editing.textContent, /agent steward is editing this process/, 'it says who');
+
+  await harness.act(async () => { root.querySelector('[data-mini-stop]').click(); });
+  await waitFor(harness, () => !root.querySelector('[data-mini-editing]'), 'Stop hides the indicator');
+  assert.deepEqual(interrupts, [{ path: `/api/agents/${helper}/interrupt`, method: 'POST' }], 'Stop interrupts that agent\'s turn');
+  assert.match(toasts.at(-1), /Stopped agent steward/);
+  await waitFor(harness, () => !root.querySelector('[data-process-node="review"]').classList.contains('fresh'), 'the highlight fades after a moment');
+  assert.ok(root.querySelector('[data-process-node="review"]'), 'what it saved stays');
 });
 
 async function mountEditor(t, api, props = {}) {
