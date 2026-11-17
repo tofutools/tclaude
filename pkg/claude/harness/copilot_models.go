@@ -96,7 +96,7 @@ const (
 func CopilotContextWindowDefault(model string) int64 {
 	model = strings.TrimSpace(model)
 	switch {
-	case strings.HasPrefix(model, "gpt-5.6"):
+	case strings.HasPrefix(model, "gpt-5.6"), strings.HasPrefix(model, "gpt-6.2"):
 		return CopilotContextWindow
 	case model == "claude-haiku-5.5":
 		return 1_000_000
