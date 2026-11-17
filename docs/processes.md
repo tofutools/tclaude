@@ -1109,6 +1109,11 @@ nodes:
     performer: {kind: agent, lead: true, prompt: "Final check, then merge."}
 ```
 
+**Parameter types.** A param's `type` is `string` (also when left out),
+`number`, `integer`, `boolean`, `object` or `array`, and its `default`, when
+it has one, must be a value of that type (`default: false` for a boolean,
+not `"false"`). Validation refuses any other type or a mismatched default.
+
 **Step outputs.** A plain agent task can declare outputs with
 `captures: [<name>, ...]`. Its performer reports a value for each with
 `--output <name>=<value>`; a step with a single output can leave that out,

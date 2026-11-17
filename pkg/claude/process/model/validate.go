@@ -1,7 +1,9 @@
 package model
 
 import (
+	"encoding/json"
 	"fmt"
+	"math"
 	"regexp"
 	"slices"
 	"strings"
@@ -140,8 +142,79 @@ func validateScopeHeader(tmpl *Template, diagnostics *templateDiagnosticCollecto
 				return false
 			}
 		}
+		if diagnostic, bad := checkParamType(paramID, tmpl.Params[paramID]); bad {
+			if !diagnostics.Add(diagnostic) {
+				return false
+			}
+		}
 	}
 	return true
+}
+
+// ParamTypes are the param types a template may declare (JSON's, as a
+// default is written). A blank type is a string. int and bool are accepted spellings of integer and boolean, as
+// subprocess input binding reads them.
+var ParamTypes = []string{"string", "number", "integer", "boolean", "object", "array"}
+
+// checkParamType refuses a param type nothing understands, and a default
+// that is not a value of the param's type.
+func checkParamType(paramID string, param Param) (Diagnostic, bool) {
+	path := "params." + paramID
+	kind := strings.TrimSpace(param.Type)
+	switch kind {
+	case "", "string", "number", "integer", "int", "boolean", "bool", "object", "array":
+	default:
+		return diagError("invalid_param_type", path+".type",
+			fmt.Sprintf("param type must be one of %s; got %q", strings.Join(ParamTypes, ", "), param.Type)), true
+	}
+	if param.Default == nil {
+		return Diagnostic{}, false
+	}
+	ok := true
+	switch kind {
+	case "", "string":
+		_, ok = param.Default.(string)
+	case "number":
+		_, ok = paramNumber(param.Default)
+	case "integer", "int":
+		var value float64
+		value, ok = paramNumber(param.Default)
+		ok = ok && value == math.Trunc(value)
+	case "boolean", "bool":
+		_, ok = param.Default.(bool)
+	case "object":
+		_, ok = param.Default.(map[string]any)
+	case "array":
+		_, ok = param.Default.([]any)
+	}
+	if ok {
+		return Diagnostic{}, false
+	}
+	want := kind
+	if want == "" {
+		want = "string"
+	}
+	return diagError("invalid_param_default", path+".default",
+		fmt.Sprintf("default %v is not a %s", param.Default, want)), true
+}
+
+// paramNumber reads a decoded default as a number: YAML gives ints and
+// floats, JSON float64 or json.Number.
+func paramNumber(value any) (float64, bool) {
+	switch typed := value.(type) {
+	case int:
+		return float64(typed), true
+	case int64:
+		return float64(typed), true
+	case uint64:
+		return float64(typed), true
+	case float64:
+		return typed, true
+	case json.Number:
+		f, err := typed.Float64()
+		return f, err == nil
+	}
+	return 0, false
 }
 
 func validateNodes(tmpl *Template, diagnostics *templateDiagnosticCollector, depth int) bool {
