@@ -1007,6 +1007,37 @@ test('the inspector edits a step; Save writes a new version against the opened h
   assert.equal(root.querySelector('[data-mini-editor]'), null, 'the card closes after a save');
 });
 
+test('"If it fails" on a command and an agent step: retry N×, hold, fail; ↻N on the node; it saves as the retry policy', async (t) => {
+  const { api, card, node, click, setValue } = await openMini(t);
+  await click(node('merge'));
+  const row = () => card().querySelector('[data-mini-inspector="merge"] [data-mini-failure="merge"]');
+  assert.ok(row(), 'a command step has the row');
+  assert.equal(row().querySelector('select').dataset.failure, 'fail', 'fail the run is the default');
+  assert.equal(row().querySelector('[data-mini-retries]'), null, 'no N× box unless it retries');
+  assert.equal(row().querySelector('[data-mini-failure-note]'), null);
+  await setValue(row().querySelector('select'), 'retry', 'change');
+  assert.equal(row().querySelector('select').dataset.failure, 'retry');
+  assert.equal(row().querySelector('[data-mini-retries]').value, '2', 'retry starts at 2×');
+  assert.match(row().querySelector('[data-mini-failure-note]').textContent, /retry, skip or cancel/);
+  assert.equal(node('merge').querySelector('[data-process-retries]').textContent, '↻2');
+  await setValue(row().querySelector('[data-mini-retries]'), '4', 'change');
+  assert.equal(node('merge').querySelector('[data-process-retries]').textContent, '↻4');
+
+  await click(node('review'));
+  const agentRow = () => card().querySelector('[data-mini-inspector="review"] [data-mini-failure="review"]');
+  assert.ok(agentRow(), 'an agent step has it too');
+  await setValue(agentRow().querySelector('select'), 'hold', 'change');
+  assert.equal(node('review').querySelector('[data-process-retries]'), null, 'held without retrying: no badge');
+  await click(node('approve'));
+  assert.equal(card().querySelector('[data-mini-inspector="approve"] [data-mini-failure]'), null, 'a decision has none');
+
+  await click(card().querySelector('[data-mini-save]'));
+  const [{ view }] = api.calls.save;
+  assert.deepEqual(view.template.nodes.merge.retry, { maxAttempts: 5 }, '4 retries after the first attempt');
+  assert.deepEqual(view.template.nodes.review.retry, { maxAttempts: 1 });
+  assert.equal(view.template.nodes.implement.retry, undefined);
+});
+
 test('Who › a new agent picks its spawn profile; it saves as a spawn with no one to match and reopens the same', async (t) => {
   const open = async (stored) => {
     const api = fakeApi({ stored: { tmpl_ship: stored } });

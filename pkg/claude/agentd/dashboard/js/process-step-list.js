@@ -821,3 +821,36 @@ export function stepListFlow(list, { whoOf = () => '' } = {}) {
     jumps, lanes: lanes.length,
   };
 }
+
+// FAILURE_RETRIES_MAX is the most retries the inline editor offers: the
+// engine runs at most 100 attempts, the first included, back to back.
+export const FAILURE_RETRIES_MAX = 99;
+
+// stepFailure is what an agent or command step does if it fails, as the
+// inline editor's "If it fails" row says it:
+//   fail      no retry policy: the run fails (the engine's default).
+//   hold      retry.maxAttempts 1: the step is held (blocked) for the
+//             operator to retry, skip or cancel, without retrying itself.
+//   retry     retry.maxAttempts N+1: N retries, then held the same way.
+// Returns { mode, retries } (retries is 0 unless mode is retry).
+export function stepFailure(step) {
+  const attempts = Number(step?.node?.retry?.maxAttempts) || 0;
+  if (!step?.node?.retry) return { mode: 'fail', retries: 0 };
+  if (attempts <= 1) return { mode: 'hold', retries: 0 };
+  return { mode: 'retry', retries: attempts - 1 };
+}
+
+// setStepFailure returns the step with its "If it fails" set. The retry
+// policy's onFail (from the full editor) is kept while it stays a retry
+// policy; a backoff, which the engine does not run, is dropped. Retries are
+// clamped to 1..FAILURE_RETRIES_MAX.
+export function setStepFailure(step, { mode, retries = 1 } = {}) {
+  const node = clone(step.node);
+  if (mode === 'hold' || mode === 'retry') {
+    const count = Math.min(FAILURE_RETRIES_MAX, Math.max(1, Math.round(Number(retries) || 1)));
+    node.retry = { maxAttempts: mode === 'hold' ? 1 : count + 1, ...(node.retry?.onFail ? { onFail: node.retry.onFail } : {}) };
+  } else {
+    delete node.retry;
+  }
+  return { ...step, node };
+}

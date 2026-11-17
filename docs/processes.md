@@ -599,7 +599,12 @@ start. The empty canvas reads start → *＋ Add first step* → end, and *Start
 from* under it fills it: a [built-in way of working](#built-in-ways-of-working)
 (which also names an untitled draft), *✨ Describe it*, *↥ Import .pwf*, or
 *More ways of working ›* (a library template). The inline inspector keeps to
-the essentials (what, who, if nobody takes it, then); *⤢ Full editor* opens
+the essentials (what, who, if nobody takes it, if it fails, then). *If it
+fails*, on agent and command steps, is *fail the run* (the default), *hold it
+for me* (the step waits, blocked, for you to retry, skip or cancel it), or
+*retry N×, then hold it for me*; it saves as the step's `retry.maxAttempts`
+(1, or N+1), and a step that retries shows ↻N on the graph. Sending a
+failure to another step is not something a run can do yet. *⤢ Full editor* opens
 the same draft over the page, still pinned, with *← Back inline* and *▶ Run…*
 in its bar. *Save* closes the inline editor and *▶ Run…* opens the start form
 on the draft. The other ways to make one (**＋ new template** under Automations

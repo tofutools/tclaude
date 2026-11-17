@@ -151,6 +151,7 @@ test('the mini-graph draws a gate\'s caption under its diamond and outlines the 
   assert.deepEqual([...full.querySelectorAll('.pk-gnode.problem')].map((n) => n.dataset.processNode), ['build']);
   assert.match(full.querySelector('[data-process-node="build"]').getAttribute('title'), /has a problem/);
   assert.equal(compact.querySelectorAll('.pk-gnode.problem').length, 0, 'only where problems are given');
+  assert.equal(full.querySelector('[data-process-retries]'), null, 'no retries, no ↻');
   await mounted.unmount();
 });
 

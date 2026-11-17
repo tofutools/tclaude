@@ -18296,6 +18296,12 @@ body.wizard .gq-fallback { background: #1a1430; border-color: rgba(122, 93, 176,
 .ui-tag.gm-loop { display: inline-flex; align-items: center; gap: 3px; }
 .gm-loop input { width: 40px; padding: 0 3px; }
 .gm-exhausted { display: inline-flex; align-items: center; gap: 4px; }
+/* "If it fails" (groups-mini-editor.js FailureRow): the select, and the N×
+   box only for retry, with a note under while the step would be held. */
+.gm-failure { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.gm-failure .gq-pick-pair > .gm-retries { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 3px; }
+.gm-retries input { width: 4.5em; }
+.gm-failure > .gq-dim { font-size: 11px; }
 .gm-add-outcome { font: inherit; width: 22px; height: 22px; border-radius: 50%; border: 1px dashed #30363d; background: transparent; color: #8b949e; cursor: pointer; }
 .gm-row { display: flex; align-items: center; gap: 8px; }
 .gm-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 8px 14px; border-top: 1px solid #21262d; font-size: 12px; }
