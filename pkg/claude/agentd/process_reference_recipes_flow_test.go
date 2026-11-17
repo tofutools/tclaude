@@ -188,19 +188,6 @@ func visitsTo(visits []visit, node string) []visit {
 	return out
 }
 
-// briefAbout is the last process message conv got that mentions text.
-func briefAbout(t *testing.T, conv, text string) string {
-	t.Helper()
-	found := ""
-	for _, message := range processInbox(t, conv) {
-		if strings.Contains(message.Body, text) {
-			found = message.Body
-		}
-	}
-	require.NotEmpty(t, found, "no process message mentions %q", text)
-	return found
-}
-
 // Scenario (example 2): the operator decides the idea on the second pass;
 // the implementor builds, a cold reviewer who is not the implementor
 // reviews, and the lead sends it round once more before moving on. CI runs;
