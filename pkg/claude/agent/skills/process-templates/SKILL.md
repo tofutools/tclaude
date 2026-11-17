@@ -232,7 +232,11 @@ decide:
   the last round and the decider has to pick another one.
 - Every cycle needs a bounded outcome; an unbounded one is a `graph_cycle`
   error. A poison-escalation `retry` edge is exempt. The body is entered only at the target, left only through decisions,
-  holds no `join: any`, and two loops nest or are disjoint.
+  holds no `join: any`, and two loops nest or are disjoint. So a side path
+  that should rerun the work ("adjust, then build again") goes back to the
+  loop's own target through a decision of its own, never into the middle.
+- A decider, agent or gate voter, is told the decision's outcomes and picks
+  one; its prompt need not list them.
 - Only decisions take `loops`. Rename or delete the outcome together with its
   `loops` entry.
 - The decider may be an agent (`performer: {kind: agent, role: reviewer,
