@@ -246,7 +246,8 @@ body.dock-open .open-prs.is-open::before {
 .open-pr-meta { overflow: hidden; color: #7d8590; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
 .open-pr-row.is-draft { background: rgba(110,118,129,.045); }
 .open-pr-row.is-draft .open-pr-title { color: #8b949e; }
-.open-pr-row.is-draft .ci-badge { color: #8b949e; border-color: #3c444d; background: #20252b; }
+/* A draft greys its CI pill but keeps its review pill in colour: its review state is news. */
+.open-pr-row.is-draft .ci-badge:not(.rv-badge) { color: #8b949e; border-color: #3c444d; background: #20252b; }
 .open-pr-draft-label {
   display: inline-block; margin-left: 5px; padding: 0 5px; border: 1px solid #484f58;
   border-radius: 8px; color: #8b949e; font-size: 9px; font-weight: 600; line-height: 14px;
@@ -11319,7 +11320,7 @@ body.wizard .open-pr-title { color: #e7d9f5; }
 body.wizard .open-pr-title:hover { color: #f3d58b; }
 body.wizard .open-pr-row.is-draft .open-pr-title,
 body.wizard .open-pr-row.is-draft .open-pr-meta { color: #9a86c4; }
-body.wizard .open-pr-row.is-draft .ci-badge { color: #9a86c4; border-color: #4a3d6b; background: #1d1730; }
+body.wizard .open-pr-row.is-draft .ci-badge:not(.rv-badge) { color: #9a86c4; border-color: #4a3d6b; background: #1d1730; }
 body.wizard .open-pr-draft-label { color: #b39ddb; border-color: #4a3d6b; }
 body.wizard .open-prs-foot { background: #1c1436; }
 body.wizard .open-prs-foot a { color: var(--ui-wizard-gold); }

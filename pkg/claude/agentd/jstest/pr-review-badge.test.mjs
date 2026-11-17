@@ -1,7 +1,7 @@
 // Tests for the review pill that follows the CI pill on a PR badge, and the
 // footer's review-aware filters. The pill must not fetch anything on hover —
-// the reviewer list rides the snapshot — and must stay silent for drafts,
-// closed PRs and PRs whose reviews are not known yet.
+// the reviewer list rides the snapshot — shows for drafts too, and must stay
+// silent for closed PRs and PRs whose reviews are not known yet.
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -81,7 +81,8 @@ test('the review pill opens a reviewer panel without fetching', async (t) => {
   `);
   try {
     const badges = mounted.container.querySelectorAll('.rv-badge');
-    assert.equal(badges.length, 1, 'drafts and unknown reviews get no pill');
+    assert.equal(badges.length, 2, 'a draft keeps its pill; unknown reviews get none');
+    assert.ok(badges[1].classList.contains('rv-changes'), 'the draft shows the same review state');
     assert.ok(badges[0].classList.contains('rv-changes'));
     assert.ok(badges[0].querySelector('svg.rv-person'), 'the pill is a person icon, not a ✓ like CI');
     assert.equal(badges[0].textContent.trim(), '1', 'plus the count of change requests');

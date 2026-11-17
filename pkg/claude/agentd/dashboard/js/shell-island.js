@@ -371,7 +371,7 @@ function OpenPRRow({ pr, showFinalCI = false, titleDetails = true, onIgnore = nu
             aria-label=${`Bring back ${mr ? 'merge' : 'pull'} request ${ref}`} onClick=${() => onRestore?.(pr)}>Restore<//>` : html`
           <${PRChecksBadge} url=${pr.url} prNumber=${pr.number}
             summary=${terminal && !showFinalCI ? null : pr.checks} countText=${mr ? 'pipeline' : ''} />
-          ${terminal || draft ? null : html`<${PRReviewBadge} url=${pr.url} prNumber=${pr.number} reviews=${pr.reviews} />`}
+          ${terminal ? null : html`<${PRReviewBadge} url=${pr.url} prNumber=${pr.number} reviews=${pr.reviews} />`}
           ${onIgnore && !terminal ? html`<${Button} size="sm" icon=${true} class="open-pr-ignore"
             aria-label=${`Ignore ${mr ? 'merge' : 'pull'} request ${ref}…`} title="Ignore…"
             onClick=${() => onIgnore(pr)}>⊘<//>` : null}
