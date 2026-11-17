@@ -268,6 +268,7 @@ export function stepWho(step) {
   if (!performer) return { mode: 'nobody' };
   if (performer.kind === 'human') return { mode: 'you', assignee: performer.assignee || '' };
   if (performer.kind === 'program') return { mode: 'command', run: performer.run || '' };
+  if (performer.kind === 'rule') return { mode: 'rule' };
   if (performer.assignee) return { mode: 'agent', agent: performer.assignee };
   if (performer.role) return { mode: 'role', role: performer.role };
   if (performer.anyone) return { mode: 'anyone' };

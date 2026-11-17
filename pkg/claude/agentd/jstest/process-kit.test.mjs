@@ -343,3 +343,33 @@ test('a join some tracks reached says which it still waits for', async (t) => {
   assert.match(wait.closest('[data-process-node]').getAttribute('title'), /waiting for Review 2/);
   assert.equal(mounted.container.querySelector('[data-process-node="review-b"] [data-process-round]').textContent, '↺ 2/3', 'the track says its round');
 });
+
+test('a rule decision says what it chose, in plain words and with what it read', async (t) => {
+  const { harness, mod } = await kit(t);
+  const rule = {
+    cases: [{ when: 'steps.ci.result == failed', then: 'fix' }, { when: 'params.merge == yes and steps.ci.result == succeeded', then: 'merge' }],
+    else: 'hold',
+  };
+  const run = (choice) => ({
+    id: 'run-rule',
+    nodes: [
+      { id: 'ci', label: 'CI', kind: 'task', state: 'done', performer: { kind: 'program' } },
+      { id: 'gate', label: 'Merge?', kind: 'decision', state: choice ? 'done' : 'pending', performer: { kind: 'rule' }, rule: { ...rule, choice } },
+    ],
+    edges: [{ from: 'ci', to: 'gate', label: 'next', state: 'arrived' }],
+  });
+  const decided = await harness.mount(harness.html`<${mod.ProcessMiniGraph} run=${run({ case: 1, outcome: 'merge', read: { 'params.merge': 'yes', 'steps.ci.result': 'succeeded' } })} />`);
+  const gate = decided.container.querySelector('[data-process-node="gate"]');
+  assert.equal(gate.querySelector('[data-process-rule]').textContent, '⚙ merge');
+  assert.match(gate.getAttribute('title'), /decided by its rule: merge is yes and CI succeeded → merge \(read merge = yes · CI = succeeded\)/);
+  const waiting = await harness.mount(harness.html`<${mod.ProcessMiniGraph} run=${run(null)} />`);
+  assert.equal(waiting.container.querySelector('[data-process-node="gate"] [data-process-rule]').textContent, '⚙ rule');
+  assert.match(waiting.container.querySelector('[data-process-node="gate"]').getAttribute('title'), /CI failed → fix · merge is yes and CI succeeded → merge · otherwise → hold/);
+
+  const { eventSentence } = await harness.importDashboardModule('js/process-oversight.js');
+  const said = eventSentence({ kind: 'decision_recorded', actor: 'rule', nodeId: 'gate',
+    payload: { verdict: 'fix', rule: { case: 0, when: 'steps.ci.result == failed', read: { 'steps.ci.result': 'failed' } } } }).text;
+  assert.equal(said, 'the rule chose fix at gate: ci failed (read ci = failed)');
+  const otherwise = eventSentence({ kind: 'decision_recorded', actor: 'rule', payload: { verdict: 'hold', rule: { case: -1 } } }).text;
+  assert.equal(otherwise, 'the rule chose hold: no case held');
+});

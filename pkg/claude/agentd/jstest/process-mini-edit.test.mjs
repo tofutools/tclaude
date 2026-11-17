@@ -52,6 +52,20 @@ function threeWay(kind = 'decide') {
   return { view, id: out.id };
 }
 
+function ruleCases() {
+  const rule = m.setDecisionWho(ship, 'approve', { mode: 'rule' });
+  return {
+    'rule-approve': rule.view,
+    'rule-approve-cases': m.setRule(rule.view, 'approve', {
+      cases: [
+        { when: 'steps.review.result == failed', then: 'changes' },
+        { when: 'steps.implement.result == succeeded and params.issue != ""', then: 'ship' },
+      ],
+      else: 'hold',
+    }).view,
+  };
+}
+
 function cases() {
   return {
     'after-implement-agent': fill(m.insertAfter(ship, 'implement', 'agent')),
@@ -80,6 +94,7 @@ function cases() {
     'kind-decision-you': m.changeKind(fill(m.insertAfter(ship, 'implement', 'decide')), 'decision', 'you').view,
     'loop-approve-rounds': m.setLoopRounds(ship, 'approve', 'changes', 4).view,
     ...trackCases(),
+    ...ruleCases(),
   };
 }
 
@@ -652,4 +667,28 @@ test('alongside on a lone review adds a second reviewer track', () => {
   assert.equal(m.canRunAlongside(one.view, one.id), '');
   const two = m.runAlongside(one.view, one.id, 'agent');
   assert.equal(Object.keys(two.view.template.nodes).filter((id) => m.reviewLoop(two.view, id)).length, 2);
+});
+
+test('a decision decided by a rule: cases on what ran before, then else', () => {
+  const { view } = m.setDecisionWho(ship, 'approve', { mode: 'rule' });
+  const rule = view.template.nodes.approve.performer;
+  assert.deepEqual(rule, { kind: 'rule', cases: [{ when: 'steps.implement.result == succeeded', then: 'ship' }], else: 'hold' });
+  assert.equal(m.miniKind(view.template.nodes.approve), 'rule');
+  assert.equal(view.template.nodes.approve.loops.changes.onExhausted, 'hold', 'its loop keeps a way out');
+  assert.deepEqual(m.ruleOperands(view, 'approve').map((o) => o.value),
+    ['steps.implement.result', 'steps.review.result', 'params.issue'], 'the steps before it and the params');
+  const renamed = m.renameOutcome(view, 'approve', 'ship', 'merge').view;
+  assert.equal(renamed.template.nodes.approve.performer.cases[0].then, 'merge', 'a renamed outcome follows into the rule');
+  assert.throws(() => m.setRule(view, 'approve', { cases: [{ when: 'params.issue == x', then: 'nope' }], else: 'hold' }), /not an outcome/);
+  const agent = m.setDecisionWho(view, 'approve', { mode: 'role', role: 'dev' }).view;
+  assert.equal(agent.template.nodes.approve.performer.kind, 'agent');
+  assert.equal(agent.template.nodes.approve.performer.cases, undefined, 'the cases go with the rule');
+});
+
+test('a rule keeps a case: the outcome every case picks cannot be removed', () => {
+  const { view } = m.setDecisionWho(ship, 'approve', { mode: 'rule' });
+  assert.match(m.canRemoveOutcome(view, 'approve', 'ship'), /every case of the rule picks it/);
+  const two = m.setRule(view, 'approve', { cases: [{ when: 'steps.review.result == failed', then: 'changes' }, { when: 'steps.implement.result == succeeded', then: 'ship' }], else: 'hold' }).view;
+  assert.equal(m.canRemoveOutcome(two, 'approve', 'ship'), '');
+  assert.equal(m.removeOutcome(two, 'approve', 'ship').view.template.nodes.approve.performer.cases.length, 1);
 });

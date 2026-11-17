@@ -25,9 +25,10 @@ import {
   deleteOrphans, deleteStep, draftProjection, duplicate, insertAfter, insertBefore, isStep, miniKind, outcomesOf,
   canRemoveOutcome, removeOutcome, renameOutcome, runAlongside, REVIEWER_TRACK, canAddReviewerTrack, reviewLoop, setLoopRounds, setOutcomeTarget, targetsFor, updateStep,
   addDecider, canAddDecider, gateDeciders, removeDecider, setAgree, setDecider,
-  exhaustionOptions, setDecisionWho, setExhaustion, declareParams, setParams, insertOnAnswer,
+  exhaustionOptions, setDecisionWho, setExhaustion, declareParams, setParams, insertOnAnswer, ruleOperands, setRule,
 } from './process-mini-edit.js';
 import { LOOP_MAX_ROUNDS, LOOP_MIN_ROUNDS, loopBound, normalizeRounds } from './process-loops.js';
+import { OP_WORDS, fromRows, ruleWords, toRows } from './process-rules.js';
 import {
   agentStepIDs, collapseParamShorthand, expandParamShorthand, constraintFromValue, constraintValue, outputRef, setStepConstraint, setStepName, setStepOutputs,
   FAILURE_RETRIES_MAX, setStepFailure, setStepText, setStepWho, stepConstraint, stepFailure, stepOutputs, stepText, stepWho, viewToStepList,
@@ -122,6 +123,7 @@ function whoLine(node, fallbackInfo) {
   if (who.mode === 'lead') return agent('the lead');
   if (who.mode === 'spawn') return `a new agent · ${who.profile || fallbackInfo?.defaultSpawnProfile || 'group default'}`;
   if (who.mode === 'you') return 'you';
+  if (who.mode === 'rule') return '⚙ a rule';
   if (who.mode === 'command') return stepText({ node }) || 'a command';
   if (node.performer?.sameAs) return agent(`same agent as ${node.performer.sameAs}`);
   return agent('pick who');
@@ -258,6 +260,75 @@ function GateDeciders({ view, id, shared, roster, roles, fallbackInfo, noMoreDec
 // its rounds: another outcome, failing the run, or (a plain decision) asking
 // the decider again. The agree outcome is listed only when already chosen,
 // marked: it would pass work the deciders kept sending back.
+// RuleCases edits a rule's cases as rows (mock: layout A): in order, each
+// case's conditions joined by and and the outcome it picks, then else, and
+// the whole rule in plain words underneath. A condition the rows cannot show
+// (or, not) is shown as written, for the full editor.
+function RuleCases({ view, id, onApply }) {
+  const node = view.template.nodes[id];
+  const rule = node.performer;
+  const cases = rule.cases || [];
+  const outcomes = view.edges.filter((edge) => edge.from === id).map((edge) => edge.outcome);
+  const operands = ruleOperands(view, id);
+  const stepName = (stepID) => view.template.nodes[stepID]?.name || stepID;
+  const apply = (nextCases, otherwise = rule.else) => {
+    try { onApply(setRule(view, id, { cases: nextCases, else: otherwise })); } catch { /* an outcome went away under the picker */ }
+  };
+  const blank = () => {
+    const first = operands[0];
+    return { operand: first?.value || 'params.x', cmp: '==', value: first?.values?.[0] || 'yes' };
+  };
+  const setCase = (index, change) => apply(cases.map((c, i) => (i === index ? { ...c, ...change } : c)));
+  const outcomeSelect = (value, label, onChange) => html`<${Select} size="sm" aria-label=${label} value=${value} onChange=${(event) => onChange(event.currentTarget.value)}>
+    ${!outcomes.includes(value) && html`<option value=${value}>${value || 'pick one'}</option>`}
+    ${outcomes.map((outcome) => html`<option key=${outcome} value=${outcome}>${outcome}${loopBound(node, outcome) ? ' ↺' : ''}</option>`)}
+  <//>`;
+  const row = (index, rows, r, i) => {
+    const operand = operands.find((o) => o.value === r.operand);
+    const setRow = (change) => setCase(index, { when: fromRows(rows.map((other, j) => (j === i ? { ...other, ...change } : other))) });
+    return html`<div key=${i} class="gm-rule-row" data-mini-rule-row=${`${index}.${i}`}>
+      <span class="gm-rule-and">${i === 0 ? 'if' : 'and'}</span>
+      <${Select} size="sm" aria-label="What the rule reads" value=${r.operand} onChange=${(event) => {
+        const picked = operands.find((o) => o.value === event.currentTarget.value);
+        setRow({ operand: event.currentTarget.value, ...(picked?.values ? { value: picked.values[0], cmp: '==' } : {}) });
+      }}>
+        ${!operand && html`<option value=${r.operand}>${r.operand}</option>`}
+        ${operands.map((o) => html`<option key=${o.value} value=${o.value}>${o.label}</option>`)}
+      <//>
+      <${Select} size="sm" aria-label="How it compares" value=${r.cmp} onChange=${(event) => setRow({ cmp: event.currentTarget.value })}>
+        ${Object.entries(OP_WORDS).filter(([cmp]) => !operand?.values || cmp === '==' || cmp === '!=').map(([cmp, words]) => html`<option key=${cmp} value=${cmp}>${words}</option>`)}
+      <//>
+      ${operand?.values
+    ? html`<${Select} size="sm" aria-label="The value" value=${r.value} onChange=${(event) => setRow({ value: event.currentTarget.value })}>
+          ${!operand.values.includes(r.value) && html`<option value=${r.value}>${r.value}</option>`}
+          ${operand.values.map((value) => html`<option key=${value} value=${value}>${value}</option>`)}
+        <//>`
+    : html`<${TypedField} name="gm-rule-value" type="text" class="gm-rule-value" aria-label="The value" value=${r.value}
+          title="A value cannot hold both ' and \""
+          onChange=${(event) => { const value = event.currentTarget.value.trim(); setRow({ value: value && !(value.includes("'") && value.includes('"')) ? value : r.value }); }} />`}
+      ${i === 0 && html`<span class="gm-rule-arrow">→</span>${outcomeSelect(cases[index].then, `Case ${index + 1} picks`, (then) => setCase(index, { then }))}`}
+      ${(rows.length > 1 || cases.length > 1) && html`<${Button} size="sm" icon=${true} variant="ghost danger" aria-label=${rows.length > 1 ? 'Remove this condition' : 'Remove this case'}
+        onClick=${() => (rows.length > 1 ? setCase(index, { when: fromRows(rows.filter((_, j) => j !== i)) }) : apply(cases.filter((_, j) => j !== index)))}>✕<//>`}
+    </div>`;
+  };
+  return html`<div class="gm-field" data-mini-rule=${id}><span>Decides</span><div class="gm-rule">
+    ${cases.map((c, index) => {
+    const rows = toRows(c.when);
+    return html`<div key=${index} class="gm-rule-case" data-mini-rule-case=${index}>
+      ${rows
+    ? html`${rows.map((r, i) => row(index, rows, r, i))}
+          <${Button} size="sm" variant="link" class="gq-link" data-mini-rule-and=${index} onClick=${() => setCase(index, { when: fromRows([...rows, blank()]) })}>+ and<//>`
+    : html`<div class="gm-rule-row"><span class="gm-rule-and">if</span><code class="gm-rule-text" title="Uses or, not or parentheses: edit it in the full editor">${c.when}</code>
+          <span class="gm-rule-arrow">→</span>${outcomeSelect(c.then, `Case ${index + 1} picks`, (then) => setCase(index, { then }))}
+          ${cases.length > 1 && html`<${Button} size="sm" icon=${true} variant="ghost danger" aria-label="Remove this case" onClick=${() => apply(cases.filter((_, j) => j !== index))}>✕<//>`}</div>`}
+    </div>`;
+  })}
+    <${Button} size="sm" variant="link" class="gq-link" data-mini-rule-add onClick=${() => apply([...cases, { when: fromRows([blank()]), then: outcomes[0] }])}>+ another case<//>
+    <div class="gm-rule-row" data-mini-rule-else><span class="gm-rule-and">else</span><span class="gm-rule-arrow">→</span>${outcomeSelect(rule.else, 'Otherwise', (otherwise) => apply(cases, otherwise))}</div>
+    <div class="gm-rule-words" data-mini-rule-words>${ruleWords(rule, stepName)}</div>
+  </div></div>`;
+}
+
 function ExhaustionPicker({ view, id, outcome, value, onApply }) {
   const options = exhaustionOptions(view, id, outcome);
   return html`<label class="gm-exhausted" data-mini-exhausted=${outcome}><span class="gq-dim">then</span>
@@ -336,6 +407,7 @@ function Inspector({ view, id, roster, roles, fallbackInfo, onApply, onRename, o
     onApply(updateStep(view, id, (s) => setStepWho(s, who)));
   };
   const label = { agent: 'What', you: 'Asks', command: 'Runs', gate: 'Asks' }[kind];
+  const rule = kind === 'rule';
   const gate = kind === 'gate';
   const noMoreDeciders = node.type === 'decision' ? canAddDecider(view, id) : 'only a decision';
   const stepName = (stepID) => view.template.nodes[stepID]?.name || stepID;
@@ -352,11 +424,11 @@ function Inspector({ view, id, roster, roles, fallbackInfo, onApply, onRename, o
     onKeyDown=${(event) => { if (event.key === 'Escape') { event.stopPropagation(); onClose(); } }}>
     <label class="gm-field"><span>Step</span><${TypedField} name="groups-mini-editor-input" type="text" data-mini-name value=${node.name || ''} placeholder=${id}
       onChange=${(event) => onRename(event.currentTarget.value)} /></label>
-    <label class="gm-field"><span>${label}</span><${TypedField} as="textarea" name="groups-mini-editor-textarea" rows="3" data-mini-text value=${gate ? collapseParamShorthand(shared) : text}
+    ${!rule && html`<label class="gm-field"><span>${label}</span><${TypedField} as="textarea" name="groups-mini-editor-textarea" rows="3" data-mini-text value=${gate ? collapseParamShorthand(shared) : text}
       title=${gate ? "Every decider is asked this, unless its ▸ gives it its own ask" : undefined}
       onChange=${(event) => onApply(gate ? ((typed) => { shownAsk.current[id] = expandParamShorthand(typed); return setGateAsk(view, id, typed, shared); })(event.currentTarget.value)
-        : updateStep(view, id, (s) => setStepText(s, event.currentTarget.value)))} /></label>
-    ${readable.length > 0 && kind !== 'command' && html`<p class="gq-dim gm-readable" data-mini-readable>Can use: ${readable.map((name, i) => html`${i > 0 && ', '}<code key=${name}>${outputRef(name)}</code>`)}</p>`}
+        : updateStep(view, id, (s) => setStepText(s, event.currentTarget.value)))} /></label>`}
+    ${readable.length > 0 && kind !== 'command' && !rule && html`<p class="gq-dim gm-readable" data-mini-readable>Can use: ${readable.map((name, i) => html`${i > 0 && ', '}<code key=${name}>${outputRef(name)}</code>`)}</p>`}
     ${gate
     ? html`<${GateDeciders} view=${view} id=${id} shared=${shared} roster=${roster} roles=${roles} fallbackInfo=${fallbackInfo}
         noMoreDeciders=${noMoreDeciders} onApply=${onApply} />
@@ -366,12 +438,13 @@ function Inspector({ view, id, roster, roles, fallbackInfo, onApply, onRename, o
       <//></div>
       <p class="gq-dim">Otherwise the first decider, in this order, who chose something else decides; the work goes back with everyone's notes.</p>`
     : html`<div class="gm-field"><span>Who</span><${WhoPicker} step=${step} roster=${roster} roles=${roles} profiles=${fallbackInfo.profiles}
-      defaultSpawnProfile=${fallbackInfo.defaultSpawnProfile} onChange=${setWho} />
-      ${node.type === 'decision' && kind !== 'command' && html`<${Button} size="sm" variant="link" class="gq-link" data-mini-add-decider
+      defaultSpawnProfile=${fallbackInfo.defaultSpawnProfile} rule=${node.type === 'decision' && (kind === 'rule' || ruleOperands(view, id).length > 0)} onChange=${setWho} />
+      ${node.type === 'decision' && kind !== 'command' && !rule && html`<${Button} size="sm" variant="link" class="gq-link" data-mini-add-decider
         disabled=${!!noMoreDeciders} title=${noMoreDeciders || 'Several decide together: all must agree'}
         onClick=${() => onApply(addReviewer(view, id))}>+ another decider<//>`}</div>
       ${node.type === 'decision' && kind === 'agent' && html`<div class="gm-field" data-mini-decided-by=${id}><span>Decided by</span>
-        <span class="gq-dim">🤖 ${whoLine(node, fallbackInfo).replace(/^pick who$/, 'the agent you pick')} reports one outcome as its verdict. Nobody is asked.</span></div>`}`}
+        <span class="gq-dim">🤖 ${whoLine(node, fallbackInfo).replace(/^pick who$/, 'the agent you pick')} reports one outcome as its verdict. Nobody is asked.</span></div>`}
+      ${rule && html`<${RuleCases} view=${view} id=${id} onApply=${onApply} />`}`}
     ${others.length > 0 && html`<div class="gm-field" data-mini-constraint=${id}><span>Which agent</span><${Select} size="sm" aria-label="Which agent does this step"
       value=${constraint} onChange=${(event) => onApply(updateStep(view, id, (s) => setStepConstraint(s, constraintFromValue(event.currentTarget.value))))}>
       <option value="">whoever fits</option>
