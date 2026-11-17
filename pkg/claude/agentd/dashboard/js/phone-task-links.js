@@ -11,7 +11,7 @@ import { Card, Empty, ErrorNote, errorText, Section, StatePill } from './phone-u
 import { prOfRef, refKey, refKindName, refsOf } from './groups-taskboard-card.js';
 import { EpicProgress, childWhere, isEpic, progressParts } from './groups-taskboard-epics.js';
 import { prReviewDecisionText } from './pr-review-model.js';
-import { isGitLabMRURL } from './pr-checks-hover.js';
+import { incompleteChecksText, isGitLabMRURL } from './pr-checks-hover.js';
 import { prRef } from './pr-chain.js';
 import { ciState } from './phone-agents-model.js';
 import { taskStateLabel } from './phone-board-model.js';
@@ -24,8 +24,8 @@ const httpURL = (url) => (/^https?:\/\//i.test(url || '') ? url : '');
 
 // PR_TONE and CI_TONE colour a PR's state and its checks as StatePills.
 const PR_TONE = Object.freeze({ open: 'work', draft: 'idle', merged: 'ask', closed: 'off' });
-const CI_TONE = Object.freeze({ passing: 'work', failing: 'err', running: 'key' });
-const CI_MARK = Object.freeze({ passing: '✓', failing: '✗', running: '…' });
+const CI_TONE = Object.freeze({ passing: 'work', failing: 'err', running: 'key', incomplete: 'idle' });
+const CI_MARK = Object.freeze({ passing: '✓', failing: '✗', running: '…', incomplete: '?' });
 const REVIEW_WORD = Object.freeze({ approved: 'approved', changes_requested: 'changes requested', review_required: 'review required' });
 const REVIEW_TONE = Object.freeze({ approved: 'work', changes_requested: 'err', review_required: 'key' });
 
@@ -43,8 +43,8 @@ export function refRow(ref) {
       label: `${isGitLabMRURL(pr.url) ? 'MR' : 'PR'} ${prRef(pr) || ''}`.trim(),
       title: pr.title || '',
       state: pr.state || '', stateTone: PR_TONE[pr.state] || 'idle',
-      ci, ciText: ci ? `${CI_MARK[ci]} ${pr.checks?.total ? `${pr.checks.passed || 0}/${pr.checks.total}` : ci}` : '', ciTone: CI_TONE[ci] || 'idle',
-      ciTitle: ci ? `checks ${ci}` : '',
+      ci, ciText: ci ? `${CI_MARK[ci]} ${pr.checks?.total ? `${pr.checks.passed || 0}/${pr.checks.total}${pr.checks.incomplete ? '+' : ''}` : ci}` : '', ciTone: CI_TONE[ci] || 'idle',
+      ciTitle: incompleteChecksText(pr.checks) || (ci ? `checks ${ci}` : ''),
       review: REVIEW_WORD[decision] || '', reviewTone: REVIEW_TONE[decision] || 'idle',
       reviewTitle: decision ? prReviewDecisionText(decision, isGitLabMRURL(pr.url)) : '',
     };

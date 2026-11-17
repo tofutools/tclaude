@@ -979,6 +979,50 @@ func TestGHProxy_PRChecksFlattensTheRollup(t *testing.T) {
 	assert.Equal(t, "codecov/patch", out.JSON.Rollup[1].Context)
 }
 
+// TestGHProxy_PRChecksReadsPastTheFirstPage — GitHub pages contexts at 100,
+// so a pull request with more is read on by its head commit's oid, and the
+// whole list is flattened into one answer.
+func TestGHProxy_PRChecksReadsPastTheFirstPage(t *testing.T) {
+	f, _, gh := ghWorld(t, []string{"github.com/tofutools"})
+	nodes := func(prefix string, n int) string {
+		parts := make([]string, n)
+		for i := range parts {
+			parts[i] = fmt.Sprintf(`{"__typename":"CheckRun","name":"%s-%d","status":"COMPLETED","conclusion":"SUCCESS"}`, prefix, i)
+		}
+		return strings.Join(parts, ",")
+	}
+	gh.seq = []ghCanned{
+		{Status: 200, Body: `{"data":{"repository":{"pullRequest":{"number":42,"url":"https://x/42",
+			"commits":{"nodes":[{"commit":{"oid":"abc123","statusCheckRollup":{"contexts":{
+			"pageInfo":{"hasNextPage":true,"endCursor":"c1"},"nodes":[` + nodes("a", 100) + `]}}}}]}}}}}`},
+		{Status: 200, Body: `{"data":{"repository":{"object":{"statusCheckRollup":{"contexts":{
+			"pageInfo":{"hasNextPage":false,"endCursor":"c2"},"nodes":[` + nodes("b", 7) + `]}}}}}}`},
+	}
+	require.NoError(t, db.GrantAgentPermission(gitProxyTestConv, agentd.PermGitHubRead, "test"))
+
+	res := gitProxyPost(t, f, "/v1/github/pr/checks", map[string]any{"number": 42})
+	require.Equal(t, http.StatusOK, res.Code, "body=%s", res.Body.String())
+	var out struct {
+		JSON struct {
+			Rollup []struct {
+				Name string `json:"name"`
+			} `json:"statusCheckRollup"`
+		} `json:"json"`
+	}
+	require.NoError(t, json.Unmarshal(res.Body.Bytes(), &out))
+	require.Len(t, out.JSON.Rollup, 107)
+	assert.Equal(t, "b-6", out.JSON.Rollup[106].Name)
+
+	calls := gh.requests()
+	require.Len(t, calls, 2)
+	var page struct {
+		Variables map[string]any `json:"variables"`
+	}
+	require.NoError(t, json.Unmarshal(calls[1].Body, &page))
+	assert.Equal(t, "abc123", page.Variables["oid"])
+	assert.Equal(t, "c1", page.Variables["after"])
+}
+
 // TestGHProxy_PRChecksDistinguishesNoRollupFromAnEmptyOne — `null` means the
 // head commit has no rollup at all (nothing has reported yet); `[]` means it
 // has one with nothing in it. An agent waiting for CI acts on the difference.

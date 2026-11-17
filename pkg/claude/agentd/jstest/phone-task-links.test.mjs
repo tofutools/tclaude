@@ -32,6 +32,9 @@ test('a ref row says what the desktop chip says: PR state, CI and review; an iss
   const pr = m.refRow(PR);
   assert.deepEqual([pr.kind, pr.label, pr.title, pr.state, pr.ci, pr.ciText, pr.review], ['pr', 'PR #1482', 'Checkout: one-page flow', 'open', 'failing', '✗ 4/5', 'changes requested']);
   assert.equal(pr.reviewTitle, 'GitHub: changes requested');
+  const big = m.refRow({ ...PR, pr: { ...PR.pr, checks: { total: 400, passed: 400, state: 'pending', incomplete: true, read: 400, reported: 523 } } });
+  assert.deepEqual([big.ci, big.ciText, big.ciTone], ['incomplete', '? 400/400+', 'idle'], 'too many checks is no verdict');
+  assert.match(big.ciTitle, /read 400 of 523/);
   const issue = m.refRow(ISSUE);
   assert.deepEqual([issue.kind, issue.kindName, issue.label, issue.state, issue.stateTone, issue.title], ['issue', 'Linear', 'WEB-88', 'In Review', 'ask', 'Redesign the checkout']);
   const unlinked = m.refRow(UNLINKED);

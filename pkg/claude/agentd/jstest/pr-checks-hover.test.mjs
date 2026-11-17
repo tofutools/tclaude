@@ -208,6 +208,44 @@ test('the CI badge summarizes checks and opens a panel on hover', async (t) => {
     }
   });
 
+  await t.test('too many checks to read is its own badge, never red, and opens the checks page', async () => {
+    stubFetch(t, () => ({ summary: {}, checks: [], resolved: false }));
+    const mounted = await harness.mount(harness.html`
+      <${PRChecksBadge} url=${PR} prNumber=${2143}
+        summary=${{ total: 400, passed: 400, failed: 0, pending: 0, skipped: 0, state: 'pending',
+                    incomplete: true, read: 400, reported: 523,
+                    run_url: 'https://github.com/o/r/actions/runs/9' }} />
+    `);
+    try {
+      const badge = mounted.container.querySelector('a.ci-badge');
+      assert.ok(badge.className.includes('ci-incomplete'), `badge class = ${badge.className}`);
+      assert.ok(!badge.className.includes('ci-failing'));
+      assert.equal(badge.querySelector('.ci-glyph').textContent, '?');
+      assert.equal(badge.querySelector('.ci-count').textContent, '400/400+');
+      assert.equal(badge.getAttribute('href'), `${PR}/checks`);
+      assert.match(badge.getAttribute('aria-label'), /Too many checks: read 400 of 523, so this result is incomplete/);
+    } finally {
+      await mounted.unmount();
+    }
+  });
+
+  await t.test('a read check that failed stays red on an incomplete summary', async () => {
+    stubFetch(t, () => ({ summary: {}, checks: [], resolved: false }));
+    const mounted = await harness.mount(harness.html`
+      <${PRChecksBadge} url=${PR} prNumber=${2143}
+        summary=${{ total: 400, passed: 399, failed: 1, pending: 0, skipped: 0, state: 'failing',
+                    incomplete: true, read: 400, reported: 523 }} />
+    `);
+    try {
+      const badge = mounted.container.querySelector('a.ci-badge');
+      assert.ok(badge.className.includes('ci-failing'), `badge class = ${badge.className}`);
+      assert.equal(badge.querySelector('.ci-count').textContent, '399/400+');
+      assert.match(badge.getAttribute('aria-label'), /read 400 of 523/);
+    } finally {
+      await mounted.unmount();
+    }
+  });
+
   await t.test('a tapped panel stays until a press outside it', async () => {
     stubFetch(t, () => ({ summary: {}, checks: [], resolved: false }));
     const win = globalThis.window;

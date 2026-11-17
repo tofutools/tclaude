@@ -1223,6 +1223,9 @@ body:not(.show-final-pr-checks) .ci-hover.ci-final { display: none; }
 .ci-badge.ci-passing { color: #3fb950; border-color: rgba(63, 185, 80, 0.35); }
 .ci-badge.ci-failing { color: #f85149; border-color: rgba(248, 81, 73, 0.4); }
 .ci-badge.ci-pending { color: #d29922; border-color: rgba(210, 153, 34, 0.4); }
+/* Too many checks to read: no verdict, so neither red nor green. The dashed
+   border marks the count as partial. */
+.ci-badge.ci-incomplete { color: #79c0ff; border-color: rgba(121, 192, 255, 0.45); border-style: dashed; }
 /* Review pill: a person icon (plus a count for approvals or change
    requests) coloured by review state. Borderless so it reads as people, not
    as a second CI pill; the border returns on hover/focus like the CI pill's. */
@@ -1304,6 +1307,7 @@ body.wizard .ci-badge { background: #241b3d; border-color: #3a2a63; color: #9a86
 body.wizard .ci-badge.ci-passing { color: #7ee08a; border-color: rgba(126, 224, 138, 0.35); }
 body.wizard .ci-badge.ci-failing { color: #ff8a8a; border-color: rgba(255, 138, 138, 0.4); }
 body.wizard .ci-badge.ci-pending { color: #e8c15a; border-color: rgba(232, 193, 90, 0.45); }
+body.wizard .ci-badge.ci-incomplete { color: #9fc8ff; border-color: rgba(159, 200, 255, 0.45); }
 body.wizard .rv-badge.rv-approved { color: #7ee08a; }
 body.wizard .rv-badge.rv-changes { color: #ff8a8a; }
 body.wizard .rv-badge.rv-required { color: #e8c15a; }

@@ -83,9 +83,8 @@ query PRView($owner: String!, $name: String!, $number: Int!) {
 // force-push takes a run out of this listing while `run ls --branch` still
 // shows it.
 //
-// contexts(first: 100) is not paginated onward. A pull request with more than
-// a hundred check contexts is not one an agent reads a rollup of; the run verbs
-// are the tool for that repository.
+// contexts(first: 100) is GitHub's page limit; the handler reads the further
+// pages with ghPRChecksPageQuery, up to prChecksMaxRuns contexts in all.
 const ghPRChecksQuery = `
 query PRChecks($owner: String!, $name: String!, $number: Int!) {
   repository(owner: $owner, name: $name) {
@@ -94,18 +93,10 @@ query PRChecks($owner: String!, $name: String!, $number: Int!) {
       commits(last: 1) {
         nodes {
           commit {
+            oid
             statusCheckRollup {
               contexts(first: 100) {
-                nodes {
-                  __typename
-                  ... on CheckRun {
-                    name status conclusion startedAt completedAt detailsUrl
-                    checkSuite { workflowRun { workflow { name } } }
-                  }
-                  ... on StatusContext {
-                    context state targetUrl createdAt description
-                  }
-                }
+                ` + ghCheckContextsSelection + `
               }
             }
           }
@@ -114,6 +105,36 @@ query PRChecks($owner: String!, $name: String!, $number: Int!) {
     }
   }
 }`
+
+// ghPRChecksPageQuery reads one further page of the head commit's contexts.
+// It addresses the commit by oid, so a push landing mid-read cannot mix two
+// commits' checks into one answer.
+const ghPRChecksPageQuery = `
+query PRChecksPage($owner: String!, $name: String!, $oid: GitObjectID!, $after: String!) {
+  repository(owner: $owner, name: $name) {
+    object(oid: $oid) {
+      ... on Commit {
+        statusCheckRollup {
+          contexts(first: 100, after: $after) {
+            ` + ghCheckContextsSelection + `
+          }
+        }
+      }
+    }
+  }
+}`
+
+const ghCheckContextsSelection = `pageInfo { hasNextPage endCursor }
+                nodes {
+                  __typename
+                  ... on CheckRun {
+                    name status conclusion startedAt completedAt detailsUrl
+                    checkSuite { workflowRun { event workflow { name } } }
+                  }
+                  ... on StatusContext {
+                    context state targetUrl createdAt description
+                  }
+                }`
 
 const ghIssueListQuery = `
 query IssueList($owner: String!, $name: String!, $limit: Int!, $states: [IssueState!]) {
@@ -259,14 +280,22 @@ type ghGQLPullRequest struct {
 	Commits        struct {
 		Nodes []struct {
 			Commit struct {
-				StatusCheckRollup *struct {
-					Contexts struct {
-						Nodes []ghGQLCheckContext `json:"nodes"`
-					} `json:"contexts"`
-				} `json:"statusCheckRollup"`
+				OID               string                  `json:"oid"`
+				StatusCheckRollup *ghGQLStatusCheckRollup `json:"statusCheckRollup"`
 			} `json:"commit"`
 		} `json:"nodes"`
 	} `json:"commits"`
+}
+
+// ghGQLStatusCheckRollup is one page of a commit's check contexts.
+type ghGQLStatusCheckRollup struct {
+	Contexts struct {
+		PageInfo struct {
+			HasNextPage bool   `json:"hasNextPage"`
+			EndCursor   string `json:"endCursor"`
+		} `json:"pageInfo"`
+		Nodes []ghGQLCheckContext `json:"nodes"`
+	} `json:"contexts"`
 }
 
 // ghGQLCheckContext is one entry of a status-check rollup. The union carries

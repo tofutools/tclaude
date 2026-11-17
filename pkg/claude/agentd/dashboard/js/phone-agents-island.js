@@ -56,10 +56,10 @@ function Pill({ row }) {
   return html`<${StatePill} tone=${row.pill.tone} class="phone-agent-state">${row.pill.text}<//>`;
 }
 
-const CI_MARK = Object.freeze({ passing: '✓', failing: '✗', running: '…' });
+const CI_MARK = Object.freeze({ passing: '✓', failing: '✗', running: '…', incomplete: '?' });
 
 function PRLabel({ pr }) {
-  return html`<span class=${`phone-agent-pr${pr.ci ? ` ci-${pr.ci}` : ''}`}>PR #${pr.number}${pr.ci ? ` ${CI_MARK[pr.ci]}` : ''}</span>`;
+  return html`<span class=${`phone-agent-pr${pr.ci ? ` ci-${pr.ci}` : ''}`} title=${pr.ciNote || undefined}>PR #${pr.number}${pr.ci ? ` ${CI_MARK[pr.ci]}` : ''}</span>`;
 }
 
 // MetaLine is a row's second line (phone-agents-model.js metaParts). A
