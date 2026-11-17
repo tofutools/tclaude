@@ -79,6 +79,25 @@ function cases() {
     'kind-decision-command': fill(m.changeKind(fill(m.insertAfter(ship, 'implement', 'decide')), 'decision', 'command')),
     'kind-decision-you': m.changeKind(fill(m.insertAfter(ship, 'implement', 'decide')), 'decision', 'you').view,
     'loop-approve-rounds': m.setLoopRounds(ship, 'approve', 'changes', 4).view,
+    ...trackCases(),
+  };
+}
+
+// trackCases add reviewer tracks after implement: one, two alongside each
+// other, a third from the second's ⫴, a plain step as a track, and a track
+// that asks you once its rounds run out.
+function trackCases() {
+  const one = m.addReviewerTrack(ship, 'implement');
+  const two = m.addReviewerTrack(one.view, 'implement');
+  return {
+    'reviewer-track-one': one.view,
+    'reviewer-tracks-two': two.view,
+    'reviewer-tracks-three': m.runAlongside(two.view, two.id, m.REVIEWER_TRACK).view,
+    'reviewer-tracks-plain-track': fill(m.runAlongside(two.view, two.id, 'agent')),
+    'reviewer-track-ask-me': m.setExhaustion(two.view, two.id, 'changes', m.ASK_YOU).view,
+    'reviewer-track-ask-me-left': m.setExhaustion(m.setExhaustion(two.view, two.id, 'changes', m.ASK_YOU).view, two.id, 'changes', m.FAIL_RUN).view,
+    'reviewer-track-ask-me-then-two': m.addReviewerTrack(m.setExhaustion(one.view, one.id, 'changes', m.ASK_YOU).view, 'implement').view,
+    'reviewer-track-fix-deleted': m.deleteStep(two.view, m.reviewLoop(two.view, two.id).fix).view,
   };
 }
 
@@ -362,7 +381,12 @@ test('a loop keeps a way on, and its body only leaves through a decision', () =>
 test('alongside is offered only where the fork can close or widen; joins move with the paths that meet', () => {
   assert.match(m.canRunAlongside(ship, 'approve'), /other outcomes/, 'its other answers would leave the branch');
   const fork = fill(m.runAlongside(ship, 'review', 'agent'));
-  assert.equal(m.canRunAlongside(fork, 'review'), '', 'a one-step branch of a fork widens that fork');
+  assert.equal(m.canRunAlongside(fork, 'review'), '', 'a track of a fork gets another track on the same fork');
+  const third = m.runAlongside(fork, 'review', 'agent');
+  const forks = (v) => Object.values(v.template.nodes).filter((n) => n.type === 'parallel').length;
+  assert.equal(forks(third.view), 1, 'no second fork');
+  assert.equal(third.fork, Object.keys(fork.template.nodes).find((id) => fork.template.nodes[id].type === 'parallel'));
+  assert.ok(third.view.edges.some((e) => e.from === third.id && e.to === 'approve'), 'it joins where the others do');
   const longer = m.insertAfter(fork, 'review', 'agent');
   assert.match(m.canRunAlongside(longer.view, longer.id), /several paths meet/, 'the last step of a longer branch cannot fork again at its join');
   const before = m.insertBefore(fork, 'approve', 'agent');
@@ -462,7 +486,7 @@ test('a used-up gate loop never goes on through what all must choose: it gives u
   assert.equal(gate.loops.changes.onExhausted, m.GIVE_UP);
   const end = view.template.nodes[edge(view, 'approve', m.GIVE_UP)];
   assert.deepEqual([end.type, end.result], ['end', 'failed']);
-  assert.deepEqual(m.exhaustionOptions(view, 'approve', 'changes').map((o) => o.label), ['fail the run']);
+  assert.deepEqual(m.exhaustionOptions(view, 'approve', 'changes').map((o) => o.label), ['fail the run', 'ask me']);
   assert.match(m.canRemoveOutcome(view, 'approve', m.GIVE_UP), /runs out of rounds/, 'its way out stays while it is chosen');
   const loop = m.draftProjection(view).edges.find((e) => e.from === 'approve' && e.outcome === undefined && e.back);
   assert.equal(loop?.exhausted, 'fail', 'the loop edge says where it goes');
@@ -524,17 +548,17 @@ test('an agent decision the operator did not touch keeps its behaviour through o
   assert.equal(edge(view, 'approve', m.GIVE_UP), undefined, 'no give-up appears');
 });
 
-test('inside a parallel branch no end is added: the server refuses an end there', () => {
+test('inside a parallel branch "fail the run" is offered: a failed end there ends the run', () => {
   // A decision on one branch of review ⫴ new step, looping back to review.
   let { view } = m.runAlongside(ship, 'review', 'agent');
   const branch = Object.keys(view.template.nodes).find((id) => !ship.template.nodes[id] && view.template.nodes[id].type !== 'parallel');
   ({ view } = m.changeKind(view, branch, 'you'));
   assert.ok(m.inParallelBranch(view, branch));
   assert.ok(!m.inParallelBranch(view, 'implement'));
-  assert.ok(!m.exhaustionOptions(view, branch, 'continue').some((o) => o.value === m.FAIL_RUN));
+  assert.ok(m.exhaustionOptions(view, branch, 'continue').some((o) => o.value === m.FAIL_RUN));
 });
 
-test('a gate inside a parallel branch keeps its way out on the branch', () => {
+test('a gate inside a parallel branch gives up into a failed end, never its agree', () => {
   const fan = steps['plan-fan-out-merge'];
   const part = Object.keys(fan.template.nodes).find((id) => /part/.test(id));
   let { view, id } = m.insertAfter(fan, part, 'you');
@@ -542,12 +566,90 @@ test('a gate inside a parallel branch keeps its way out on the branch', () => {
   const redo = m.outcomesOf(view, id).map((o) => o.outcome).find((o) => o !== 'continue');
   ({ view } = m.setOutcomeTarget(view, id, redo, part));
   assert.ok(m.inParallelBranch(view, id), 'the fixture: a decision on a branch');
-  const ends = (v) => Object.values(v.template.nodes).filter((n) => n.type === 'end').length;
-  const before = ends(view);
   ({ view } = m.addDecider(view, id, { mode: 'anyone' }));
-  assert.equal(ends(view), before, 'no end added inside the fork');
-  const way = view.template.nodes[id].loops[redo].onExhausted;
-  assert.ok(m.outcomesOf(view, id).some((o) => o.outcome === way), 'it goes along an existing outcome');
-  ({ view } = m.setDecisionWho(m.removeDecider(view, id, 0).view, id, { mode: 'anyone' }));
-  assert.equal(ends(view), before);
+  const node = view.template.nodes[id];
+  const way = node.loops[redo].onExhausted;
+  assert.notEqual(way, node.agree);
+  const to = view.edges.find((e) => e.from === id && e.outcome === way).to;
+  assert.equal(view.template.nodes[to].result, 'failed', 'a used-up gate fails the run');
+});
+
+test('a reviewer track reviews a step\'s work in a loop that starts at the review', () => {
+  const { view, id } = m.addReviewerTrack(ship, 'implement');
+  const loop = m.reviewLoop(view, id);
+  assert.equal(loop.outcome, 'changes');
+  assert.equal(edge(view, 'implement', 'next'), id, 'the review comes right after the work');
+  assert.equal(edge(view, id, 'approved'), 'review', 'approved goes on to what came next');
+  assert.equal(edge(view, loop.fix, 'next'), id, 'the fix goes back to the review');
+  assert.equal(view.template.nodes[loop.fix].performer.sameAs, 'implement', 'fixes go to the implementer');
+  const bound = view.template.nodes[id].loops.changes;
+  assert.equal(view.template.nodes[edge(view, id, bound.onExhausted)].result, 'failed', 'a used-up track fails the run');
+});
+
+test('a second reviewer track runs alongside the first; a third joins the same fork', () => {
+  const one = m.addReviewerTrack(ship, 'implement');
+  const two = m.addReviewerTrack(one.view, 'implement');
+  const fork = edge(two.view, 'implement', 'next');
+  assert.equal(two.view.template.nodes[fork].type, 'parallel');
+  assert.deepEqual(two.view.edges.filter((e) => e.from === fork).map((e) => e.to).sort(), [one.id, two.id].sort());
+  assert.equal(two.view.template.nodes.review.join, 'all', 'both tracks join where the review led on');
+  assert.equal(m.canAddReviewerTrack(two.view, two.id), '');
+  const three = m.runAlongside(two.view, two.id, m.REVIEWER_TRACK);
+  assert.equal(edge(three.view, 'implement', 'next'), fork, 'no second fork');
+  assert.equal(three.view.edges.filter((e) => e.from === fork).length, 3);
+  assert.equal(edge(three.view, three.id, 'approved'), 'review');
+  assert.match(three.view.template.nodes[three.id].name, /Review 3/);
+});
+
+test('a used-up agent track can ask you: count it as approved, or fail the run', () => {
+  const two = m.addReviewerTrack(m.addReviewerTrack(ship, 'implement').view, 'implement');
+  const options = m.exhaustionOptions(two.view, two.id, 'changes');
+  assert.deepEqual(options.map((o) => o.label), ['fail the run', 'ask me']);
+  const { view } = m.setExhaustion(two.view, two.id, 'changes', m.ASK_YOU);
+  const way = view.template.nodes[two.id].loops.changes.onExhausted;
+  const ask = edge(view, two.id, way);
+  assert.equal(view.template.nodes[ask].performer.kind, 'human');
+  assert.equal(edge(view, ask, 'count as approved'), 'review', 'counted as approved, it joins the others');
+  assert.equal(view.template.nodes[edge(view, ask, 'fail the run')].result, 'failed');
+  assert.equal(m.mainEdge(view, two.id).outcome, 'approved', 'asking you is not the review\'s way on');
+  assert.deepEqual(m.exhaustionOptions(view, two.id, 'changes').map((o) => [o.label, o.value === way]),
+    [['fail the run', false], ['ask me', true]]);
+});
+
+const outs = (view, id) => view.edges.filter((e) => e.from === id);
+
+test('leaving "ask me" removes its step; choosing it again adds one', () => {
+  const two = m.addReviewerTrack(m.addReviewerTrack(ship, 'implement').view, 'implement');
+  const asked = m.setExhaustion(two.view, two.id, 'changes', m.ASK_YOU).view;
+  const failing = m.setExhaustion(asked, two.id, 'changes', m.FAIL_RUN).view;
+  assert.deepEqual(outs(failing, two.id).map((e) => e.outcome).sort(), ['approved', 'changes', 'give-up'], 'no ask-you outcome is left');
+  const humans = (view) => Object.values(view.template.nodes).filter((node) => node.performer?.kind === 'human').length;
+  assert.equal(humans(failing), humans(two.view), 'the ask step is gone');
+  assert.deepEqual(m.exhaustionOptions(failing, two.id, 'changes').map((o) => o.label), ['fail the run', 'ask me']);
+  assert.equal(m.canRunAlongside(failing, two.id), '');
+  const again = m.setExhaustion(failing, two.id, 'changes', m.ASK_YOU).view;
+  assert.equal(humans(again), humans(two.view) + 1, 'one ask step');
+});
+
+test('a second reviewer track can follow "ask me" on the first', () => {
+  const one = m.addReviewerTrack(ship, 'implement');
+  const asked = m.setExhaustion(one.view, one.id, 'changes', m.ASK_YOU).view;
+  assert.equal(m.canAddReviewerTrack(asked, 'implement'), '');
+  const two = m.addReviewerTrack(asked, 'implement');
+  assert.equal(two.view.template.nodes[m.mainEdge(two.view, one.id).to].join, 'all');
+});
+
+test('deleting a track\'s fix drops its review\'s loop too', () => {
+  const one = m.addReviewerTrack(ship, 'implement');
+  const fix = m.reviewLoop(one.view, one.id).fix;
+  const { view } = m.deleteStep(one.view, fix);
+  assert.ok(!outs(view, one.id).some((e) => e.to === one.id), 'the review does not loop onto itself');
+  assert.ok(!outs(view, one.id).some((e) => e.outcome === 'changes'));
+});
+
+test('alongside on a lone review adds a second reviewer track', () => {
+  const one = m.addReviewerTrack(ship, 'implement');
+  assert.equal(m.canRunAlongside(one.view, one.id), '');
+  const two = m.runAlongside(one.view, one.id, 'agent');
+  assert.equal(Object.keys(two.view.template.nodes).filter((id) => m.reviewLoop(two.view, id)).length, 2);
 });

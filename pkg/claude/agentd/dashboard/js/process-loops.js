@@ -91,7 +91,35 @@ function backEdges(nodes, edges) {
       }
     }
   }
+  // A cycle closed into a decision by a step that is not one is a loop that
+  // starts at that decision (review -> fix -> review): the decision's edge
+  // into the cycle is the one that goes back, as the server bounds it.
+  for (const edge of [...back]) {
+    if (nodes[edge.from]?.type === 'decision' || nodes[edge.to]?.type !== 'decision') continue;
+    const forward = edges.filter((candidate) => candidate.from && !back.has(candidate));
+    const into = (out.get(edge.to) || []).find((candidate) => candidate !== edge && candidate.to !== edge.to
+      && walk(forward, candidate.to).has(edge.from));
+    if (!into) continue;
+    back.delete(edge);
+    back.add(into);
+  }
   return back;
+}
+
+// walk is every node reachable from start along edges.
+function walk(edges, start) {
+  const seen = new Set([start]);
+  const stack = [start];
+  while (stack.length) {
+    const id = stack.pop();
+    for (const edge of edges) {
+      if (edge.from === id && !seen.has(edge.to)) {
+        seen.add(edge.to);
+        stack.push(edge.to);
+      }
+    }
+  }
+  return seen;
 }
 
 // reachableFrom is every node reachable from start along unbounded edges,

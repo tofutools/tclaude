@@ -386,6 +386,62 @@ export function loopLabel(edge, known = new Map()) {
   return (base ? `${base} · ${bound}` : bound) + then;
 }
 
+// joinWaiting is, for each join of a run that some tracks have reached and
+// others not yet, the names of the steps it still waits on: a node not yet
+// started with an edge into it that arrived and one still open. Runs only:
+// a template's edges carry no state.
+export function joinWaiting(run) {
+  const nodes = new Map((run?.nodes || []).map((node) => [String(node.id), node]));
+  const into = new Map();
+  for (const edge of run?.edges || []) {
+    if (!edge?.state || edge.back === true) continue;
+    const to = String(edge.to);
+    if (!into.has(to)) into.set(to, []);
+    into.get(to).push(edge);
+  }
+  const out = new Map();
+  for (const [id, edges] of into) {
+    if (nodes.get(id)?.state !== 'pending' || !edges.some((edge) => edge.state === 'arrived')) continue;
+    const open = new Set(edges.filter((edge) => edge.state === 'unresolved').map((edge) => String(edge.from)));
+    // A step reached only from another one still open (a track's "ask me"
+    // after its review) is that track: name the track once.
+    const enteredFrom = (id) => (run.edges || []).filter((edge) => String(edge.to) === id).map((edge) => String(edge.from));
+    for (const from of [...open]) {
+      const sources = enteredFrom(from);
+      if (sources.length && sources.every((source) => open.has(source) && source !== from)) open.delete(from);
+    }
+    const names = [...open].map((from) => nodes.get(from)?.label || from);
+    if (names.length) out.set(id, names);
+  }
+  return out;
+}
+
+// decisionFirstRanking is, per edge, whether the layout ranks it as going
+// back. A loop that starts at its decision (review ↺ fix) reaches its fix
+// only through the loop's edge, so ranked that way the fix would sit before
+// the start: there the loop's edge ranks forward, and the fix's edges back
+// into the review go back instead.
+function decisionFirstRanking(edges) {
+  const back = edges.map((edge) => edge.back);
+  edges.forEach((loop, index) => {
+    if (!loop.loop) return;
+    const enters = edges.filter((edge) => edge.to === loop.to && !edge.back);
+    if (enters.length) return;
+    // The fix chain: forward from the loop's target, until the decision.
+    const chain = new Set([loop.to]);
+    const stack = [loop.to];
+    while (stack.length) {
+      const at = stack.pop();
+      for (const edge of edges) {
+        if (edge.from === at && !edge.back && edge.to !== loop.from && !chain.has(edge.to)) { chain.add(edge.to); stack.push(edge.to); }
+      }
+    }
+    back[index] = false;
+    edges.forEach((edge, i) => { if (edge.to === loop.from && chain.has(edge.from)) back[i] = true; });
+  });
+  return back;
+}
+
 // nodeRound is a loop body node's round ("2/3"), or '' outside loops.
 export function nodeRound(node) {
   const round = Number(node?.round) || 0;
@@ -406,11 +462,12 @@ export function miniGraphLayout(run, { compact = false } = {}) {
     ? { ...edge, back: true, loop: true, label: loopLabel(edge, known) } : edge));
   if (!nodes.length) return { width: 0, height: 0, nodes: [], edges: [] };
   const sizes = new Map(nodes.map((node) => [node.id, miniNodeSize(node, scale)]));
+  const rankBack = decisionFirstRanking(edges);
   let laid;
   try {
     laid = layoutProcessGraph({
       nodes: nodes.map((node) => ({ id: node.id, type: node.kind })),
-      edges: edges.map((edge) => ({ from: edge.from, to: edge.to, back: edge.back })),
+      edges: edges.map((edge, index) => ({ from: edge.from, to: edge.to, back: rankBack[index] })),
     }, {
       marginX: scale.margin,
       marginY: scale.margin,
@@ -455,7 +512,7 @@ export function miniGraphLayout(run, { compact = false } = {}) {
   // sits on top of the nodes it joins: widen just that gap by pushing
   // everything from the target's rank rightwards.
   const labelled = edges
-    .filter((edge) => !edge.back && String(edge.label || edge.outcome || ''))
+    .filter((edge, index) => !rankBack[index] && String(edge.label || edge.outcome || ''))
     .map((edge) => ({ edge, from: position.get(edge.from), to: position.get(edge.to) }))
     .filter(({ from, to }) => from && to && to.x > from.x)
     .sort((a, b) => a.to.x - b.to.x);
@@ -482,7 +539,7 @@ export function miniGraphLayout(run, { compact = false } = {}) {
     const b = byID.get(edge.to);
     const state = edgeVisualState(a, b);
     const label = String(edge.label || edge.outcome || '');
-    if (edge.back || b.x <= a.x) {
+    if (rankBack[index] || b.x <= a.x) {
       const lane = backLaneY + backLanes * 10;
       backLanes += 1;
       const y1 = a.y + a.height / 2;
@@ -498,7 +555,7 @@ export function miniGraphLayout(run, { compact = false } = {}) {
       const middle = points[Math.floor((points.length - 1) / 2)];
       const next = points[Math.floor((points.length - 1) / 2) + 1] || middle;
       return {
-        key: `${edge.from}->${edge.to}#${index}`, from: edge.from, to: edge.to, back: false, state, label,
+        key: `${edge.from}->${edge.to}#${index}`, from: edge.from, to: edge.to, back: false, loop: !!edge.loop, state, label,
         path: points.map((point, i) => `${i ? 'L' : 'M'}${point.x},${point.y}`).join(' '),
         labelX: (middle.x + next.x) / 2, labelY: (middle.y + next.y) / 2,
       };
@@ -507,7 +564,7 @@ export function miniGraphLayout(run, { compact = false } = {}) {
     const x2 = b.x - b.width / 2 - 3;
     const mid = (x1 + x2) / 2;
     return {
-      key: `${edge.from}->${edge.to}#${index}`, from: edge.from, to: edge.to, back: false, state, label,
+      key: `${edge.from}->${edge.to}#${index}`, from: edge.from, to: edge.to, back: false, loop: !!edge.loop, state, label,
       path: `M${x1},${a.y} C${mid},${a.y} ${mid},${b.y} ${x2},${b.y}`,
       labelX: mid, labelY: (a.y + b.y) / 2,
     };
@@ -660,6 +717,7 @@ export function ProcessMiniGraph({
   const prefix = `pk-ah-${useId().replace(/[^A-Za-z0-9_-]/g, '_')}`;
   const layout = miniGraphLayout(run, { compact });
   if (!layout.nodes.length) return html`<div class="pk-mini-graph empty">no nodes</div>`;
+  const waiting = joinWaiting(run);
   const nodes = layout.nodes.map((node) => {
     const here = performerId && performs(node, performerId);
     const selected = selectedId !== '' && node.id === String(selectedId);
@@ -667,11 +725,14 @@ export function ProcessMiniGraph({
     const cls = `pk-gnode pk-state-${node.state} pk-kind-${node.kind}${isTerminalKind(node.kind) ? ' terminal' : ''}${here ? ' here' : ''}${selected ? ' selected' : ''}${problem ? ' problem' : ''}`;
     const style = `left:${node.x}px;top:${node.y}px;width:${node.width}px;height:${node.height}px`;
     const round = nodeRound(node);
-    const title = `${node.label} · ${kindLabel(node.kind, wizard)} · ${stateLabel(node.state)}${round ? ` · round ${round.replace('/', ' of ')}` : ''}${node.sub ? ` · ${node.sub}` : ''}${node.caption ? ` · ${node.caption}` : ''}${Number(node.retries) > 0 ? ` · retries ${node.retries}× if it fails, then waits for you` : ''}${problem ? ' · has a problem' : ''}`;
+    const title = `${node.label} · ${kindLabel(node.kind, wizard)} · ${stateLabel(node.state)}${round ? ` · round ${round.replace('/', ' of ')}` : ''}${node.sub ? ` · ${node.sub}` : ''}${node.caption ? ` · ${node.caption}` : ''}${Number(node.retries) > 0 ? ` · retries ${node.retries}× if it fails, then waits for you` : ''}${waiting.has(node.id) ? ` · waiting for ${waiting.get(node.id).join(', ')}` : ''}${problem ? ' · has a problem' : ''}`;
     // The round badge marks the loop body's active node; the others say
     // their round in the tooltip.
+    // A join some tracks reached says which it still waits for.
+    const waits = waiting.get(node.id);
     const badge = round && (node.state === 'running' || node.state === 'waiting')
-      ? html`<span class="pk-round" data-process-round=${round} aria-hidden="true">↺ ${round}</span>` : null;
+      ? html`<span class="pk-round" data-process-round=${round} aria-hidden="true">↺ ${round}</span>`
+      : waits ? html`<span class="pk-round pk-join-wait" data-process-join-waiting=${waits.join(', ')} aria-hidden="true">⧗ waiting for ${waits.join(', ')}</span>` : null;
     // ↻N, after the name: an editor's step that retries N times if it fails,
     // then waits. Not on an edge, where the editor's handles sit.
     const retries = Number(node.retries) || 0;

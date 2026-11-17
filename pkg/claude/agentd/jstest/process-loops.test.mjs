@@ -79,3 +79,20 @@ test('with two decisions on one cycle, only the edge closing it from the start g
     assert.deepEqual(cycleFixEdge(graph, cycle, id), { from: 'zcheck', outcome: 'redo' });
   }
 });
+
+test('a loop that starts at its decision goes back from the decision, not the step', () => {
+  const graph = { implement: { type: 'task' }, review: { type: 'decision' }, fix: { type: 'task' }, done: { type: 'end' } };
+  const reviewFirst = [
+    { from: '', outcome: 'start', to: 'implement' },
+    { from: 'implement', outcome: 'next', to: 'review' },
+    { from: 'review', outcome: 'approved', to: 'done' },
+    { from: 'review', outcome: 'changes', to: 'fix' },
+    { from: 'fix', outcome: 'next', to: 'review' },
+  ];
+  assert.equal(edgeGoesBack(graph, reviewFirst, 'review', 'changes'), true);
+  assert.equal(edgeGoesBack(graph, reviewFirst, 'fix', 'next'), false);
+  assert.equal(loopableEdge(graph, reviewFirst, 'review', 'changes'), true);
+  setLoopBound(graph.review, 'changes', { maxIterations: 3 });
+  assert.equal(edgeGoesBack(graph, reviewFirst, 'review', 'changes'), true, 'bounded, it still goes back');
+  assert.equal(edgeGoesBack(graph, reviewFirst, 'fix', 'next'), false);
+});
