@@ -298,11 +298,29 @@ type statusCheckRollupNode struct {
 	// open-PR search); `gh pr view` flattens it into WorkflowName instead.
 	CheckSuite *struct {
 		WorkflowRun *struct {
+			Event    string `json:"event"`
 			Workflow struct {
 				Name string `json:"name"`
 			} `json:"workflow"`
 		} `json:"workflowRun"`
 	} `json:"checkSuite"`
+}
+
+// checkIdentity is what makes two check runs the same check: its name, its
+// workflow, and the event that triggered the workflow, as `gh pr checks`
+// keys them. A workflow on both push and pull_request runs every job twice
+// per commit, and those are two checks, not a run and its re-run. `gh pr
+// view`'s flat array carries no event; there the workflow run id from the
+// details URL stands in for it, since a re-run keeps its run's id.
+func (n statusCheckRollupNode) checkIdentity() string {
+	trigger := ""
+	if n.CheckSuite != nil && n.CheckSuite.WorkflowRun != nil {
+		trigger = n.CheckSuite.WorkflowRun.Event
+	}
+	if trigger == "" {
+		trigger = githubRunSummaryURL(n.DetailsURL)
+	}
+	return n.Name + "\x00" + n.workflowName() + "\x00" + trigger
 }
 
 func (n statusCheckRollupNode) workflowName() string {
@@ -324,7 +342,7 @@ func (n statusCheckRollupNode) isStatusContext() bool {
 // for it, so a job that was cancelled and re-run appears twice under one
 // name: counting both reports a cancellation that a newer run superseded (and
 // GitHub's own rollup state does exactly that, which is why it is not
-// trusted). A check is its name within its workflow; the newer run is the one
+// trusted). A check is its name, workflow and trigger (checkIdentity); the newer run is the one
 // that started later, a queued run that has not started counting as newest.
 // The kept run takes the slot of the first one seen, so order stays stable.
 // Commit statuses need no pass: GitHub already reports one per context.
@@ -336,7 +354,7 @@ func latestRollupNodes(nodes []statusCheckRollupNode) []statusCheckRollupNode {
 			out = append(out, n)
 			continue
 		}
-		key := n.Name + "\x00" + n.workflowName()
+		key := n.checkIdentity()
 		if i, seen := slot[key]; seen {
 			if !rollupRunOlder(n, out[i]) {
 				out[i] = n

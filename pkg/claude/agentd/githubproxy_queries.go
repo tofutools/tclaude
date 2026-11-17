@@ -129,7 +129,7 @@ const ghCheckContextsSelection = `pageInfo { hasNextPage endCursor }
                   __typename
                   ... on CheckRun {
                     name status conclusion startedAt completedAt detailsUrl
-                    checkSuite { workflowRun { workflow { name } } }
+                    checkSuite { workflowRun { event workflow { name } } }
                   }
                   ... on StatusContext {
                     context state targetUrl createdAt description

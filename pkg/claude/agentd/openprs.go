@@ -62,12 +62,12 @@ const authoredOpenPRSearchFragment = `  search(query:$q,type:ISSUE,first:$first)
   }`
 
 // rollupContextSelection is one status-check context, shared by the search
-// and the follow-up page read so the two cannot drift. The workflow name is
-// part of a check's identity (see latestRollupNodes); it is a nested object,
+// and the follow-up page read so the two cannot drift. The workflow name and
+// event are part of a check's identity (see latestRollupNodes); they are a nested object,
 // not a connection, so it adds nothing to the query's cost.
 const rollupContextSelection = `
           __typename
-          ... on CheckRun{name status conclusion detailsUrl startedAt completedAt checkSuite{workflowRun{workflow{name}}}}
+          ... on CheckRun{name status conclusion detailsUrl startedAt completedAt checkSuite{workflowRun{event workflow{name}}}}
           ... on StatusContext{context state targetUrl description createdAt}
         `
 

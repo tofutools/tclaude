@@ -188,3 +188,34 @@ func TestParseStatusCheckRollupPastTheCapIsIncomplete(t *testing.T) {
 	assert.Equal(t, "pending", info.Summary.State)
 	assert.Equal(t, prChecksMaxRuns+5, info.Summary.Reported)
 }
+
+// TestParseStatusCheckRollupKeepsEachTriggerOfAJob: a workflow on both push and
+// pull_request runs each job twice per commit. Those are two checks, so a
+// failed push run must not be hidden by a later green pull_request run. With
+// no event (`gh pr view`'s flat shape), the workflow run id tells them apart.
+func TestParseStatusCheckRollupKeepsEachTriggerOfAJob(t *testing.T) {
+	graphQL := json.RawMessage(`[
+	  {"__typename":"CheckRun","name":"test","status":"COMPLETED","conclusion":"FAILURE","startedAt":"2026-11-17T10:00:00Z",
+	   "checkSuite":{"workflowRun":{"event":"push","workflow":{"name":"CI"}}}},
+	  {"__typename":"CheckRun","name":"test","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-11-17T10:00:05Z",
+	   "checkSuite":{"workflowRun":{"event":"pull_request","workflow":{"name":"CI"}}}}
+	]`)
+	info := parseStatusCheckRollup(graphQL, time.Now())
+	assert.Len(t, info.Checks, 2)
+	assert.Equal(t, "failing", info.Summary.State)
+
+	flat := json.RawMessage(`[
+	  {"__typename":"CheckRun","name":"test","workflowName":"CI","status":"COMPLETED","conclusion":"FAILURE","startedAt":"2026-11-17T10:00:00Z",
+	   "detailsUrl":"https://github.com/acme/app/actions/runs/11/job/1"},
+	  {"__typename":"CheckRun","name":"test","workflowName":"CI","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-11-17T10:00:05Z",
+	   "detailsUrl":"https://github.com/acme/app/actions/runs/12/job/2"},
+	  {"__typename":"CheckRun","name":"lint","workflowName":"CI","status":"COMPLETED","conclusion":"CANCELLED","startedAt":"2026-11-17T10:00:00Z",
+	   "detailsUrl":"https://github.com/acme/app/actions/runs/11/job/3"},
+	  {"__typename":"CheckRun","name":"lint","workflowName":"CI","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-11-17T10:20:00Z",
+	   "detailsUrl":"https://github.com/acme/app/actions/runs/11/job/4"}
+	]`)
+	info = parseStatusCheckRollup(flat, time.Now())
+	assert.Len(t, info.Checks, 3, "two runs of test stay; lint's re-run (same run id) replaces its cancelled attempt")
+	assert.Equal(t, "failing", info.Summary.State)
+	assert.Equal(t, 2, info.Summary.Passed)
+}
