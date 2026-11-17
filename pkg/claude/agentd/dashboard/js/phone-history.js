@@ -65,13 +65,30 @@ export function keptView(tab) {
   return was && was.tab === tab ? was.view : null;
 }
 
+// RETAKE_SETTLE_MS is how long a step Forward (retakeStep) may take to land
+// before the step is recorded anew instead.
+export const RETAKE_SETTLE_MS = 400;
+
 // installPhoneHistory wires the layers and `view` (the shell's own-view
 // signal) to the router; `tab` reads the active tab. Returns the uninstall
 // function.
 export function installPhoneHistory({ view, tab = () => null, doc = globalThis.document }) {
   let restoring = false;
+  // quiet is the layers a Back's close raised while it was on its way (a
+  // dialog's Discard? question): they are no step of their own. The form
+  // asking takes its entry back at once instead (asked, below), so nothing
+  // adds an entry after the Back without a tap (retakeStep).
+  const quiet = new Set();
+  const counted = (page, sheet, layers = backLayers.peek()) => {
+    for (const layer of quiet) if (!layers.includes(layer)) quiet.delete(layer);
+    return layerDepth(page, sheet, layers) - stepLayers(layers).filter((layer) => quiet.has(layer)).length;
+  };
+  // asking is the Back whose close of a layer is on its way, until it lands:
+  // { retaken } once a question it raised made the form take its entry back.
+  let asking = null;
+  let knownLayers = backLayers.peek();
   // depth is the layer count the router was last told of.
-  let depth = layerDepth();
+  let depth = counted();
   // sheetSeq is when the open sheet opened, against the layers' (backSeq).
   let sheetSeq = 0;
   let sheetShown = phoneSheet.peek();
@@ -80,11 +97,35 @@ export function installPhoneHistory({ view, tab = () => null, doc = globalThis.d
     if (next && next !== sheetShown) sheetSeq = backSeq();
     sheetShown = next;
   });
+  // retakeStep gives a layer Back could not close (a draft kept, a form that
+  // stayed open) its history entry back: a step Forward, onto the entry Back
+  // just left, which is still there. Never a new entry: Chrome marks every
+  // entry of a page skippable when the page adds one after a Back without a
+  // fresh tap (its history-manipulation intervention), and Android's Back
+  // then skips them all and leaves the app (tk_3739e29d). When there is
+  // nothing ahead (the Navigation API says so, or the Forward never lands),
+  // the step is recorded anew, as before.
+  const win = doc?.defaultView;
+  let retaking = null;
+  const settled = () => { if (retaking) { clearTimeout(retaking); retaking = null; } };
+  const retakeStep = () => {
+    settled();
+    if (!win?.history?.forward || win.navigation?.canGoForward === false) {
+      announceOverlay({ doc });
+      return;
+    }
+    retaking = setTimeout(() => {
+      retaking = null;
+      if (counted() > Number(new URL(win.location.href).searchParams.get('phone') || 0)) announceOverlay({ doc });
+    }, RETAKE_SETTLE_MS);
+    win.history.forward();
+  };
+  win?.addEventListener?.('popstate', settled);
   // closing counts the layers Back asked to close whose close has not landed
   // yet: the step back is taken, so they are no longer in the address.
   let closing = 0;
   const unLayers = registerOverlayRoute('phone', {
-    value: () => { const shown = layerDepth() - closing; return shown > 0 ? String(shown) : ''; },
+    value: () => { const shown = counted() - closing; return shown > 0 ? String(shown) : ''; },
     restore: (want) => {
       // Back over an open dialog or form is that overlay's: it closes the
       // topmost one through its own guarded close, which may ask first (a
@@ -94,14 +135,23 @@ export function installPhoneHistory({ view, tab = () => null, doc = globalThis.d
       // Whichever of a sheet and a layer opened last is on top.
       const top = stepLayers().at(-1);
       const layerOnTop = top && (!phoneSheet.peek() || top.seq > sheetSeq);
-      if (layerOnTop && layerDepth() > (Number(want) || 0)) {
-        depth = layerDepth() - 1;
+      if (layerOnTop && counted() > (Number(want) || 0)) {
+        // A question on top (Back while a dialog asks Discard?) closes as
+        // Keep, leaving its form up without the entry Back just left.
+        const question = quiet.has(top);
+        const back = { retaken: false };
+        asking = back;
+        // Either way the address has left the form's entry until the close
+        // lands (closing). A question is not counted, so closing it changes
+        // no step.
+        depth = counted() - (question ? 0 : 1);
         closing += 1;
         void closeTopBackLayer().then((closed) => {
-          closing -= 1;
-          if (closed) return;
-          depth = layerDepth();
-          announceOverlay({ doc });
+          if (asking === back) asking = null;
+          if (!back.retaken) closing -= 1;
+          if (back.retaken || (closed && !question)) return;
+          depth = counted();
+          retakeStep();
         });
         return;
       }
@@ -111,7 +161,7 @@ export function installPhoneHistory({ view, tab = () => null, doc = globalThis.d
       try {
         // Back is a close the operator asked for: a sheet's guard may hold
         // it (a draft to ask about, a send in flight).
-        if (layerDepth() > depthWanted && phoneSheet.peek()) {
+        if (counted() > depthWanted && phoneSheet.peek()) {
           // Until it is known to be held, the sheet is closing: the address
           // has left it. Were it counted, the router would write a held
           // sheet onto the entry Back landed on (the page's), so the sheet
@@ -125,17 +175,17 @@ export function installPhoneHistory({ view, tab = () => null, doc = globalThis.d
             if (!held) closing -= 1;
           }
         }
-        if (!held && layerDepth() > depthWanted) phonePage.peek()?.onBack?.();
+        if (!held && counted() > depthWanted) phonePage.peek()?.onBack?.();
       } finally {
         restoring = false;
       }
       // A held sheet stays on screen, so it takes its entry back once this
-      // restore is done. It stops counting as closing as soon as the router
-      // has corrected the entry Back landed on (synchronously, after this
-      // restore), so a further Back finds it up and asks it again.
+      // restore is done (retakeStep). It stops counting as closing as soon as
+      // the router has corrected the entry Back landed on (synchronously,
+      // after this restore), so a further Back finds it up and asks it again.
       if (held) {
         queueMicrotask(() => { closing -= 1; });
-        setTimeout(() => announceOverlay({ doc }), 0);
+        setTimeout(retakeStep, 0);
       }
     },
   });
@@ -161,7 +211,23 @@ export function installPhoneHistory({ view, tab = () => null, doc = globalThis.d
   // Changes made on screen are history steps; ones Back made are not.
   // A layer closed on screen steps back off its own entry.
   const stopLayers = effect(() => {
-    const next = layerDepth(phonePage.value, phoneSheet.value, backLayers.value);
+    const page = phonePage.value;
+    const sheet = phoneSheet.value;
+    const layers = backLayers.value;
+    const raised = layers.filter((layer) => !knownLayers.includes(layer));
+    knownLayers = layers;
+    // A layer opened while Back's close is on its way is that close's
+    // question: no step of its own, and the form takes its entry back now,
+    // so a further Back finds it and keeps it.
+    if (asking && !asking.retaken && raised.length) {
+      for (const layer of raised) quiet.add(layer);
+      asking.retaken = true;
+      closing -= 1;
+      depth = counted(page, sheet, layers);
+      retakeStep();
+      return;
+    }
+    const next = counted(page, sheet, layers);
     if (next === depth) return;
     const closed = next < depth;
     depth = next;
@@ -183,6 +249,8 @@ export function installPhoneHistory({ view, tab = () => null, doc = globalThis.d
   // Put what is on screen at boot (Now on a bare /) into the address.
   const cancelBoot = whenBooted(doc, () => announceOverlay({ replace: true, doc }));
   return () => {
+    settled();
+    win?.removeEventListener?.('popstate', settled);
     cancelBoot();
     clearTimeout(pending);
     stopLayers();

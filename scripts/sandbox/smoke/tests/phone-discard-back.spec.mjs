@@ -24,6 +24,30 @@ function collectErrors(page) {
   return errors;
 }
 
+// Android's Back is not history.back(): Chrome skips every entry of a page
+// that added one after the operator's Back without a fresh tap (its
+// history-manipulation intervention), so a form that re-recorded its step
+// that way sent the next Back out of the app (tk_3739e29d). A smoke cannot
+// press a phone's hardware Back, so it checks that rule instead: after the
+// operator's Back (back(), below), no history entry is added before the
+// next tap or key. gestureless() is every one that was.
+async function watchGestureless(page) {
+  await page.addInitScript(() => {
+    const seen = { since: true, bad: [] };
+    for (const type of ['pointerup', 'click', 'keydown', 'mousedown']) {
+      addEventListener(type, (event) => { if (event.key !== 'Escape') seen.since = true; }, true);
+    }
+    window.__operatorBack = () => { seen.since = false; };
+    const push = history.pushState.bind(history);
+    history.pushState = (state, title, url) => {
+      if (!seen.since) seen.bad.push(String(url));
+      return push(state, title, url);
+    };
+    window.__gestureless = seen.bad;
+  });
+}
+const gestureless = (page) => page.evaluate(() => window.__gestureless);
+
 const views = (page) => page.getByRole('navigation', { name: 'Views' });
 // The page behind: its path, and what the phone bar says it is.
 const behind = async (page) => ({ path: new URL(page.url()).pathname, bar: (await page.locator('.phone-bar-title').first().textContent()).trim() });
@@ -32,6 +56,7 @@ const behind = async (page) => ({ path: new URL(page.url()).pathname, bar: (awai
 async function back(page) {
   await page.evaluate(() => new Promise((resolve) => {
     addEventListener('popstate', () => resolve(), { once: true });
+    window.__operatorBack?.();
     history.back();
   }));
 }
@@ -116,7 +141,7 @@ const GUARDED = [
     name: 'Agents: New agent › All options…',
     open: async (page) => {
       await views(page).getByRole('button', { name: /Agents/ }).click();
-      await page.getByRole('button', { name: 'New agent' }).click();
+      await page.getByRole('button', { name: 'New agent', exact: true }).click();
       await sheet(page).getByRole('button', { name: 'All options…' }).click();
     },
     type: (page) => page.locator('#agent-spawn-modal textarea').first().fill('do the thing'),
@@ -126,7 +151,7 @@ const GUARDED = [
     name: 'Agents: New agent (its prompt)',
     open: async (page) => {
       await views(page).getByRole('button', { name: /Agents/ }).click();
-      await page.getByRole('button', { name: 'New agent' }).click();
+      await page.getByRole('button', { name: 'New agent', exact: true }).click();
     },
     type: (page) => sheet(page).getByLabel('Prompt').fill('migrate the checkout'),
     ...draftSheet('this prompt'),
@@ -142,6 +167,7 @@ const GUARDED = [
   },
   {
     name: "Now: a decision's ⋯ (its note)",
+    firstPage: true,
     open: async (page) => {
       await page.getByRole('button', { name: 'All options, a note, or dismiss' }).first().click();
     },
@@ -171,6 +197,7 @@ const GUARDED = [
 for (const form of GUARDED) {
   test(`${form.name}: Back asks to discard, and the page behind never moves`, async ({ page }) => {
     const errors = collectErrors(page);
+    await watchGestureless(page);
     await page.goto('/');
     await booted(page);
     await form.open(page);
@@ -208,6 +235,16 @@ for (const form of GUARDED) {
     await form.discard(page);
     await expect(form.form(page), 'discarded, the form closes').toBeHidden();
     expect(await behind(page), 'and the page behind is where it was').toEqual(before);
+    expect(await gestureless(page), 'no entry added after a Back without a tap (Android would skip them all)').toEqual([]);
+
+    // One more Back goes to the page before, inside tclaude (a form opened
+    // on the first page has none before it).
+    if (!form.firstPage) {
+      const path = new URL(page.url()).pathname + new URL(page.url()).search;
+      await back(page);
+      await expect.poll(() => new URL(page.url()).pathname + new URL(page.url()).search, 'a further Back steps to the page before').not.toBe(path);
+      await expect(views(page)).toBeVisible();
+    }
     expect(errors).toEqual([]);
   });
 }
