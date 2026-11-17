@@ -383,6 +383,7 @@ test("a task's page names who worked on it, each a tap from their terminal or me
   // An actor in the Activity is the same jump; the operator is plain text.
   const names = [...c.querySelectorAll('.phone-task-activity .phone-task-who')];
   assert.equal(names[0].tagName, 'SPAN', 'you are not a link');
+  assert.equal(names[0].textContent, 'you', 'the operator is "you"');
   assert.equal(c.querySelector(`.phone-task-activity .phone-task-who-link[data-person="${GONE}"]`), null, 'nor an unlisted agent');
   await tap(c.querySelector(`.phone-task-activity .phone-task-who-link[data-person="${AGENT}"]`));
   assert.deepEqual(opened.at(-1), ['terminal', AGENT]);

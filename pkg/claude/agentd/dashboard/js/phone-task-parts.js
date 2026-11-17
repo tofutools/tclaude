@@ -51,7 +51,9 @@ function agentFor(actor, names) {
 // (jumpTo), anyone else's (you, a peer node) plain text.
 export function PersonName({ actor, shown = '', names, actions }) {
   const agent = agentFor(actor, names);
-  const text = shown || actorName(actor, names);
+  // The operator is "you", as everywhere on the phone; anyone else by the
+  // name the server gave.
+  const text = String(actor || '').startsWith('human:') ? actorName(actor, names) : (shown || actorName(actor, names));
   if (!canJump(actions, agent)) return html`<span class="phone-task-who">${text}</span>`;
   return html`<button data-ui-exempt type="button" class="phone-task-who phone-task-who-link" data-person=${agent.agentId}
     aria-label=${`${text}: ${agent.online ? 'open its terminal' : 'its menu'}`} onClick=${() => jumpTo(actions, agent)}>${text}</button>`;
