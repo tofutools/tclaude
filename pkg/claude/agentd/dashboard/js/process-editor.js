@@ -870,6 +870,9 @@ export class ProcessTemplateEditor {
       currentRef, currentSourceHash, actor, authoredAt, dirty: this.dirty,
     });
     this.renderExternalChange();
+    // While a followed version is loading, a second poll of it waits for
+    // that rather than starting a review of its own.
+    if (this.following) return this.externalChange;
     if (followsExternalChange(this)) {
       void ProcessTemplateEditor.prototype.followExternalChange.call(this);
       return this.externalChange;
@@ -881,11 +884,29 @@ export class ProcessTemplateEditor {
     return this.externalChange;
   }
 
+  // followExternalChange adopts the agent's version as one undoable change,
+  // keeping the operator's undo history and where they are in the graph, and
+  // lights up the steps it added or changed.
   async followExternalChange() {
+    const target = { ref: this.externalChange.ref, sourceHash: this.externalChange.sourceHash };
     const before = this.loadedView;
+    const { model } = this;
+    const at = { rev: model.rev, sourceHash: model.sourceHash };
     const actor = this.options.describeActor?.(this.externalChange.actor) || null;
-    if (!(await this.reloadExternalChange())) return false;
-    const changes = before ? diffTemplateDrafts({ base: before, ours: before, theirs: this.loadedView }) : [];
+    this.following = true;
+    let view;
+    try {
+      view = await fetchEditView(model.template.id);
+    } catch {
+      return false; // the next poll tries again
+    } finally {
+      this.following = false;
+    }
+    if (this.destroyed || this.abort?.signal.aborted || this.model !== model || model.rev !== at.rev
+        || model.sourceHash !== at.sourceHash || !followsExternalChange(this)
+        || !sameTemplateGeneration(target, this.externalChange) || !sameTemplateGeneration(target, view)) return false;
+    const changes = before ? diffTemplateDrafts({ base: before, ours: before, theirs: view }) : [];
+    ProcessTemplateEditor.prototype.adoptReviewedGeneration.call(this, view, view, []);
     this.freshIds = new Set(changes.filter((change) => change.kind === 'node' && change.op !== 'removed').map((change) => change.nodeId));
     clearTimeout(this.freshTimer);
     if (this.freshIds.size) {
@@ -897,9 +918,10 @@ export class ProcessTemplateEditor {
     }
     const labels = changes.map((change) => `${change.op === 'added' ? '+ ' : change.op === 'removed' ? '− ' : ''}${change.label}`);
     const what = labels.length > 3 ? `${labels.slice(0, 3).join(', ')} and ${labels.length - 3} more` : labels.join(', ');
-    this.status(`✨ ${actor?.label || 'An agent'} saved${what ? `: ${what}` : ' a new version'}.`);
+    this.status(`✨ ${actor?.label || 'An agent'} saved${what ? `: ${what}` : ' a new version'}. Undo takes it out.`);
     return true;
   }
+
 
   // setAgentsLocked records a lock toggled from the header until the next read.
   setAgentsLocked(locked) {
@@ -2997,10 +3019,14 @@ export async function openTemplateEditor(mount, { id, name = '', blank = false, 
 
 // followsExternalChange: an agent's save is applied as it lands, so the
 // operator watches it build the process, while nothing of theirs is at
-// stake: no unsaved edits, no dialog, inline edit, drag or review open.
-// Their edits make it the usual banner (Review on canvas) instead.
+// stake: no unsaved edits, no dialog, inline edit, drag or review open, and
+// no field being typed in (fields commit on change, so what is typed is not
+// in the draft yet). Their edits make it the usual banner (Review on canvas)
+// instead; a later poll follows once they are done typing.
 function followsExternalChange(editor) {
   const change = editor.externalChange;
+  const active = (editor.mount?.ownerDocument || globalThis.document)?.activeElement;
+  if (active && active !== active.ownerDocument?.body && isProcessEditorFormControl(active)) return false;
   return change.kind === 'clean' && /^agent:/.test(change.actor || '') && editor.options?.followAgents === true
     && !editor.dirty && !editor.diffReview && !editor.modalDispose && !editor.inlineState?.open && !editor.inlineCommit
     && !graphInteraction(editor).active && !editor.savePending && !externalInteractionPending(editor);

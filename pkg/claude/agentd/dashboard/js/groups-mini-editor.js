@@ -979,10 +979,12 @@ export function MiniGraphEditor({
   };
   const scribe = scribes.find((session) => session.scope?.id === process.templateId && session.online) || null;
   const agent = scribe ? { id: scribe.agentId, label: scribe.name, status: scribe.status } : helper;
-  // The agent is editing while it is in a turn or saved here lately, until
-  // the operator stops it.
-  const working = agent && agentStatus(dashboardState.snapshot.value, agent.id) === 'working';
-  const busyAgent = editing || (working ? { agentId: agent.id, who: agent.label } : null);
+  // The agent is editing while it saved here lately, or while this
+  // process's own scribe is in a turn, until the operator stops it. A helper
+  // such as the steward counts only by its saves: its turn may be about
+  // something else.
+  const working = scribe && agentStatus(dashboardState.snapshot.value, scribe.agentId) === 'working';
+  const busyAgent = editing || (working ? { agentId: scribe.agentId, who: scribe.name } : null);
   const shownEditing = busyAgent && busyAgent.agentId !== stopped ? busyAgent : null;
   const stop = async () => {
     const { agentId, who } = shownEditing;

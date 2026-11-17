@@ -97,8 +97,9 @@ route) are advisory on save: the version is stored with its diagnostics, shows
 up in the dashboard's process editor, and simply cannot run until the errors
 are fixed. Saving never starts a run. When a human is co-editing with you,
 save each agreed step as a draft so the step reaches their editor. Unsaved
-edits in your local YAML file are invisible to them, and a saved version is
-offered to them as *Review on canvas*. Do not hold back a requested edit just
+edits in your local YAML file are invisible to them. A saved version is
+merged onto an open inline editor, and applied to an open full editor that
+has no unsaved edits; with unsaved edits it is offered as *Review on canvas*. Do not hold back a requested edit just
 because the template still has errors, and do not pile unrequested fixes onto
 it to make it validate. Report which errors remain, and offer to fix them.
 

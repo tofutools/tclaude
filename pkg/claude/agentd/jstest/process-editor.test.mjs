@@ -1771,14 +1771,14 @@ test('an agent\'s save lands on a full editor with no unsaved edits as it is mad
       sourceHash: 'source-new', semanticHash: 'semantic-new', currentRef: 'alpha@sha256:new',
     }),
   });
-  const watch = (dirty) => {
+  const watch = (dirty, mount = null) => {
     const editor = externalReloadEditor({ dirty });
+    if (mount) editor.mount = mount;
     editor.options = { ...editor.options, followAgents: true, describeActor: () => ({ label: 'agent steward' }) };
     editor.externalChange = { kind: 'none', ref: '' };
     editor.loadedView = { template: structuredClone(editor.model.template), edges: structuredClone(editor.model.edges), layout: {} };
     editor.reviews = 0;
     editor.loadExternalReview = () => { editor.reviews += 1; return Promise.resolve(false); };
-    editor.reloadExternalChange = () => ProcessTemplateEditor.prototype.reloadExternalChange.call(editor);
     ProcessTemplateEditor.prototype.observeExternalHead.call(editor, {
       ref: 'alpha@sha256:new', sourceHash: 'source-new', actor: 'agent:agt_0123456789abcdef0123456789abcdef',
     });
@@ -1792,7 +1792,14 @@ test('an agent\'s save lands on a full editor with no unsaved edits as it is mad
     assert.equal(editor.reviews, 0, 'no review banner for a canvas with nothing unsaved');
     assert.deepEqual([...editor.freshIds], ['review'], 'the new step is lit up');
     assert.match(editor.lastStatus.message, /agent steward saved: \+ /, 'the status says who and what');
+    assert.ok(editor.model.canUndo, 'it lands as an undoable change; the operator\'s history stays');
     clearTimeout(editor.freshTimer);
+
+    const field = { nodeType: 1, tagName: 'INPUT', ownerDocument: { body: {} } };
+    const typing = watch(false, { ownerDocument: { activeElement: field } });
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    assert.equal(typing.model.currentRef, 'alpha@sha256:old', 'a field being typed in holds the follow back');
+    assert.equal(typing.reviews, 1, 'the banner shows meanwhile');
 
     const dirty = watch(true);
     await new Promise((resolve) => setTimeout(resolve, 5));
