@@ -131,9 +131,47 @@ export function canInsertBefore(view, id) {
 export function canBranch(view, id) {
   const node = view.template.nodes[id];
   if (!isStep(node)) return 'only a step branches';
-  // The engine routes a task one way only; branching is a decision's.
-  if (node.type === 'task') return 'a task continues one way; make it a "you" step or use a decision to branch';
+  // The engine routes a task one way only; branching is a decision's. An
+  // agent step branches by becoming an agent decision (see toAgentDecision).
+  if (node.type === 'task') return canDecide(view, id);
   return '';
+}
+
+// canDecide says why an agent step cannot become an agent decision, or ''.
+// A command reports no verdict; outputs are a task's; the "changes" outcome
+// goes back to the one step before it, so there must be one.
+export function canDecide(view, id) {
+  const node = view.template.nodes[id];
+  if (node?.type !== 'task') return 'only a task becomes a decision';
+  if (node.performer?.kind !== 'agent') return 'a command continues one way; add a "you" step after it to branch';
+  if (node.captures?.length) return 'a step with outputs continues one way; clear its outputs to let its agent decide';
+  const into = incoming(view, id);
+  if (into.length !== 1 || !isStep(view.template.nodes[into[0].from])) return 'it needs exactly one step before it to send changes back to';
+  return '';
+}
+
+// toAgentDecision turns an agent step into an agent decision, the review
+// shape: its agent reports "approved" (on to what came next) or "changes"
+// (back to the step before it, at most LOOP_DEFAULT_ROUNDS rounds, then the
+// run fails). The agent, its prompt and its fallback stay.
+export function toAgentDecision(view, id) {
+  const why = canDecide(view, id);
+  if (why) throw new Error(why);
+  const next = copyView(view);
+  const node = next.template.nodes[id];
+  const main = mainEdge(next, id);
+  const previous = incoming(next, id)[0].from;
+  node.type = 'decision';
+  let after = main?.to;
+  next.edges = next.edges.filter((edge) => edge.from !== id);
+  if (!after) {
+    after = Object.keys(next.template.nodes).find((nodeID) => next.template.nodes[nodeID]?.type === 'end' && !isFailedEnd(next.template.nodes[nodeID]))
+      || addNode(next, { type: 'end', name: 'Done', result: 'success' }, 'done');
+  }
+  next.edges.push({ from: id, outcome: 'approved', to: after }, { from: id, outcome: 'changes', to: previous });
+  syncLoops(next);
+  defaultAgentExhaustion(next, id);
+  return { view: next, id };
 }
 
 export function canRunAlongside(view, id) {
@@ -401,10 +439,12 @@ export function insertBefore(view, id, kind) {
 
 // branch adds an outcome to a decision that leads to a new step, which then
 // rejoins its main path: a "you" step gains an answer, an agent decision an
-// outcome.
+// outcome. On an agent step it makes the step decide (toAgentDecision), and
+// `kind` is unused.
 export function branch(view, id, kind) {
   const why = canBranch(view, id);
   if (why) throw new Error(why);
+  if (view.template.nodes[id].type === 'task') return toAgentDecision(view, id);
   const next = copyView(view);
   const node = next.template.nodes[id];
   const main = mainEdge(next, id);

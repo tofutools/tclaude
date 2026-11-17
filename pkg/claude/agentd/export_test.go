@@ -2,8 +2,13 @@ package agentd
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
+	"os"
+
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
+	"github.com/tofutools/tclaude/pkg/claude/process/model"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -169,3 +174,32 @@ var SweepMirroredApprovalsForTest = sweepMirroredApprovals
 // RedactMirroredForTest redacts a decoded taskboard response as a linked
 // node with restricted trust gets it.
 var RedactMirroredForTest = redactMirrored
+
+// MiniEditCaseTemplateForTest parses one case of the inline mini editor's
+// fixture (jstest/process-mini-edit-cases.json) as the dashboard's save does,
+// so a flow test runs exactly the template the editor builds.
+func MiniEditCaseTemplateForTest(key string) (*model.Template, error) {
+	raw, err := os.ReadFile("jstest/process-mini-edit-cases.json")
+	if err != nil {
+		return nil, err
+	}
+	var fixture struct {
+		Cases map[string]*processTemplateEditView `json:"cases"`
+	}
+	if err := json.Unmarshal(raw, &fixture); err != nil {
+		return nil, err
+	}
+	view := fixture.Cases[key]
+	if view == nil {
+		return nil, fmt.Errorf("no mini edit case %q", key)
+	}
+	view.Template.ID = key
+	parsed, err := parseProcessEditView(view)
+	if err != nil {
+		return nil, err
+	}
+	if parsed.Diagnostics.HasErrors() {
+		return nil, fmt.Errorf("case %q: %v", key, parsed.Diagnostics)
+	}
+	return parsed.Template, nil
+}
