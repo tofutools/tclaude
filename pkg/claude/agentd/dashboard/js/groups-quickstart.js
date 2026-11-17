@@ -161,10 +161,10 @@ function GateDeciders({ list, step, index, roster, roles, now, onChange }) {
 
 // `spawn` offers "a new agent…" (a step's Who, not a decider's), with the
 // spawn profile picked beside it from `profiles` or the group's default.
-export function WhoPicker({ step, roster, roles, label = 'Who does this step', spawn = true, profiles = [], defaultSpawnProfile = '', onChange }) {
+export function WhoPicker({ step, roster, roles, label = 'Who does this step', spawn = true, rule = false, profiles = [], defaultSpawnProfile = '', onChange }) {
   const who = stepWho(step);
   const value = whoValue(who);
-  const options = whoOptions(roster, { roles, spawn });
+  const options = whoOptions(roster, { roles, spawn, rule });
   const known = options.some((option) => option.value === value);
   const groups = [['agent', 'Specific agent'], ['role', 'By role'], ['spawn', 'New agent'], ['other', 'Not an agent']];
   const unknown = { agent: `${who.agent} (not in this group)`, role: `any ${who.role}`, spawn: 'a new agent' }[who.mode] || 'nobody yet';

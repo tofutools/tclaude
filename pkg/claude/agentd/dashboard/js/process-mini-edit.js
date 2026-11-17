@@ -40,7 +40,7 @@ function linkOn(view, from, kind, to) {
 }
 
 // A gate is an agreement gate: a decision several deciders take together.
-export const MINI_KINDS = Object.freeze(['agent', 'you', 'command', 'gate']);
+export const MINI_KINDS = Object.freeze(['agent', 'you', 'command', 'gate', 'rule']);
 
 function clone(value) {
   return JSON.parse(JSON.stringify(value));
@@ -61,6 +61,7 @@ export function miniKind(node) {
   if (type !== 'task' && type !== 'decision') return 'advanced';
   if (type === 'decision' && node.deciders?.length) return 'gate';
   const kind = node.performer?.kind;
+  if (type === 'decision' && kind === 'rule') return 'rule';
   if (kind === 'human') return 'you';
   if (kind === 'program') return 'command';
   return 'agent';
@@ -317,7 +318,7 @@ export function syncLoops(view) {
 // so a saved template the operator did not touch keeps its behaviour.
 function defaultAgentExhaustion(view, id) {
   const node = view.template.nodes[id];
-  if (node?.type !== 'decision' || node.deciders?.length || node.performer?.kind !== 'agent') return;
+  if (node?.type !== 'decision' || node.deciders?.length || (node.performer?.kind !== 'agent' && node.performer?.kind !== 'rule')) return;
   const outcomes = outgoing(view, id).map((edge) => edge.outcome);
   for (const outcome of Object.keys(node.loops || {})) {
     const bound = loopBound(node, outcome);
@@ -336,7 +337,7 @@ function passOutcome(view, id, node) {
 // decidedAlone says whether nobody but an agent decides: a gate, or a plain
 // decision an agent decides. Its used-up loop cannot be left to a person.
 function decidedAlone(node) {
-  return !!node.deciders?.length || node.performer?.kind === 'agent';
+  return !!node.deciders?.length || node.performer?.kind === 'agent' || node.performer?.kind === 'rule';
 }
 
 // syncGate keeps a gate valid after its edges change: what all must choose
@@ -493,6 +494,7 @@ export function setDecisionWho(view, id, who) {
   const node = view.template.nodes[id];
   if (node?.type !== 'decision' || node.deciders?.length) throw new Error('only a plain decision changes who decides');
   if (who.mode === 'command') throw new Error('a command does not decide');
+  if (who.mode === 'rule') return makeRule(view, id);
   const step = setStepWho({ id, node }, who);
   const changed = step.node;
   if (changed.performer.kind === 'human') changed.performer.choices = outgoing(view, id).map((edge) => edge.outcome);
@@ -991,7 +993,7 @@ export function canRemoveOutcome(view, id, outcome) {
   if (view.template.nodes[id]?.deciders?.length && out.length < 3) return 'a gate needs an outcome besides the one all must choose';
   const node = view.template.nodes[id];
   // A gate's used-up loop must go somewhere: change that first.
-  const exhausting = node?.deciders?.length && Object.entries(node.loops || {}).find(([, bound]) => bound.onExhausted === outcome);
+  const exhausting = (node?.deciders?.length || node?.performer?.kind === 'rule') && Object.entries(node.loops || {}).find(([, bound]) => bound.onExhausted === outcome);
   if (exhausting) return `it is where ${exhausting[0]} goes once it runs out of rounds; choose another there first`;
   if (!loopBound(node, outcome) && !out.some((edge) => edge.outcome !== outcome && !loopBound(node, edge.outcome))) {
     return 'its only outcome that does not loop back';
@@ -1008,6 +1010,12 @@ export function removeOutcome(view, id, outcome) {
   const decision = next.template.nodes[id];
   next.edges = next.edges.filter((edge) => !(edge.from === id && edge.outcome === outcome));
   if (decision.performer?.kind === 'human') decision.performer.choices = (decision.performer.choices || []).filter((c) => c !== outcome);
+  if (decision.performer?.kind === 'rule') {
+    // Its cases that took it go; else moves to another outcome.
+    const rule = decision.performer;
+    rule.cases = (rule.cases || []).filter((c) => c.then !== outcome);
+    if (rule.else === outcome) rule.else = outgoing(next, id).find((edge) => !loopBound(decision, edge.outcome))?.outcome || '';
+  }
   if (decision.agree === outcome) {
     decision.agree = agreeChoice(next, id, decision);
     rehomeFromAgree(next, id, decision);
@@ -1034,6 +1042,10 @@ export function renameOutcome(view, id, outcome, name) {
     if (other.onExhausted === outcome) decision.loops[looped] = { ...other, onExhausted: value };
   }
   if (decision.performer?.kind === 'human') decision.performer.choices = (decision.performer.choices || []).map((c) => (c === outcome ? value : c));
+  if (decision.performer?.kind === 'rule') {
+    for (const c of decision.performer.cases || []) if (c.then === outcome) c.then = value;
+    if (decision.performer.else === outcome) decision.performer.else = value;
+  }
   if (decision.agree === outcome) decision.agree = value;
   return { view: syncLoops(next), id };
 }
@@ -1347,4 +1359,77 @@ function rehomeFromAgree(view, id, node) {
   for (const [looped, bound] of Object.entries(node.loops || {})) {
     if (bound.onExhausted === node.agree) setLoopBound(node, looped, { ...bound, onExhausted: safeExhaustion(view, id, node, outcomes, looped) });
   }
+}
+
+// ---- rules ----------------------------------------------------------------
+//
+// A rule decides a decision by itself (performer.kind "rule"): its cases in
+// order, each a condition and the outcome it picks, then else. Conditions are
+// written in process-rules.js's language; the inspector edits them as rows.
+
+// ruleOperands are what a rule at id can read, for the rows' first picker:
+// the results (and a command's exit code) of the steps before it, the
+// outputs they report, and the process's params. Each has the values it can
+// take when they are few (a step's result, a boolean param), else none.
+export function ruleOperands(view, id) {
+  const nodes = view.template.nodes;
+  const upstream = new Set();
+  const stack = [id];
+  while (stack.length) {
+    const at = stack.pop();
+    for (const edge of view.edges) {
+      if (edge.to === at && edge.from && !upstream.has(edge.from)) {
+        upstream.add(edge.from);
+        stack.push(edge.from);
+      }
+    }
+  }
+  const name = (stepID) => nodes[stepID]?.name || stepID;
+  const operands = [];
+  for (const stepID of [...upstream].sort()) {
+    const step = nodes[stepID];
+    if (step?.type !== 'task' || stepID === id) continue;
+    operands.push({ value: `steps.${stepID}.result`, label: `${name(stepID)} · result`, values: ['succeeded', 'failed', 'skipped'] });
+    if (step.performer?.kind === 'program' && !step.plan && !step.checks?.length && !step.review) {
+      operands.push({ value: `steps.${stepID}.exitCode`, label: `${name(stepID)} · exit code`, values: null });
+    }
+  }
+  for (const stepID of [...upstream].sort()) {
+    for (const output of nodes[stepID]?.captures || []) operands.push({ value: `outputs.${output}`, label: `output · ${output}`, values: null });
+  }
+  for (const [param, spec] of Object.entries(view.template.params || {}).sort(([a], [b]) => a.localeCompare(b))) {
+    const boolean = spec?.type === 'boolean' || spec?.type === 'bool';
+    operands.push({ value: `params.${param}`, label: `param · ${param}`, values: boolean ? ['true', 'false'] : null });
+  }
+  return operands;
+}
+
+// makeRule turns decision id into a rule: one case on the first thing it can
+// read, picking its first outcome, and else its next. Its outcomes, loops
+// and their bounds stay; a loop's used-up way is set as for an agent.
+function makeRule(view, id) {
+  const next = copyView(view);
+  const node = next.template.nodes[id];
+  const outcomes = outgoing(next, id).map((edge) => edge.outcome);
+  const first = ruleOperands(next, id)[0];
+  const when = first ? `${first.value} == ${first.values?.[0] || 'yes'}` : '';
+  const ways = outcomes.filter((outcome) => !loopBound(node, outcome));
+  node.performer = { kind: 'rule', cases: [{ when, then: outcomes[0] || '' }], else: ways.find((o) => o !== outcomes[0]) || ways[0] || outcomes[0] || '' };
+  syncLoops(next);
+  defaultAgentExhaustion(next, id);
+  return { view: next, id };
+}
+
+// setRule replaces rule id's cases and else; every outcome they name must be
+// one of the decision's.
+export function setRule(view, id, { cases, else: otherwise }) {
+  const node = view.template.nodes[id];
+  if (node?.performer?.kind !== 'rule') throw new Error('only a rule has cases');
+  const outcomes = outgoing(view, id).map((edge) => edge.outcome);
+  for (const outcome of [...cases.map((c) => c.then), otherwise]) {
+    if (!outcomes.includes(outcome)) throw new Error(`${outcome} is not an outcome of this step`);
+  }
+  const next = copyView(view);
+  next.template.nodes[id].performer = { ...next.template.nodes[id].performer, cases: cases.map((c) => ({ when: c.when, then: c.then })), else: otherwise };
+  return { view: next, id };
 }

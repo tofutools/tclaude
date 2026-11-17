@@ -11,6 +11,7 @@
 // The desktop run focus (groups-run-focus.js) and the phone run sheet
 // (phone-process-runs.js) both render these.
 
+import { conditionWords, operandWords } from './process-rules.js';
 import { h } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
 import htm from 'htm';
@@ -109,6 +110,14 @@ export function eventSentence(event, nameOf = () => '', { withStep = true } = {}
     }
     case 'run_amended':
       return { icon: '✎', tone: 'concern', text: `${who} amended the run (#${payload.amendment}): ${amendSummaryText(payload.summary)}${payload.note ? ` · ${clip(payload.note)}` : ''}` };
+    case 'decision_recorded':
+      // A rule decision says what held and what it read, in plain words.
+      if (event.actor === 'rule' && payload.rule) {
+        const said = payload.rule.case >= 0 ? conditionWords(payload.rule.when) : 'no case held';
+        const read = Object.entries(payload.rule.read || {}).map(([operand, value]) => `${operandWords(operand)} = ${value}`).join(' · ');
+        return { icon: '⚙', tone: '', text: `the rule chose ${payload.verdict}${step}: ${said}${read ? ` (read ${read})` : ''}` };
+      }
+      return { icon: '·', tone: '', text: `${String(event.kind || '').replace(/[_.]+/g, ' ')}${step}${event.actor ? ` · ${who}` : ''}` };
     case 'run_canceled':
       return { icon: '✕', tone: 'concern', text: `${who} canceled the run${payload.note ? `: ${clip(payload.note)}` : ''}` };
     default:

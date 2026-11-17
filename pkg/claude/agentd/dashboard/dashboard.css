@@ -18308,6 +18308,15 @@ body.wizard .gq-fallback { background: #1a1430; border-color: rgba(122, 93, 176,
 .gm-outcome { display: inline-flex; align-items: center; gap: 4px; padding: 2px 6px; border: 1px solid #30363d; border-radius: 999px; color: #d2a8ff; }
 .gm-outcome:has(.gm-exhausted) { flex-wrap: wrap; max-width: 100%; }
 .gm-outcome-name { width: 80px; padding: 1px 5px; }
+/* A rule's cases (RuleCases): rows of conditions, each case boxed. */
+.gm-rule { display: flex; flex-direction: column; gap: 6px; min-width: 0; align-items: flex-start; }
+.gm-rule-case { border: 1px solid #30363d; border-radius: 10px; padding: 6px 8px; display: flex; flex-direction: column; gap: 4px; align-items: flex-start; }
+.gm-rule-row { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+.gm-rule-and { color: #8b949e; font-size: 12px; min-width: 26px; text-align: right; }
+.gm-rule-arrow { color: #a371f7; }
+.gm-rule-value { width: 90px; padding: 1px 5px; }
+.gm-rule-text { font-size: 12px; color: #d2a8ff; }
+.gm-rule-words { border: 1px solid #238636; background: rgba(35, 134, 54, 0.12); color: #7ee787; border-radius: 6px; padding: 4px 8px; font-size: 12px; }
 /* A gate's deciders, one row each (process-gate-deciders.js): ▸ opens the
    decider's own ask, "If nobody" and "Not" in place. */
 .gm-deciders { display: grid; gap: 6px; min-width: 0; }

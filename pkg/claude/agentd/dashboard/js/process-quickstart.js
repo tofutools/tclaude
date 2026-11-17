@@ -31,7 +31,7 @@ export function groupRoles(roster) {
 // whoOptions are the Who picker's choices for a roster: specific agents, the
 // roles the group holds (`roles`, the process context's [{role, count}], else
 // the roster's), anyone free, you, and a command.
-export function whoOptions(roster, { roles = null, spawn = true } = {}) {
+export function whoOptions(roster, { roles = null, spawn = true, rule = false } = {}) {
   return [
     ...roster.map((m) => ({ value: `agent:${m.name}`, group: 'agent', label: m.name, detail: `${m.role || 'member'} · ${memberState(m)}` })),
     ...(roles?.length ? roles : groupRoles(roster)).map(({ role, count }) => ({ value: `role:${role}`, group: 'role', label: `any ${role}`, detail: `${count} in group` })),
@@ -40,6 +40,8 @@ export function whoOptions(roster, { roles = null, spawn = true } = {}) {
     ...(spawn ? [{ value: 'spawn', group: 'spawn', label: 'a new agent…', detail: '' }] : []),
     { value: 'you', group: 'other', label: 'you (a question or sign-off)', detail: '' },
     { value: 'command', group: 'other', label: 'a command', detail: '' },
+    // A decision can decide by itself (process-rules.js).
+    ...(rule ? [{ value: 'rule', group: 'other', label: 'a rule', detail: 'decides by itself, nobody is asked' }] : []),
   ];
 }
 

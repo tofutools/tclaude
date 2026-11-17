@@ -657,8 +657,17 @@ the essentials (what, who, if nobody takes it, if it fails, then). *If it
 fails*, on agent and command steps, is *fail the run* (the default), *hold it
 for me* (the step waits, blocked, for you to retry, skip or cancel it), or
 *retry N×, then hold it for me*; it saves as the step's `retry.maxAttempts`
-(1, or N+1), and a step that retries shows ↻N on the graph. Sending a
-failure to another step is not something a run can do yet. *⤢ Full editor* opens
+(1, or N+1), and a step that retries shows ↻N on the graph. To send a
+failure somewhere, make the step `mayFail` and put a rule decision after it
+(see [Rule decisions](#rule-decisions)). A decision's *Who* can be *a rule*:
+its cases are rows, each made of what it reads (an earlier step's result or
+exit code, an output, a param), a comparison and a value. *+ and* adds a
+condition to a case, *+ another case* adds a case, and *else* names the
+outcome when no case holds. The whole rule shows in plain words underneath
+("Build succeeded → approve · otherwise → escalate"). A condition with *or*
+or *not* shows as written and is edited in the full editor. In a run, the
+decision is marked with what it chose (⚙ merge), and its inspector and the
+run log say why in plain words, with the values the rule read. *⤢ Full editor* opens
 the same draft over the page, still pinned, with *← Back inline* and *▶ Run…*
 in its bar. *Save* closes the inline editor and *▶ Run…* opens the start form
 on the draft. The other ways to make one (**＋ new template** under Automations

@@ -21,6 +21,7 @@
 // normalizeNodeState fold them. Pure helpers are exported next to the
 // components so callers and tests can reason about a projection without a DOM.
 
+import { choiceWords, ruleWords } from './process-rules.js';
 import { h } from 'preact';
 import { useId, useState } from 'preact/hooks';
 import htm from 'htm';
@@ -727,7 +728,11 @@ export function ProcessMiniGraph({
     const cls = `pk-gnode pk-state-${node.state} pk-kind-${node.kind}${isTerminalKind(node.kind) ? ' terminal' : ''}${here ? ' here' : ''}${selected ? ' selected' : ''}${problem ? ' problem' : ''}${fresh ? ' fresh' : ''}`;
     const style = `left:${node.x}px;top:${node.y}px;width:${node.width}px;height:${node.height}px`;
     const round = nodeRound(node);
-    const title = `${node.label} · ${kindLabel(node.kind, wizard)} · ${stateLabel(node.state)}${round ? ` · round ${round.replace('/', ' of ')}` : ''}${node.sub ? ` · ${node.sub}` : ''}${node.caption ? ` · ${node.caption}` : ''}${Number(node.retries) > 0 ? ` · retries ${node.retries}× if it fails, then waits for you` : ''}${waiting.has(node.id) ? ` · waiting for ${waiting.get(node.id).join(', ')}` : ''}${problem ? ' · has a problem' : ''}`;
+    // A rule decision says what it chose, in plain words, and what it read.
+    const stepName = (id) => layout.nodes.find((other) => other.id === id)?.label || id;
+    const chose = node.rule ? choiceWords(node.rule, stepName) : null;
+    const ruleTitle = node.rule ? ` · decided by its rule${chose ? `: ${chose.said}${chose.read ? ` (read ${chose.read})` : ''}` : `: ${ruleWords(node.rule, stepName)}`}` : '';
+    const title = `${node.label} · ${kindLabel(node.kind, wizard)} · ${stateLabel(node.state)}${ruleTitle}${round ? ` · round ${round.replace('/', ' of ')}` : ''}${node.sub ? ` · ${node.sub}` : ''}${node.caption ? ` · ${node.caption}` : ''}${Number(node.retries) > 0 ? ` · retries ${node.retries}× if it fails, then waits for you` : ''}${waiting.has(node.id) ? ` · waiting for ${waiting.get(node.id).join(', ')}` : ''}${problem ? ' · has a problem' : ''}`;
     // The round badge marks the loop body's active node; the others say
     // their round in the tooltip.
     // A join some tracks reached says which it still waits for.
@@ -743,7 +748,7 @@ export function ProcessMiniGraph({
     const inner = isTerminalKind(node.kind)
       ? html`<span class="pk-gnode-label">${node.kind}</span>`
       : node.kind === 'decision'
-        ? html`<span class="pk-gnode-label">${node.label}</span>${!compact && node.caption && html`<span class="pk-gnode-caption">${node.caption}</span>`}${badge}`
+        ? html`<span class="pk-gnode-label">${node.label}</span>${!compact && node.caption && html`<span class="pk-gnode-caption">${node.caption}</span>`}${badge}${node.rule && html`<span class="pk-rule ui-tag ui-tag-accent" data-process-rule=${node.rule.choice?.outcome || ''} aria-hidden="true">⚙ ${node.rule.choice?.outcome || 'rule'}</span>`}`
         : html`<${ProcessNodeGlyph} kind=${node.kind} wizard=${wizard} /><span class="pk-gnode-text"><span class="pk-gnode-label">${node.label}${retryBadge}</span>${!compact && node.sub && html`<span class="pk-gnode-sub">${node.sub}</span>`}</span><${ProcessPerformers} performers=${node.performers} />${badge}`;
     // Performer ids let the Groups Both lens link a step to its agents' rows.
     const performerIds = (node.performers || []).map((performer) => performer?.id).filter(Boolean).join(' ') || undefined;

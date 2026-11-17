@@ -9,6 +9,7 @@
 // comes from the run API beside the context read model, refreshed on each
 // snapshot poll while the focus is open.
 
+import { choiceWords, ruleWords } from './process-rules.js';
 import { h } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
@@ -147,6 +148,7 @@ function performerText(node, nameOf, wizard) {
   const kind = String(performer.kind || '').toLowerCase();
   if (kind === 'human') return wizard ? 'any keeper' : 'any operator';
   if (kind === 'program' || kind === 'command') return wizard ? 'an incantation' : 'program';
+  if (kind === 'rule') return wizard ? 'its own law' : 'its rule, nobody is asked';
   const ref = performer.ref && performer.ref !== 'unassigned' ? performer.ref : '';
   if (!ref) return kind === 'agent' ? 'unassigned' : '—';
   return nameOf(ref) || performer.name || performer.label || ref;
@@ -211,6 +213,8 @@ export function RunNodeInspector({ run, node, detail, nameOf, wizard = false, on
   const upstream = edges.filter((edge) => String(edge.to) === node.id).map((edge) => byId.get(String(edge.from))).filter(Boolean);
   const downstream = edges.filter((edge) => String(edge.from) === node.id).map((edge) => byId.get(String(edge.to))).filter(Boolean);
   const view = detail.view;
+  const stepName = (id) => byId.get(id)?.label || id;
+  const chose = node.rule ? choiceWords(node.rule, stepName) : null;
   const bounds = programBounds(node);
   const decision = nodeDecision(view, node.id);
   // A vote is decided under its own id, shown on its gate.
@@ -234,6 +238,8 @@ export function RunNodeInspector({ run, node, detail, nameOf, wizard = false, on
       ${bounds && html`<dt>runs</dt><dd class=${bounds.warning ? 'grf-blocked' : ''} title=${bounds.cwd || undefined} data-run-bounds>${bounds.warning || bounds.text}</dd>`}
       <dt>upstream</dt><dd>${neighbours(upstream)}</dd>
       <dt>downstream</dt><dd>${neighbours(downstream)}</dd>
+      ${node.rule && html`<dt>rule</dt><dd data-run-rule>${ruleWords(node.rule, stepName)}</dd>`}
+      ${chose && html`<dt>chose</dt><dd data-run-rule-choice>${chose.said}${chose.read && html`<br /><span class="grf-muted">read: ${chose.read}</span>`}</dd>`}
       ${gate && html`<dt>${wizard ? 'accord' : 'tally'}</dt><dd data-run-gate=${node.id}>${gate.summary}</dd>`}
       ${blocked && html`<dt>blocked</dt><dd class="grf-blocked">${blocked.reason || 'parked on an operator'}</dd>`}
     </dl>
