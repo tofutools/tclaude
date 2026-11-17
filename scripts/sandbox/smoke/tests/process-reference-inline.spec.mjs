@@ -1,7 +1,7 @@
 // The operator's simple reference implementation process (tk_c324d5a4,
 // example 2), clicked together in the inline editor on the Groups tab in a
-// real browser: + after, ⑂ branch, the inspector's name, text, Who, outcome
-// and Which-agent fields, and the params row. The saved template must be the
+// real browser: + after, ⑂ branch, a new step's name typed straight in and
+// Tab on to its text, Who, outcomes, Which agent, and the params row. The saved template must be the
 // one jstest/process-reference-recipes.mjs builds with the same operations
 // (the fixture the Go tests validate and run). SHOTS=<dir> also saves the
 // finished graph, the advanced example's graph (from the recipe's fixture,
@@ -101,12 +101,18 @@ test('the simple reference process clicks together inline into what its recipe b
     await select.selectOption(value);
   };
   // fill gives the selected step its name (its id follows), text and Who.
+  // A step just added opens on its name: it is typed straight in, and Tab
+  // goes on to what it does.
   const fill = async ({ name, text, who }) => {
-    await field(inspector.locator('[data-mini-name]'), name);
+    await expect(inspector.locator('[data-mini-name]')).toBeFocused();
+    await page.keyboard.type(name);
+    await page.keyboard.press('Tab');
     // A draft's step ids follow their names (process-step-ids.js stepSlug).
     const slug = name.toLowerCase().replace(/[^a-z0-9._-]+/g, '-').replace(/^[^a-z0-9]+/, '').replace(/-+$/, '');
     await expect(inspector).toHaveAttribute('data-mini-inspector', slug);
-    await field(inspector.locator('[data-mini-text]'), text);
+    await expect(inspector.locator('[data-mini-text]')).toBeFocused();
+    await page.keyboard.type(text);
+    await inspector.locator('[data-mini-text]').blur();
     if (who) await choose(inspector.locator('.gq-who-select'), who);
     return selected();
   };
@@ -171,6 +177,11 @@ test('the simple reference process clicks together inline into what its recipe b
   await expect(dialog).toHaveCount(0);
   await expect(editor.locator('[data-mini-param="auto_merge"]')).toHaveText('auto_merge: boolean = false');
   await select(merge);
+  // ⑂ on an answer's row offers a step on that answer (not used here).
+  await inspector.locator('[data-mini-answer-step="leave"]').click();
+  await expect(page.locator('[data-mini-picker="answer"] [data-mini-kind="agent"]')).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(page.locator('[data-mini-picker]')).toHaveCount(0);
   await inspector.getByRole('button', { name: 'done' }).click();
 
   // It saves itself, as the recipe builds it, with no problems.

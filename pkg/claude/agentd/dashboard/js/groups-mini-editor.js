@@ -25,7 +25,7 @@ import {
   deleteOrphans, deleteStep, draftProjection, duplicate, insertAfter, insertBefore, isStep, miniKind, outcomesOf,
   canRemoveOutcome, removeOutcome, renameOutcome, runAlongside, setLoopRounds, setOutcomeTarget, targetsFor, updateStep,
   addDecider, canAddDecider, gateDeciders, removeDecider, setAgree, setDecider,
-  exhaustionOptions, setDecisionWho, setExhaustion, declareParams, setParams,
+  exhaustionOptions, setDecisionWho, setExhaustion, declareParams, setParams, insertOnAnswer,
 } from './process-mini-edit.js';
 import { LOOP_MAX_ROUNDS, LOOP_MIN_ROUNDS, loopBound, normalizeRounds } from './process-loops.js';
 import {
@@ -268,8 +268,17 @@ function FailureRow({ id, failure, staged = false, onChange }) {
 // FAILURE_RETRIES_DEFAULT is the retries "retry, then hold it for me" starts at.
 const FAILURE_RETRIES_DEFAULT = 2;
 
-function Inspector({ view, id, roster, roles, fallbackInfo, onApply, onRename, onKind, onClose, onFullEditor }) {
+function Inspector({ view, id, roster, roles, fallbackInfo, onApply, onRename, onKind, onClose, onFullEditor, onAnswerStep, fresh = 0 }) {
   const node = view.template.nodes[id];
+  // A step just added opens with its name ready to type: naming it is part
+  // of adding it, and Tab goes on to what it does.
+  const box = useRef(null);
+  useEffect(() => {
+    if (!fresh) return;
+    const input = box.current?.querySelector?.('[data-mini-name]');
+    input?.focus?.();
+    input?.select?.();
+  }, [fresh]);
   // The gate's Asks as last shown, per gate: a tie keeps it, so giving one
   // decider its own ask never swaps which text is the shared one.
   const shownAsk = useRef({});
@@ -311,7 +320,7 @@ function Inspector({ view, id, roster, roles, fallbackInfo, onApply, onRename, o
   // What this step's text can read: the other steps' outputs.
   const readable = Object.entries(view.template.nodes).filter(([other]) => other !== id)
     .flatMap(([, other]) => other.captures || []);
-  return html`<div class="gm-inspector" data-mini-inspector=${id} role="dialog" aria-label=${`Step ${node.name || id}`}
+  return html`<div ref=${box} class="gm-inspector" data-mini-inspector=${id} role="dialog" aria-label=${`Step ${node.name || id}`}
     onKeyDown=${(event) => { if (event.key === 'Escape') { event.stopPropagation(); onClose(); } }}>
     <label class="gm-field"><span>Step</span><${TypedField} name="groups-mini-editor-input" type="text" data-mini-name value=${node.name || ''} placeholder=${id}
       onChange=${(event) => onRename(event.currentTarget.value)} /></label>
@@ -364,6 +373,9 @@ function Inspector({ view, id, roster, roles, fallbackInfo, onApply, onRename, o
           ≤<${TypedField} name="groups-mini-editor-input" type="number" min=${LOOP_MIN_ROUNDS} max=${LOOP_MAX_ROUNDS} aria-label=${`Rounds for ${outcome}`} value=${loopBound(node, outcome).maxIterations}
             onChange=${(event) => { const rounds = normalizeRounds(event.currentTarget.value); if (rounds) onApply(setLoopRounds(view, id, outcome, rounds)); else event.currentTarget.value = String(loopBound(node, outcome).maxIterations); }} /> rounds</label>`}
         ${loopBound(node, outcome) && html`<${ExhaustionPicker} view=${view} id=${id} outcome=${outcome} value=${loopBound(node, outcome).onExhausted || ''} onApply=${onApply} />`}
+        ${node.type === 'decision' && !loopBound(node, outcome) && onAnswerStep && html`<${Button} size="sm" icon=${true} variant="ghost" data-mini-answer-step=${outcome}
+          aria-label=${`A new step on ${outcome}`} title=${`A new step on ${outcome}, before where it goes now`}
+          onClick=${(event) => onAnswerStep(outcome, event)}>⑂<//>`}
         ${node.type === 'decision' && !canRemoveOutcome(view, id, outcome) && html`<${Button} size="sm" icon=${true} variant="ghost danger" aria-label=${`Remove ${outcome}`}
           onClick=${() => onApply(removeOutcome(view, id, outcome))}>✕<//>`}
       </span>`)}
@@ -590,6 +602,8 @@ export function MiniGraphEditor({
     const result = idsFollowNames ? followName(named.view, id) : named;
     apply(result, result.id);
   };
+  // fresh counts steps just added: their inspector opens on the name.
+  const [fresh, setFresh] = useState(0);
   const run = (op) => {
     setMenu(null);
     setPicker(null);
@@ -597,6 +611,7 @@ export function MiniGraphEditor({
       const result = op();
       if (result.view === draft) return;
       apply(result, result.id && result.view.template.nodes[result.id] ? result.id : '');
+      if (result.id && !draft.template.nodes[result.id] && isStep(result.view.template.nodes[result.id])) setFresh((n) => n + 1);
     } catch (cause) {
       setError(cause.message);
     }
@@ -866,7 +881,7 @@ export function MiniGraphEditor({
       const box = event.currentTarget?.getBoundingClientRect?.() || { left: 0, bottom: 0 };
       if (!why) setPicker({ op, id, cx: box.left, cy: box.bottom + 4 });
     }}>${glyph}<span>${text}</span></button>`;
-  const OPS = { after: insertAfter, branch, alongside: runAlongside, before: insertBefore };
+  const OPS = { after: insertAfter, branch, alongside: runAlongside, before: insertBefore, answer: (v, id, kind) => insertOnAnswer(v, id, picker.outcome, kind) };
   const dropOp = (id) => (draft.template.nodes[id]?.type === 'decision' && !canBranch(draft, id) ? 'branch' : 'after');
   // overlay draws, over the laid-out graph: the hovered (or selected) step's
   // handles, a drag's ghost, the kind picker and the structure menu.
@@ -884,7 +899,7 @@ export function MiniGraphEditor({
     </span>`}
       ${drag?.moved && html`<span class="gm-ghost" style=${`left:${drag.x}px;top:${drag.y}px`}>+ new step</span>`}
       ${picker && html`<div class="gm-picker" data-mini-picker=${picker.op} style=${floating(picker, 300, 40)}>
-        <${KindChips} label=${`${{ after: 'Add after', branch: 'Branch to', alongside: 'Run alongside', before: 'Insert before' }[picker.op]}`}
+        <${KindChips} label=${`${{ after: 'Add after', branch: 'Branch to', alongside: 'Run alongside', before: 'Insert before', answer: `On ${picker.outcome}` }[picker.op]}`}
           choices=${picker.op === 'branch' ? branchChoices(draft, picker.id) : picker.op === 'alongside' ? KIND_CHOICES : INSERT_CHOICES}
           onPick=${(kind) => run(() => OPS[picker.op](draft, picker.id, kind))} />
         <${Button} size="sm" variant="link" class="gq-link" aria-label="Close" onClick=${() => setPicker(null)}>✕<//>
@@ -925,8 +940,12 @@ export function MiniGraphEditor({
     setPicker({ op: 'after', id: startId, cx: box.left, cy: box.bottom + 4 });
   };
   return html`<section ref=${cardRef} class="gm-card ui-card ui-inset" aria-label=${`Edit ${name} of ${group.name}`} data-mini-editor=${process.templateId}
-    onKeyDown=${(event) => {
+    onKeyDownCapture=${(event) => {
+      // An open picker or menu closes first, before the inspector's own
+      // Escape (which would close the step instead).
       if (event.key === 'Escape' && (menu || picker)) { event.stopPropagation(); setMenu(null); setPicker(null); }
+    }}
+    onKeyDown=${(event) => {
       if ((event.ctrlKey || event.metaKey) && event.key === 'z' && !/INPUT|TEXTAREA|SELECT/.test(event.target?.tagName || '')) { event.preventDefault(); undo(); }
     }}>
     <div class="gm-head">
@@ -1003,6 +1022,11 @@ export function MiniGraphEditor({
       onView=${startFrom} onDescribe=${onDescribe ? (text) => void describe(text) : null} onImport=${onImport ? importPwf : null} />`}
     ${selected && html`<${Inspector} view=${draft} id=${selected} roster=${roster} roles=${roles} fallbackInfo=${fallbackInfo}
       onApply=${(result) => apply(result)} onRename=${(value) => renameStep(selected, value)} onClose=${() => setSelected('')} onFullEditor=${fullEditor}
+      fresh=${fresh} onAnswerStep=${(outcome, event) => {
+        const box = event.currentTarget?.getBoundingClientRect?.() || { left: 0, bottom: 0 };
+        setMenu(null);
+        setPicker({ op: 'answer', id: selected, outcome, cx: box.left, cy: box.bottom + 4 });
+      }}
       onKind=${(kind, who) => run(() => {
         const result = changeKind(draft, selected, kind);
         return who ? updateStep(result.view, selected, (s) => setStepWho(s, who)) : result;

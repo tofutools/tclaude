@@ -13,18 +13,27 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import * as m from '../dashboard/js/process-mini-edit.js';
 import { addReviewer } from '../dashboard/js/process-gate-deciders.js';
 import { advanced, simple } from './process-reference-recipes.mjs';
+import { canonical, fullAdvanced, fullSimple } from './process-reference-full.mjs';
 
 const FIXTURE = new URL('./process-reference-recipes.json', import.meta.url);
 
 // BUDGET is how many inline edits each process takes today. A change that
 // makes building one harder fails here; one that makes it easier lowers
 // the number (and should lower the budget with it).
-const BUDGET = { simple: 45, advanced: 83 };
+const BUDGET = { simple: 36, advanced: 68 };
+// FULL_BUDGET is the same for the full editor (process-reference-full.mjs),
+// which names a node apart from adding it and has no Who picker.
+const FULL_BUDGET = { simple: 59, advanced: 107 };
 
 const built = { simple: simple(), advanced: advanced() };
+const full = { simple: fullSimple(), advanced: fullAdvanced() };
 
 if (process.env.UPDATE_REFERENCE_RECIPES) {
-  const cases = Object.fromEntries(Object.entries(built).map(([key, e]) => [key, e.view]));
+  const cases = Object.fromEntries([
+    ...Object.entries(built).map(([key, e]) => [key, e.view]),
+    // The full editor's builds are validated and executed by the Go test too.
+    ...Object.entries(full).map(([key, e]) => [`${key}-full`, e.view()]),
+  ]);
   writeFileSync(FIXTURE, `${JSON.stringify({ cases }, null, 1)}\n`);
 }
 const fixture = JSON.parse(readFileSync(FIXTURE, 'utf8'));
@@ -144,4 +153,23 @@ test('+ another decider keeps a first decider who names nobody off the reviewed 
   const open = m.insertAfter(built.simple.view, 'build-the-feature', 'decide');
   const gate = addReviewer(open.view, open.id).view.template.nodes[open.id];
   assert.deepEqual(gate.deciders.map((d) => d.differentFrom), [['build-the-feature'], ['build-the-feature']]);
+});
+
+for (const key of Object.keys(FULL_BUDGET)) {
+  test(`${key}: the full editor builds the same process within ${FULL_BUDGET[key]} edits`, () => {
+    const e = full[key];
+    assert.ok(e.ops.length <= FULL_BUDGET[key], `${key} took ${e.ops.length} full-editor edits, over ${FULL_BUDGET[key]}:\n${e.ops.join('\n')}`);
+    assert.deepEqual(canonical(e.view()), canonical(built[key].view), 'the same steps, Who, text, answers, loops and params as the inline editor builds');
+    assert.deepEqual(e.view(), fixture.cases[`${key}-full`]);
+  });
+}
+
+test('⑂ on an answer puts a new step on that answer, before where it went', () => {
+  const { view } = built.simple;
+  const out = m.insertOnAnswer(view, 'merge', 'leave', 'you');
+  assert.equal(to(out.view, 'merge', 'leave'), out.id);
+  assert.equal(to(out.view, out.id, 'continue'), 'end');
+  assert.equal(to(out.view, 'merge', 'merge'), 'merge-the-pr', 'the other answers stay');
+  assert.throws(() => m.insertOnAnswer(view, 'iterate-or-move-on', 'iterate', 'agent'), /goes back/);
+  assert.throws(() => m.insertOnAnswer(view, 'ready-the-pr', 'next', 'agent'), /decision/);
 });
