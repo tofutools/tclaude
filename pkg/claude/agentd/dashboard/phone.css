@@ -253,6 +253,10 @@
 :root[data-layout="phone"] .phone-list > li { border-bottom: var(--phone-row-sep); }
 /* A row's ⋯ (RowMore). */
 :root[data-layout="phone"] .phone-row-more { flex: none; color: var(--ui-muted-text); }
+/* A row's chevron ›: its size (--phone-row-chev) never sets the row's
+   height. */
+:root[data-layout="phone"] :is(.phone-config-chevron, .phone-session-chevron, .phone-grant-more, .phone-doctor-more,
+  .phone-row-chev, .phone-usage-go, .phone-agents-chev) { line-height: 1; }
 
 /* A chip row (phone-ui.js ChipRow, or any tab row with .phone-chips): rounded
    chips in a row that scrolls sideways, edge to edge. A chip is drawn 32px
