@@ -179,7 +179,18 @@ var RedactMirroredForTest = redactMirrored
 // fixture (jstest/process-mini-edit-cases.json) as the dashboard's save does,
 // so a flow test runs exactly the template the editor builds.
 func MiniEditCaseTemplateForTest(key string) (*model.Template, error) {
-	raw, err := os.ReadFile("jstest/process-mini-edit-cases.json")
+	return editCaseTemplate("jstest/process-mini-edit-cases.json", key)
+}
+
+// ReferenceRecipeTemplateForTest is one of the operator's reference
+// processes as the inline editor builds it (jstest/process-reference-recipes.json):
+// "simple" or "advanced", validated as the editor saves it.
+func ReferenceRecipeTemplateForTest(key string) (*model.Template, error) {
+	return editCaseTemplate("jstest/process-reference-recipes.json", key)
+}
+
+func editCaseTemplate(path, key string) (*model.Template, error) {
+	raw, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}

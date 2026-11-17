@@ -17,7 +17,20 @@ import (
 // quick-start starter, must leave a template with no error diagnostics that
 // the engine can execute.
 func TestMiniEditCasesAreRunnable(t *testing.T) {
-	raw, err := os.ReadFile("jstest/process-mini-edit-cases.json")
+	requireEditCasesRunnable(t, "jstest/process-mini-edit-cases.json")
+}
+
+// TestReferenceProcessesAreRunnable: the operator's two reference
+// implementation processes, as jstest/process-reference-recipes.test.mjs
+// builds them with the inline editor's operations, save without an error and
+// execute (tk_c324d5a4). process_reference_recipes_flow_test.go runs them.
+func TestReferenceProcessesAreRunnable(t *testing.T) {
+	requireEditCasesRunnable(t, "jstest/process-reference-recipes.json")
+}
+
+func requireEditCasesRunnable(t *testing.T, path string) {
+	t.Helper()
+	raw, err := os.ReadFile(path)
 	require.NoError(t, err)
 	var fixture struct {
 		Cases map[string]*processTemplateEditView `json:"cases"`

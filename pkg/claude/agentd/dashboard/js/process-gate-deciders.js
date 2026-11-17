@@ -7,6 +7,7 @@
 
 import { firstSpawn } from './process-quickstart.js';
 import { expandParamShorthand } from './process-step-list.js';
+import { addDecider, gateDeciders } from './process-mini-edit.js';
 
 function clone(value) {
   return JSON.parse(JSON.stringify(value));
@@ -124,6 +125,21 @@ export function withReviewerDefault(view, id, index) {
   if (decider?.kind !== 'agent' || decider.assignee || decider.sameAs || decider.differentFrom?.length) return { view, id };
   const reviewed = reviewedStep(view, id);
   return reviewed ? setDeciderNot(view, id, index, [reviewed]) : { view, id };
+}
+
+// addReviewer is a gate's + another decider: a new agent decider kept off
+// the reviewed step's agent, and so is the first decider when this makes the
+// plain decision a gate (it was its own performer, picked before there was a
+// gate to review for) and names nobody yet or anyone: a lead or a role was
+// picked on purpose, and kept off a step that lead or role did it could
+// never vote.
+export function addReviewer(view, id) {
+  const index = gateDeciders(view.template.nodes[id]).length;
+  const added = addDecider(view, id, { mode: 'nobody' });
+  const was = view.template.nodes[id]?.performer;
+  const open = index === 1 && was?.kind === 'agent' && !was.lead && !was.role && !was.profile;
+  const first = open ? withReviewerDefault(added.view, id, 0).view : added.view;
+  return withReviewerDefault(first, id, index);
 }
 
 // spawns says whether decider spawns when no member can vote: its own

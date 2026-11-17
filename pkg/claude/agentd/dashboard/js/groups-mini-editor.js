@@ -15,6 +15,7 @@
 
 import { h } from 'preact';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
+import { shellConfirmDiscard } from './shell-state.js';
 import { useDismissablePopover } from './hover-popover.js';
 import htm from 'htm';
 import { ProcessMiniGraph } from './process-kit.js';
@@ -24,7 +25,7 @@ import {
   deleteOrphans, deleteStep, draftProjection, duplicate, insertAfter, insertBefore, isStep, miniKind, outcomesOf,
   canRemoveOutcome, removeOutcome, renameOutcome, runAlongside, setLoopRounds, setOutcomeTarget, targetsFor, updateStep,
   addDecider, canAddDecider, gateDeciders, removeDecider, setAgree, setDecider,
-  exhaustionOptions, setDecisionWho, setExhaustion,
+  exhaustionOptions, setDecisionWho, setExhaustion, declareParams, setParams,
 } from './process-mini-edit.js';
 import { LOOP_MAX_ROUNDS, LOOP_MIN_ROUNDS, loopBound, normalizeRounds } from './process-loops.js';
 import {
@@ -35,7 +36,7 @@ import { openProcessDraft } from './process-draft-handoff.js';
 import { followName } from './process-step-ids.js';
 import {
   deciderOwnAsk, deciderSummary, gateAsk, setDeciderAsk, setDeciderFallback, setDeciderNot, setGateAsk, spawnIfNobody,
-  stuckGate, withReviewerDefault,
+  addReviewer, stuckGate, withReviewerDefault,
 } from './process-gate-deciders.js';
 import {
   AUTOSAVE_DELAY_MS, DRAFT_DESCRIPTION_MAX, FallbackPicker, TypedField, UNTITLED_PROCESS, WhoPicker, defaultNotify, inheritLabel, useSpawnProfiles,
@@ -219,7 +220,7 @@ function GateDeciders({ view, id, shared, roster, roles, fallbackInfo, noMoreDec
       open=${!!rows[index]} onToggle=${() => toggle(index)} roster=${roster} roles=${roles} fallbackInfo=${fallbackInfo}
       onApply=${(change) => { if (change.view !== view && deciders.length !== change.view.template.nodes[id]?.deciders?.length) setOpen({ id, rows: {} }); onApply(change); }} />`)}
     <div><${Button} size="sm" icon=${true} class="gm-add-outcome" data-mini-add-decider title=${noMoreDeciders || 'Add a decider'} disabled=${!!noMoreDeciders}
-      onClick=${() => { const added = addDecider(view, id, { mode: 'nobody' }); onApply(withReviewerDefault(added.view, id, deciders.length)); }}>+<//></div>
+      onClick=${() => onApply(addReviewer(view, id))}>+<//></div>
     ${stuck && html`<p class="gm-stuck" role="status" data-mini-stuck=${stuck.index}>${`⚠ ${stuck.deciders} agent deciders but ${stuck.members} ${stuck.noun} in the group: the ${ordinal(stuck.index)} vote waits forever.`}${fix
     ? html` <${Button} size="sm" variant="link" class="gq-link" data-mini-stuck-fix
         onClick=${() => onApply(setDeciderFallback(view, id, stuck.index, fix))}>Spawn one if nobody<//> (${fix.profile ? `with ${fix.profile}, ` : ''}on decider ${stuck.index + 1})`
@@ -331,7 +332,7 @@ function Inspector({ view, id, roster, roles, fallbackInfo, onApply, onRename, o
       defaultSpawnProfile=${fallbackInfo.defaultSpawnProfile} onChange=${setWho} />
       ${node.type === 'decision' && kind !== 'command' && html`<${Button} size="sm" variant="link" class="gq-link" data-mini-add-decider
         disabled=${!!noMoreDeciders} title=${noMoreDeciders || 'Several decide together: all must agree'}
-        onClick=${() => { const added = addDecider(view, id, { mode: 'nobody' }); onApply(withReviewerDefault(added.view, id, 1)); }}>+ another decider<//>`}</div>
+        onClick=${() => onApply(addReviewer(view, id))}>+ another decider<//>`}</div>
       ${node.type === 'decision' && kind === 'agent' && html`<div class="gm-field" data-mini-decided-by=${id}><span>Decided by</span>
         <span class="gq-dim">🤖 ${whoLine(node, fallbackInfo).replace(/^pick who$/, 'the agent you pick')} reports one outcome as its verdict. Nobody is asked.</span></div>`}`}
     ${others.length > 0 && html`<div class="gm-field" data-mini-constraint=${id}><span>Which agent</span><${Select} size="sm" aria-label="Which agent does this step"
@@ -569,11 +570,14 @@ export function MiniGraphEditor({
   const profiles = useSpawnProfiles(api);
   const fallbackInfo = { fallback: draft.template.fallback || null, defaultSpawnProfile: String(groupInfo?.defaultSpawnProfile || ''), profiles };
   // apply lands one operation's result as one undoable edit.
-  const apply = (result, focus = undefined) => {
+  // declare: false for the Params dialog's own edit, which may rename or
+  // drop a param on purpose (validation then names the steps still using it).
+  const apply = (result, focus = undefined, { declare = true } = {}) => {
     touched.current = true;
     setError('');
     setNotice(null);
-    model.current.applyDraft(result.view);
+    // A {{param}} a step now uses is declared with it (declareParams).
+    model.current.applyDraft(declare ? declareParams(result.view) : result.view);
     setRev(model.current.rev);
     if (focus !== undefined) setSelected(focus);
   };
@@ -596,6 +600,30 @@ export function MiniGraphEditor({
     } catch (cause) {
       setError(cause.message);
     }
+  };
+  // editParams opens the full editor's Params dialog over this draft: what
+  // it applies lands as one undoable edit (setParams), on the draft as it is
+  // then, since a newer version may have been merged in meanwhile.
+  const paramsDialog = useRef(null);
+  useEffect(() => () => paramsDialog.current?.(), []);
+  const editParams = async () => {
+    if (paramsDialog.current) return;
+    paramsDialog.current = () => {};
+    const { openProcessParamsDialog } = await import('./process-params-dialog.js');
+    if (!mounted.current) { paramsDialog.current = null; return; }
+    paramsDialog.current = openProcessParamsDialog({
+      model: {
+        template: viewOf(model.current).template,
+        setParams: (params) => {
+          const now = viewOf(model.current);
+          if (JSON.stringify(params || {}) === JSON.stringify(now.template.params || {})) return false;
+          apply(setParams(now, params), undefined, { declare: false });
+          return true;
+        },
+      },
+      onClosed: () => { paramsDialog.current = null; },
+      confirmDiscard: shellConfirmDiscard,
+    });
   };
   const undo = () => { if (model.current.undo()) { setRev(model.current.rev); setSelected(''); setNotice(null); } };
   const stepsList = viewToStepList(draft);
@@ -984,6 +1012,12 @@ export function MiniGraphEditor({
       ${errors.length > 0 && html`<span class="gq-error ui-error" role="alert" data-mini-problems=${errors.length}>${`${errors.length} problem${errors.length === 1 ? '' : 's'}: `}${firstProblem && html`<${Button} size="sm" variant="link" class="gq-link gm-problem-step" data-mini-problem-step=${firstProblem}
           title="Select this step" onClick=${() => { setMenu(null); setPicker(null); setSelected(firstProblem); }}>${draft.template.nodes[firstProblem].name || firstProblem}<//>`}${firstProblem ? ': ' : ''}${errors[0].message}${problemIds.size > 1 ? ` (${problemIds.size} steps outlined)` : ''}</span>`}
       <span class="gq-spacer"></span>
+      <span class="gm-params" data-mini-params=${Object.keys(draft.template.params || {}).join(',')}>
+        ${Object.entries(draft.template.params || {}).map(([pname, param]) => html`<span key=${pname} class="ui-tag" data-mini-param=${pname}
+          title=${param.description || ''}>${pname}${param.type && param.type !== 'string' ? `: ${param.type}` : ''}${param.default !== undefined ? ` = ${String(param.default)}` : ''}</span>`)}
+        <${Button} size="sm" variant="link" class="gq-link" data-mini-params-edit title="Declare the process's parameters: {{name}} in a step's text uses one"
+          onClick=${() => void editParams()}>${Object.keys(draft.template.params || {}).length ? 'edit params' : '+ params'}<//>
+      </span>
       ${!process.listed && html`<label class="gq-dim"><input name="groups-mini-editor-input" type="checkbox" data-mini-publish checked=${publish}
         onChange=${(event) => setPublish(event.currentTarget.checked)} /> also publish to the library</label>`}
     </div>
