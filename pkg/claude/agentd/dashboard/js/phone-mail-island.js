@@ -51,7 +51,7 @@ import { trustLock } from './lock-reason.js';
 import { usePhoneBar, usePhonePage } from './phone-page.js';
 import { NavToggle, navShown } from './phone-nav-toggle.js';
 import { Button } from './ui-components.js';
-import { Avatar, ChipRow, SheetHead, avatarHue } from './phone-ui.js';
+import { Avatar, avatarHue, ChipRow, Empty, ErrorNote, errorText, SheetHead } from './phone-ui.js';
 import { findAgentRoute } from './agent-route.js';
 
 const html = htm.bind(h);
@@ -338,7 +338,7 @@ export function MailboxSheet({ controller, close }) {
       value=${current.boxQuery} onInput=${(event) => controller.setBoxQuery(event.currentTarget.value)} />
     <ul class="phone-menu">${view.agents.map((mailbox) => item(mailbox.id, controller.mailboxLabel(mailbox), mailbox.unread,
       html`<${Avatar} name=${controller.mailboxLabel(mailbox)} />`))}</ul>
-    ${view.agents.length === 0 && html`<p class="ui-empty phone-empty">No agent mailboxes${current.boxQuery ? ' match' : ''}.</p>`}
+    ${view.agents.length === 0 && html`<${Empty}>No agent mailboxes${current.boxQuery ? ' match' : ''}.<//>`}
     ${view.moreAgents > 0 && html`<${LoadMore} shown=${view.agents.length} total=${view.agentsTotal}
       busy=${current.busy} what="agent mailboxes" onMore=${controller.loadMoreAgents} />`}
     <${MailFooterToggles} idPrefix="phone-mail" busy=${current.busy}
@@ -398,17 +398,16 @@ function MailList({ current, controller, model, open, listScroll, active }) {
   }, active);
   let rows;
   if (current.messageRequest?.phase === 'error') {
-    rows = html`<div class="ui-error-box" role="alert">Messages failed to load: ${current.messageRequest.error}
-      <${Button} size="sm" onClick=${controller.reloadMessagesPage}>Retry<//></div>`;
+    rows = html`<${ErrorNote} onRetry=${controller.reloadMessagesPage}>${errorText('the messages', current.messageRequest.error)}<//>`;
   } else if (model.access) {
     const list = [...model.pendingAccess, ...model.handledAccess];
     rows = list.length === 0
-      ? html`<p class="ui-empty phone-empty">${model.allAccess.length ? 'No access requests match.' : 'No access requests.'}</p>`
+      ? html`<${Empty}>${model.allAccess.length ? 'No access requests match.' : 'No access requests.'}<//>`
       : html`<ul class="phone-list phone-mail-list">${list.map((request) => html`<${AccessRow} key=${request.id}
           request=${request} open=${open} controller=${controller} />`)}</ul>`;
   } else {
     rows = model.messages.length === 0
-      ? html`<p class="ui-empty phone-empty">${current.totalUnfiltered ? 'No messages match.' : 'This mailbox is empty.'}</p>`
+      ? html`<${Empty}>${current.totalUnfiltered ? 'No messages match.' : 'This mailbox is empty.'}<//>`
       : html`<ul class="phone-list phone-mail-list">${model.messages.map((message) => html`<${MessageRow} key=${message.id}
           message=${message} folder=${folder} aggregate=${aggregate} open=${open} controller=${controller}
           selecting=${selecting} selected=${current.selectedMsgs.has(message.id)} />`)}</ul>`;

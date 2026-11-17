@@ -22,7 +22,7 @@ import { PhoneGrant, grantFor } from './phone-grant.js';
 import { createMessageAccessDialogActions } from './message-access-dialog-actions.js';
 import { DesktopOnlyNote } from './phone-desktop-only.js';
 import { usePhoneBar } from './phone-page.js';
-import { ChipRow, Section } from './phone-ui.js';
+import { ChipRow, Empty, ErrorNote, Section } from './phone-ui.js';
 import { Button, Input } from './ui-components.js';
 
 const html = htm.bind(h);
@@ -53,7 +53,7 @@ function Requests({ snapshot, current, actions, fetchImpl, notify, openInMail })
   const agents = companionAgents(snapshot);
   return html`<div class="phone-access-requests">
     <${Section} title="Waiting on you">
-      ${!requests.length && !elsewhere && html`<p class="ui-empty phone-empty">No access request is waiting for you.</p>`}
+      ${!requests.length && !elsewhere && html`<${Empty}>No access request is waiting for you.<//>`}
       ${requests.map((request) => {
         const agent = agents.get(request.agent_id);
         return html`<${PhoneApprovalCard} key=${request.id} request=${request} fetchImpl=${fetchImpl} notify=${notify}
@@ -72,7 +72,7 @@ function Requests({ snapshot, current, actions, fetchImpl, notify, openInMail })
 // (and the uses left, when the grant has a use limit) and why, each with its
 // Revoke.
 function SudoRows({ current, actions }) {
-  return html`${current.mutation.error && html`<div role="alert" class="ui-error-box">${current.mutation.error}</div>`}
+  return html`${current.mutation.error && html`<${ErrorNote}>${current.mutation.error}<//>`}
     <ul class="phone-list">${current.sudo.map((grant) => {
       const busy = current.mutation.busy.has(`revoke:${grant.id}`);
       return html`<li key=${grant.id} class="phone-access-row" data-key=${`sudo-${grant.id}`}>
@@ -91,8 +91,8 @@ function SudoRows({ current, actions }) {
 function Sudo({ current, actions }) {
   return html`<div class="phone-access-sudo">
     ${!current.sudo.length
-      ? html`${current.mutation.error && html`<div role="alert" class="ui-error-box">${current.mutation.error}</div>`}
-        <p class="ui-empty phone-empty">${current.sudoAvailable ? 'No active sudo grants. + Grant gives one.' : 'Sudo grants are not in the latest snapshot.'}</p>`
+      ? html`${current.mutation.error && html`<${ErrorNote}>${current.mutation.error}<//>`}
+        <${Empty}>${current.sudoAvailable ? 'No active sudo grants. + Grant gives one.' : 'Sudo grants are not in the latest snapshot.'}<//>`
       : html`<${SudoRows} current=${current} actions=${actions} />`}
   </div>`;
 }
@@ -105,7 +105,7 @@ function SlugTags({ slugs, denied = false }) {
 
 function Agents({ current }) {
   const [defaults, setDefaults] = useState(false);
-  if (!current.permissions) return html`<p class="ui-empty phone-empty">Permissions are not in the latest snapshot.</p>`;
+  if (!current.permissions) return html`<${Empty}>Permissions are not in the latest snapshot.<//>`;
   const count = current.defaults.length;
   return html`<div class="phone-access-agents">
     <button data-ui-exempt type="button" class="phone-access-defaults" aria-expanded=${defaults ? 'true' : 'false'}
@@ -113,7 +113,7 @@ function Agents({ current }) {
       <span aria-hidden="true">${defaults ? '⌄' : '›'}</span></button>
     ${defaults && html`<div class="phone-access-tags phone-access-default-tags">${current.defaults.map((slug) => html`<span key=${slug} class="phone-access-slug base">${slug}</span>`)}</div>`}
     ${!current.permissionRows.length
-      ? html`<p class="ui-empty phone-empty">No agent has grants or denials beyond the defaults.</p>`
+      ? html`<${Empty}>No agent has grants or denials beyond the defaults.<//>`
       : html`<ul class="phone-list">${current.permissionRows.map((row) => html`<li key=${row.convId} class="phone-access-row" data-key=${row.convId}>
         <div class="phone-access-text">
           <span class="phone-access-name">${row.title} <span class="phone-access-id">· ${shortAgentId(row.agentId, row.convId)}</span></span>
@@ -126,13 +126,13 @@ function Agents({ current }) {
 
 function Slugs({ state, current }) {
   const [all, setAll] = useState(false);
-  if (!current.slugs) return html`<p class="ui-empty phone-empty">The slug registry is not in the latest snapshot.</p>`;
+  if (!current.slugs) return html`<${Empty}>The slug registry is not in the latest snapshot.<//>`;
   const shown = all || current.slugQuery ? current.slugs : current.slugs.slice(0, SLUGS_SHOWN);
   return html`<div class="phone-access-slugs">
     <${Input} class="phone-access-search" type="search" aria-label="Search permission slugs" placeholder="Search slugs"
       autocomplete="off" spellcheck=${false} value=${current.slugQuery}
       onInput=${(event) => state.setSlugQuery(event.currentTarget.value)} />
-    ${!current.slugs.length && html`<p class="ui-empty phone-empty">${current.slugTotal ? 'No slug matches.' : 'No slugs registered.'}</p>`}
+    ${!current.slugs.length && html`<${Empty}>${current.slugTotal ? 'No slug matches.' : 'No slugs registered.'}<//>`}
     <ul class="phone-list">${shown.map((slug) => html`<li key=${slug.slug} class="phone-access-row" data-key=${slug.slug}>
       <div class="phone-access-text">
         <span class="phone-access-name slug">${slug.slug}${slug.owner_implied ? html` <span class="ui-tag ui-tag-own">👑 owner</span>` : ''}${slug.member_implied ? html` <span class="ui-tag ui-tag-own">👥 member</span>` : ''}</span>
@@ -216,7 +216,7 @@ export function PhoneAccessApp({ state, actions, snapshot, fetchImpl = globalThi
   return html`<div class="phone-access">
     <${ChipRow} label="Access views" value=${shown} onSelect=${select} items=${items} />
     ${!current.snapshotLoaded
-      ? html`<p class="ui-empty phone-empty">Loading…</p>`
+      ? html`<${Empty}>Loading…<//>`
       : html`<div role="tabpanel" aria-label=${VIEWS.find((view) => view.key === shown)?.label}>
         ${shown === 'requests' && html`<${Requests} snapshot=${data} current=${current} actions=${actions} fetchImpl=${fetchImpl} notify=${notify} openInMail=${openInMail} />`}
         ${shown === 'sudo' && html`<${Sudo} current=${current} actions=${actions} />`}

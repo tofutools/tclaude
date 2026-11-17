@@ -19,7 +19,7 @@ import { signal } from '@preact/signals';
 import htm from 'htm';
 import { companionAgents } from './companion-model.js';
 import { boardGroups } from './phone-shell-model.js';
-import { ButtonRow, Card, ChipRow, Section, SheetHead } from './phone-ui.js';
+import { ButtonRow, Card, ChipRow, Empty, ErrorNote, errorText, Section, SheetHead } from './phone-ui.js';
 import { usePhoneBar } from './phone-page.js';
 import { openPhoneSheet, requestClosePhoneSheet } from './phone-sheet.js';
 import { DiscardAsk, useDraftGuard } from './phone-draft-guard.js';
@@ -253,9 +253,10 @@ export function BoardView({ source, state, actions, fetchImpl = globalThis.fetch
       onClose=${() => { boardTask.value = closeTask(open); }} onOpenTask=${(id) => { boardTask.value = openFrom(open, id); }} onMove=${(task, entry_) => openSheet('Move', MoveSheet, { task, entry: entry_, peers: sectionPeers(entry_, task) })} />`;
   }
 
-  if (status === 'unavailable') return html`<p class="ui-empty phone-empty">Task boards are turned off.</p>`;
-  if (!context) return html`<p class="ui-empty phone-empty">${status === 'error' ? `Could not read the boards: ${source.error.value}` : 'Loading…'}</p>`;
-  if (!entry) return html`<p class="ui-empty phone-empty">No open tasks on any board.</p>`;
+  if (status === 'unavailable') return html`<${Empty}>Task boards are turned off.<//>`;
+  if (!context && status === 'error') return html`<${ErrorNote} onRetry=${() => void source.refresh()}>${errorText('the boards', source.error.value)}<//>`;
+  if (!context) return html`<${Empty}>Loading…<//>`;
+  if (!entry) return html`<${Empty}>No open tasks on any board.<//>`;
 
   const names = companionAgents(state.snapshot.value);
   // One answer at a time: a double tap must not send a second one.
@@ -287,6 +288,6 @@ export function BoardView({ source, state, actions, fetchImpl = globalThis.fetch
               onSubmit: (body) => boardWrite(source, () => api.comment(task.id, body, newCommentKey()), 'Could not comment'),
             })} />`)}
     <//>`)}
-    ${column === DONE && sections[0].tasks.length === 0 && html`<p class="ui-empty phone-empty">Nothing done yet.</p>`}
+    ${column === DONE && sections[0].tasks.length === 0 && html`<${Empty}>Nothing done yet.<//>`}
   </div>`;
 }

@@ -22,7 +22,7 @@ import { gateNodeOf, useRunDetail, verdictPresentation } from './groups-run-focu
 import { openPhoneSheet } from './phone-sheet.js';
 import { DiscardAsk, useDraftGuard } from './phone-draft-guard.js';
 import { Button, Textarea } from './ui-components.js';
-import { Avatar, Card, Section, StatePill } from './phone-ui.js';
+import { Avatar, Card, Empty, ErrorNote, errorText, Section, StatePill } from './phone-ui.js';
 import { usePhonePage } from './phone-page.js';
 import { relTime } from './helpers.js';
 import { DesktopOnlyNote } from './phone-desktop-only.js';
@@ -190,13 +190,15 @@ function RunSection({ title, items, waiting = false, onOpen }) {
 export function RunsList({ source = processContext, onOpen, desktopSite, nameOf = () => '' }) {
   const { context, status, error } = useProcessRuns(source);
   let body;
-  if (status === 'unavailable') body = html`<p class="ui-empty phone-empty">Processes are not available on this node.</p>`;
+  if (status === 'unavailable') body = html`<${Empty}>Processes are not available on this node.<//>`;
   else if (!context) {
-    body = html`<p class="ui-empty phone-empty">${status === 'error' ? `Could not read the runs: ${error}` : 'Loading…'}</p>`;
+    body = status === 'error'
+      ? html`<${ErrorNote} onRetry=${() => void source.refresh()}>${errorText('the runs', error)}<//>`
+      : html`<${Empty}>Loading…<//>`;
   } else {
     const { waiting, running, done } = phoneRuns(context, nameOf);
     body = waiting.length + running.length + done.length === 0
-      ? html`<p class="ui-empty phone-empty">No process runs.</p>`
+      ? html`<${Empty}>No process runs.<//>`
       : html`<${RunSection} title="Waiting on you" items=${waiting} waiting onOpen=${onOpen} />
         <${RunSection} title="Running" items=${running} onOpen=${onOpen} />
         <${RunSection} title="Done" items=${done} onOpen=${onOpen} />`;
@@ -274,7 +276,7 @@ function GateNoteSheet({ label, title, onSend, close }) {
     <h2 class="phone-sheet-title">${title}</h2>
     <${Textarea} class="phone-gate-note" rows="3" maxlength="4096" placeholder="Note for the record (optional)"
       aria-label="Note for the record (optional)" value=${note} disabled=${busy} onInput=${(event) => setNote(event.currentTarget.value)} />
-    ${error && html`<div class="ui-error" role="alert">${error}</div>`}
+    ${error && html`<${ErrorNote}>${error}<//>`}
     ${guard.asking
       ? html`<${DiscardAsk} what="your note" guard=${guard} close=${close} />`
       : html`<${Button} class="phone-btn phone-btn-pri phone-wide" disabled=${busy} onClick=${send}>${busy ? 'Sending…' : label}<//>`}
@@ -337,7 +339,7 @@ function GateVerdicts({ run, decision, node, onDecide, since = '', tally = '' })
                 props: { label: label(verdict), title: `${node.label}: ${label(verdict)}`, onSend: send(verdict) } })}>${label(verdict)}…<//>`)}
       </div>`}
     ${!verdicts.length && html`<p class="phone-gate-done">This gate offers no verdicts.</p>`}
-    ${error && html`<div class="ui-error" role="alert">${error}</div>`}
+    ${error && html`<${ErrorNote}>${error}<//>`}
   </div>`;
 }
 
@@ -365,7 +367,7 @@ export function GateCard({ item, api = runDetailApi, source = processContext, on
         return html`<${GateVerdicts} key=${`${node.id}:${decision.attempt || 0}`} run=${run} decision=${decision} node=${node} onDecide=${onDecide}
           tally=${gateTally(detail.view, decision)} />`;
       })
-      : html`<p class="ui-empty phone-empty">${detail.error ? `Could not read the run: ${detail.error}` : 'Loading…'}</p>`}
+      : (detail.error ? html`<${ErrorNote}>${errorText('the run', detail.error)}<//>` : html`<${Empty}>Loading…<//>`)}
   <//>`;
 }
 
@@ -409,7 +411,7 @@ export function RunPage({ runId, back, active = true, api = runDetailApi, source
     }] : [],
   }, active);
   if (!run) {
-    return html`<div class="phone-run-page"><p class="ui-empty phone-empty">${context ? 'This run is no longer listed.' : 'Loading…'}</p></div>`;
+    return html`<div class="phone-run-page"><${Empty}>${context ? 'This run is no longer listed.' : 'Loading…'}<//></div>`;
   }
   const steps = runSteps(run);
   const decisions = detail.view?.awaitingDecisions || [];
@@ -418,7 +420,7 @@ export function RunPage({ runId, back, active = true, api = runDetailApi, source
   const onDecide = decider(api, runId, refresh, source);
   const blocked = (detail.view?.blocked || []).map((item) => item.reason).filter(Boolean);
   return html`<div class="phone-run-page">
-    ${holdError && html`<p class="ui-error-box" role="alert">${holdError}</p>`}
+    ${holdError && html`<${ErrorNote}>${holdError}<//>`}
     ${decisions.map((decision) => {
       const node = decisionNode(decision, (id) => steps.find((step) => String(step.id) === id));
       return html`<${Card} key=${`${node.id}:${decision.attempt || 0}`} accent="key" class="phone-gate-card phone-run-gate"
@@ -434,7 +436,7 @@ export function RunPage({ runId, back, active = true, api = runDetailApi, source
       <strong>${waitReason(run)}.</strong>${blocked.length ? ` ${blocked.join('; ')}.` : ''}
       <${DesktopOnlyNote} what="Resolving it is" />
     </div>`}
-    ${detail.error && html`<p class="ui-error-box" role="alert">Could not read the run: ${detail.error}</p>`}
+    ${detail.error && html`<${ErrorNote}>${errorText('the run', detail.error)}<//>`}
     <p class="phone-run-facts">${[where, run.status, run.startedAt && `started ${relTime(run.startedAt)}`,
       run.startedAt && `${formatRunDuration(run.startedAt, Date.parse(run.status === 'running' ? '' : run.updatedAt || '') || Date.now())}`]
       .filter(Boolean).join(' · ')}</p>

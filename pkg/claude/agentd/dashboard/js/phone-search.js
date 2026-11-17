@@ -15,7 +15,7 @@ import { scoreMatch } from './palette-score.js';
 import { agentsFilter, groupKey } from './phone-agents-model.js';
 import { openHumanNotifications } from './mail-bridge.js';
 import { Input } from './ui-components.js';
-import { Avatar, Section, StatePill } from './phone-ui.js';
+import { Avatar, Empty, Section, StatePill } from './phone-ui.js';
 
 const html = htm.bind(h);
 
@@ -112,8 +112,8 @@ export function SearchSheet({ state, actions, boardSource = null, close }) {
   return html`<div class="phone-search">
     <${Input} type="search" class="phone-search-input" placeholder="Search agents, groups, mail, tasks" aria-label="Search"
       value=${query} onInput=${(event) => setQuery(event.currentTarget.value)} autocomplete="off" enterkeyhint="search" />
-    ${!hits.query && html`<p class="ui-empty phone-empty">Find an agent, a group, a message or a task by name.</p>`}
-    ${none && html`<p class="ui-empty phone-empty">Nothing matches “${query.trim()}”.</p>`}
+    ${!hits.query && html`<${Empty}>Find an agent, a group, a message or a task by name.<//>`}
+    ${none && html`<${Empty}>Nothing matches “${query.trim()}”.<//>`}
     <${Kind} title="Agents" found=${hits.agents}>
       ${hits.agents.items.map((agent) => html`<${Hit} key=${agent.agentId} onClick=${go(() => actions.openTerminal(agent))}
         lead=${html`<${Avatar} bot glyph=${agent.steward ? '✦' : '🤖'} dim=${!agent.online} />`}

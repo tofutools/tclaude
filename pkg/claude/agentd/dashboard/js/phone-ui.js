@@ -76,6 +76,27 @@ export function Card({ accent = '', as = 'div', class: extra, children, ...rest 
   return html`<${tag} ...${rest} class=${join('phone-box', edge && `phone-box-${edge}`, extra)}>${children}<//>`;
 }
 
+// Empty is a view's or a section's quiet state: nothing there yet, still
+// loading, or gone. One muted line, the same on every phone page.
+export function Empty({ children, class: extra }) {
+  return html`<p class=${join('ui-empty phone-empty', extra)}>${children}</p>`;
+}
+
+// errorText is the one wording of a read that failed: "Could not read X:
+// why", or "Could not read X." when there is no reason to give.
+export function errorText(what, why = '') {
+  const reason = String(why?.message ?? why ?? '').trim();
+  return reason ? `Could not read ${what}: ${reason}` : `Could not read ${what}.`;
+}
+
+// ErrorNote is an error on a phone page or sheet: a red-edged note the
+// screen reader announces (role=alert), with Retry when there is a way to
+// try again.
+export function ErrorNote({ children, onRetry = null, class: extra }) {
+  return html`<div role="alert" class=${join('ui-error-box phone-error', extra)}><span class="phone-error-text">${children}</span>${onRetry
+    && html`<${Button} size="sm" class="phone-error-retry" onClick=${onRetry}>Retry<//>`}</div>`;
+}
+
 // Section is a titled block of a view: an eyebrow heading with an optional
 // count and a link at its end (more). A div with role="group", not a
 // <section>, for the same reason as Card.

@@ -14,7 +14,7 @@ import { fleetAdminLocation, fleetAdminPage, setFleetAdminPage } from './fleet-a
 import { hubOffReason } from './fleet-model.js';
 import { relTime } from './helpers.js';
 import { DesktopOnlyNote, DesktopOnlyPage } from './phone-desktop-only.js';
-import { Card, Section } from './phone-ui.js';
+import { Card, Empty, Section } from './phone-ui.js';
 
 const html = htm.bind(h);
 
@@ -88,7 +88,7 @@ export function PhoneFleet({ state, page = fleetAdminPage }) {
   const node = current.node;
   if (!node) {
     return html`<div class="phone-fleet">
-      <p class="ui-empty phone-empty">${current.statusLoaded ? 'This node is not set up for a fleet.' : 'Loading…'}</p>
+      <${Empty}>${current.statusLoaded ? 'This node is not set up for a fleet.' : 'Loading…'}<//>
       <${DesktopOnlyNote} what="Setting up a fleet is" />
     </div>`;
   }
@@ -99,7 +99,7 @@ export function PhoneFleet({ state, page = fleetAdminPage }) {
     <${Section} title="Trusted peers" count=${peers.length}>
       ${peers.length
         ? html`<ul class="phone-list">${peers.map((peer) => html`<${Peer} key=${peer.id} peer=${peer} />`)}</ul>`
-        : html`<p class="ui-empty phone-empty">No trusted peers yet.</p>`}
+        : html`<${Empty}>No trusted peers yet.<//>`}
     <//>
     ${asking.length > 0 && html`<${Section} title="Waiting to be trusted" count=${asking.length}>
       <ul class="phone-list">${asking.map((stranger) => html`<${Asking} key=${stranger.id} stranger=${stranger} />`)}</ul>

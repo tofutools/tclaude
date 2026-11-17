@@ -120,6 +120,28 @@ test('ChipRow: tabs that keep a link\'s href and hooks, or toggles that several 
   assert.deepEqual(toggled, ['z']);
 });
 
+test('Empty and ErrorNote are the one quiet state and the one error of every phone page', async (t) => {
+  const { harness, mod } = await load(t, 'js/phone-ui.js');
+  const { html } = harness;
+  let retried = 0;
+  const { container } = await harness.mount(html`<div>
+    <${mod.Empty}>Nothing here yet.<//>
+    <${mod.ErrorNote} onRetry=${() => { retried += 1; }}>${mod.errorText('the runs', new Error('HTTP 500'))}<//>
+    <${mod.ErrorNote} class="phone-compose-error">Could not send.<//>
+  </div>`);
+  const empty = container.querySelector('p.ui-empty.phone-empty');
+  assert.equal(empty.textContent, 'Nothing here yet.');
+  const [read, send] = container.querySelectorAll('[role=alert]');
+  assert.ok(read.classList.contains('ui-error-box') && read.classList.contains('phone-error'), 'the banner, padded on the phone');
+  assert.equal(read.querySelector('.phone-error-text').textContent, 'Could not read the runs: HTTP 500');
+  await harness.act(() => harness.getByRole(read, 'button', { name: 'Retry' }).click());
+  assert.equal(retried, 1);
+  assert.ok(send.classList.contains('phone-compose-error'));
+  assert.equal(send.querySelector('button'), null, 'no Retry without a way to try again');
+  assert.equal(mod.errorText('the task', ''), 'Could not read the task.');
+  assert.equal(mod.errorText('the task', '  not found '), 'Could not read the task: not found');
+});
+
 test('pillTone maps agent states onto the mock\'s pill colours', async (t) => {
   const { mod } = await load(t, 'js/phone-ui.js');
   assert.deepEqual(['asking', 'working', 'idle', 'offline', 'error', 'approval', 'key', 'mystery'].map(mod.pillTone),

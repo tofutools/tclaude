@@ -25,7 +25,7 @@ import {
 import { shortAgentId } from './helpers.js';
 import { goDuration } from './phone-now-model.js';
 import { usePhonePage } from './phone-page.js';
-import { ChipRow, Section } from './phone-ui.js';
+import { ChipRow, Empty, ErrorNote, Section } from './phone-ui.js';
 import { Button, Input, Seg } from './ui-components.js';
 
 const html = htm.bind(h);
@@ -107,7 +107,7 @@ function AgentStep({ snapshot, onPick, onBack }) {
   return html`<div class="phone-grant phone-grant-agents">
     <${Input} class="phone-access-search" type="search" aria-label="Search agents" placeholder="Search agents"
       autocomplete="off" spellcheck=${false} value=${query} onInput=${(event) => setQuery(event.currentTarget.value)} />
-    ${!groups.length && html`<p class="ui-empty phone-empty">${query ? 'No agent matches.' : 'No agent is online.'}</p>`}
+    ${!groups.length && html`<${Empty}>${query ? 'No agent matches.' : 'No agent is online.'}<//>`}
     ${groups.map(({ group, agents }) => html`<${Section} key=${group} title=${group}>
       <ul class="phone-list">${agents.map((agent) => html`<li key=${agent.agent_id}>
         <button data-ui-exempt type="button" class="phone-grant-agent" data-agent=${agent.agent_id} onClick=${() => onPick(agent)}>
@@ -216,7 +216,7 @@ function PermsStep({ snapshot, agent, grantActions, onBack, onGranted }) {
       autocomplete="off" spellcheck=${false} value=${query} onInput=${(event) => setQuery(event.currentTarget.value)} />
     <${ChipRow} class="phone-grant-filters" label="Show" value=${filter} onSelect=${setFilter}
       items=${FILTERS.map((item) => ({ ...item, count: item.key === 'picked' ? pickedRows.length : null }))} />
-    ${!shown.length && html`<p class="ui-empty phone-empty">${filter === 'picked' ? 'Nothing picked yet.' : 'No permission matches.'}</p>`}
+    ${!shown.length && html`<${Empty}>${filter === 'picked' ? 'Nothing picked yet.' : 'No permission matches.'}<//>`}
     <ul class="phone-list phone-grant-rows">${shown.map((row) => {
       const why = refused(row);
       const on = picked.has(row.slug) && !why;
@@ -243,7 +243,7 @@ function PermsStep({ snapshot, agent, grantActions, onBack, onGranted }) {
       <${Input} class="phone-grant-reason" aria-label="Reason" placeholder="optional, kept on the audit row" autocomplete="off"
         value=${reason} onInput=${(event) => setReason(event.currentTarget.value)} />
     <//>
-    ${error && html`<div role="alert" class="ui-error-box">${error}</div>`}
+    ${error && html`<${ErrorNote}>${error}<//>`}
     <div class="phone-grant-bar">
       ${!plan.ready && html`<p class="phone-grant-why">${plan.why}</p>`}
       <${Button} variant="primary" class="phone-wide phone-grant-submit" disabled=${!plan.ready || busy} onClick=${grant}>

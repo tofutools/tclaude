@@ -37,7 +37,7 @@ import { DiscardAsk, useDraftGuard } from './phone-draft-guard.js';
 import { AgentMenu } from './phone-agent-menu.js';
 import { useHold } from './phone-hold.js';
 import { usePhoneBar, usePhonePage } from './phone-page.js';
-import { Avatar, ButtonRow, Card, ChipRow, RowMore, Section, SheetHead, StatePill } from './phone-ui.js';
+import { Avatar, ButtonRow, Card, ChipRow, Empty, RowMore, Section, SheetHead, StatePill } from './phone-ui.js';
 import { ContextMeter } from './context-meter.js';
 import { dashPrefs } from './prefs.js';
 import { openBoardGroup } from './phone-board.js';
@@ -126,7 +126,7 @@ export function SpawnSheet({ state, group: initial, fetchImpl = globalThis.fetch
   const form = useRef(null);
   const guard = useDraftGuard(groups.length > 0 && !!prompt.trim(), busy,
     () => form.current?.querySelector('textarea'));
-  if (!groups.length) return html`<p class="ui-empty phone-empty">Make a group on the desktop first.</p>`;
+  if (!groups.length) return html`<${Empty}>Make a group on the desktop first.<//>`;
   const fallback = groups.find((g) => g.name === group)?.profile || '';
   const submit = async (event) => {
     event?.preventDefault?.();
@@ -435,7 +435,7 @@ export function PhoneAgents({ state, order, actions, fetchImpl = globalThis.fetc
     const timer = setTimeout(() => setFound(null), FOUND_MS);
     return () => clearTimeout(timer);
   }, [found]);
-  if (!snapshot) return html`<p class="ui-empty phone-empty">Loading…</p>`;
+  if (!snapshot) return html`<${Empty}>Loading…<//>`;
   const steward = snapshot.steward_active || '';
   const isSteward = (row) => !!steward && (row.agent === steward || row.conv === steward);
   const more = (g) => (row) => openPhoneSheet({ label: row.name, Body: AgentMenu, props: { state, order, actions, agentKey: row.key, groupKey: g.key } });
@@ -453,7 +453,7 @@ export function PhoneAgents({ state, order, actions, fetchImpl = globalThis.fetc
   const empty = none ? 'No groups yet. Make one on the desktop.' : 'Nothing to show here. View (the sliders above) shows more.';
   return html`<div class="phone-agents">
     ${tabs.length > 1 && html`<${GroupChips} tabs=${tabs} picked=${picked} onToggle=${onToggle} />`}
-    ${!nodes.length && html`<p class="ui-empty phone-empty">${empty}</p>`}
+    ${!nodes.length && html`<${Empty}>${empty}<//>`}
     <${AgentGroupsList} nodes=${shownTree(nodes, picked)} fold=${TREE_FOLD} prefs=${prefs} refold=${refold} list=${list} />
   </div>`;
 }

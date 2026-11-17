@@ -11,6 +11,7 @@ import { useState } from 'preact/hooks';
 import htm from 'htm';
 import { openPhoneSheet } from './phone-sheet.js';
 import { Button } from './ui-components.js';
+import { ErrorNote } from './phone-ui.js';
 
 const html = htm.bind(h);
 
@@ -46,7 +47,7 @@ export function TypeSheet({ name = 'the terminal', type, close }) {
       aria-label=${`Text to type into ${name}`} placeholder="A command, typed as on a keyboard…" autocapitalize="off"
       autocomplete="off" autocorrect="off" spellcheck=${false} enterkeyhint="enter"
       value=${text} onInput=${(event) => { setText(event.currentTarget.value); setError(''); }}></textarea>
-    ${error && html`<p class="ui-error-box phone-compose-error" role="alert">${error}</p>`}
+    ${error && html`<${ErrorNote} class="phone-compose-error">${error}<//>`}
     <div class="phone-compose-foot">
       <${Button} class="phone-btn phone-compose-cancel" onClick=${close}>Cancel<//>
       <span class="phone-type-gap"></span>
