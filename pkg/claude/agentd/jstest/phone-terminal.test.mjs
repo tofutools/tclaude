@@ -566,3 +566,95 @@ test('an agent\'s directory shell is titled a shell, with the directory under it
   assert.equal(dirShellTitle({ ws: `/api/open-window-ws/${AGENT}`, agent: AGENT }, row), null);
   assert.equal(dirShellTitle({ ws: '/api/group-term-ws/webshop' }, null), null);
 });
+
+// tk_1e2337c3: a keyboard raised for a sheet's own field (✉ Message, Type
+// into) over the terminal does not shrink the terminal, so it is not refitted
+// and the agent's screen is not resized. The terminal's own keyboard still
+// shrinks it, and when the sheet lets go the terminal follows the screen once
+// it has grown back (or after a while), in one step.
+test('a compose sheet\'s keyboard leaves the terminal its size; the terminal\'s own keyboard still shrinks it', async (t) => {
+  const listeners = { resize: new Set(), scroll: new Set() };
+  const viewport = {
+    height: 800, width: 390, offsetTop: 0, scale: 1,
+    addEventListener: (type, fn) => listeners[type].add(fn),
+    removeEventListener: (type, fn) => listeners[type].delete(fn),
+  };
+  const timers = [];
+  const windowRef = {
+    visualViewport: viewport, innerHeight: 800,
+    setTimeout: (fn, ms) => { timers.push({ fn, ms }); return timers.length; },
+    clearTimeout: (id) => { if (timers[id - 1]) timers[id - 1].fn = null; },
+  };
+  const { harness, tab, host } = await setup(t, { windowRef });
+  await harness.act(() => tab.openWebWindowPane(AGENT, 'checkout-ui', { harness: 'claude' }));
+  await harness.act(() => {});
+  const height = () => host.querySelector('.phone-term').getAttribute('style');
+  const resize = (h) => harness.act(() => { viewport.height = h; for (const fn of listeners.resize) fn(); });
+  const focusIn = (el) => harness.act(() => { el.focus(); harness.document.dispatchEvent(new harness.window.Event('focusin')); });
+  const focusOut = (el) => harness.act(() => { el.blur(); harness.document.dispatchEvent(new harness.window.Event('focusout')); });
+  assert.match(height(), /height:800px/);
+
+  // The ✉ Message sheet's field takes the keyboard: the terminal keeps 800.
+  const sheet = harness.document.createElement('textarea');
+  harness.document.body.append(sheet);
+  await focusIn(sheet);
+  await resize(500);
+  assert.match(height(), /height:800px/, 'no refit behind the sheet');
+  // It closes: the keyboard goes down in steps; one refit when it is back.
+  await focusOut(sheet);
+  await resize(650);
+  assert.match(height(), /height:800px/, 'not on the way down');
+  await resize(800);
+  assert.match(height(), /height:800px/);
+  assert.equal(timers.filter((timer) => timer.fn).length, 0, 'settled: nothing left waiting');
+
+  // Hopping between two fields of one sheet keeps the hold.
+  const other = harness.document.createElement('input');
+  harness.document.body.append(other);
+  await focusIn(sheet);
+  await resize(500);
+  await focusOut(sheet);
+  await focusIn(other);
+  assert.match(height(), /height:800px/);
+  assert.equal(timers.filter((timer) => timer.fn).length, 0, 'the hop cancelled the wait');
+  // Rotated while composing: a new screen, the box follows it.
+  await harness.act(() => { viewport.width = 844; viewport.height = 300; for (const fn of listeners.resize) fn(); });
+  assert.match(height(), /height:300px/, 'not the portrait height on a landscape screen');
+  await harness.act(() => { viewport.width = 390; viewport.height = 800; for (const fn of listeners.resize) fn(); });
+  await focusOut(other);
+  await resize(800);
+  assert.match(height(), /height:800px/);
+  // A checkbox raises no keyboard: no hold.
+  const box = harness.document.createElement('input');
+  box.setAttribute('type', 'checkbox');
+  harness.document.body.append(box);
+  await focusIn(box);
+  await resize(600);
+  assert.match(height(), /height:600px/);
+  await focusOut(box);
+  await resize(800);
+  other.remove();
+  box.remove();
+
+  // The terminal's own input: the keyboard shrinks it so the line stays in sight.
+  const own = harness.document.createElement('textarea');
+  host.querySelector('.phone-term-host').append(own);
+  await focusIn(own);
+  await resize(500);
+  assert.match(height(), /height:500px/, 'the terminal\'s keyboard still resizes it');
+  await focusOut(own);
+  await resize(800);
+  assert.match(height(), /height:800px/);
+
+  // A sheet that closes with the keyboard left up: after a while the
+  // terminal follows the screen anyway.
+  await focusIn(sheet);
+  await resize(500);
+  await focusOut(sheet);
+  assert.match(height(), /height:800px/);
+  const settle = timers.at(-1);
+  assert.equal(settle.ms > 0, true);
+  await harness.act(() => settle.fn());
+  assert.match(height(), /height:500px/);
+  sheet.remove();
+});
