@@ -58,5 +58,21 @@
 :root[data-layout="phone"] .phone-task-when { color: var(--ui-muted-text); font-size: 12px; }
 :root[data-layout="phone"] .phone-task-what { flex-basis: 100%; color: var(--ui-text); font-size: 13px; overflow-wrap: anywhere; }
 :root[data-layout="phone"] .phone-task-comment .phone-task-md { flex-basis: 100%; }
+/* The id with ⧉, the meta line, and a question in the history
+   (phone-task-history.js). */
+:root[data-layout="phone"] .phone-task-id { display: flex; align-items: center; gap: 4px; margin: 2px 0 0; color: var(--ui-muted-text); font-size: 12px; }
+:root[data-layout="phone"] .phone-task-id code { font-size: 12px; }
+:root[data-layout="phone"] .phone-task-id-copy { min-width: var(--phone-tap); min-height: 32px; padding: 0; border: 0; background: none; color: var(--ui-muted-text); font-size: 15px; }
+:root[data-layout="phone"] .phone-task-meta { margin: 2px 0 8px; color: var(--ui-muted-text); font-size: 12.5px; line-height: 1.45; }
+:root[data-layout="phone"] .phone-task-q-kind { flex-basis: 100%; color: var(--ui-muted-text); font-size: 12.5px; }
+:root[data-layout="phone"] .phone-task-q-kind b { color: var(--ui-text-strong); font-weight: 600; }
+:root[data-layout="phone"] .phone-task-q-title { flex-basis: 100%; margin: 0; color: var(--ui-text-strong); font-size: 14px; font-weight: 600; }
+:root[data-layout="phone"] .phone-task-question .phone-task-md { flex-basis: 100%; }
+:root[data-layout="phone"] .phone-task-q-opts { flex-basis: 100%; list-style: none; margin: 2px 0 0; padding: 0; font-size: 13px; }
+:root[data-layout="phone"] .phone-task-q-opts li { display: block; padding: 2px 0; border: 0; }
+:root[data-layout="phone"] .phone-task-q-picked { color: var(--ui-text-strong); font-weight: 600; }
+:root[data-layout="phone"] .phone-task-q-rec { color: var(--ui-muted-text); font-size: 11.5px; }
+:root[data-layout="phone"] .phone-task-q-answer { flex-basis: 100%; margin-top: 4px; padding: 6px 8px; border-left: 2px solid var(--ui-line); }
+:root[data-layout="phone"] .phone-task-q-answer p { margin: 2px 0 0; font-size: 13px; }
 :root[data-layout="phone"] .phone-task-comment-box { display: flex; flex-direction: column; gap: 8px; margin-top: 16px; }
 :root[data-layout="phone"] .phone-task-comment-box .phone-btn { align-self: flex-end; }
