@@ -11,7 +11,7 @@ import { h } from 'preact';
 import { useLayoutEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import {
-  PERFORMER_KINDS, performerFieldsFor, setPerformerKind, setPerformerField,
+  DECISION_KINDS, PERFORMER_KINDS, performerFieldsFor, setPerformerKind, setPerformerField,
   setChoiceOutcome, setContactField, setFallbackField, formatLines, FALLBACK_ACTIONS,
 } from './process-node-form.js';
 
@@ -75,10 +75,10 @@ export function NodeSelect({ fieldKey, label, options, value, apply, readOnly, b
 // contact schedule.
 export function PerformerEditor({
   performer, locate, path, commit, readOnly, choiceRouting = true,
-  only = null, omit = [], showKind = true, contact = false, kinds = PERFORMER_KINDS,
+  only = null, omit = [], showKind = true, contact = false, kinds = PERFORMER_KINDS, setKind = setPerformerKind,
 }) {
   const kind = typeof performer?.kind === 'string' && performer.kind ? performer.kind : 'agent';
-  const known = PERFORMER_KINDS.includes(kind);
+  const known = DECISION_KINDS.includes(kind);
   const mutate = (key, value, operation) => commit(`${path}.${key}`, (draft) => operation(locate(draft), value));
   const skip = new Set(omit);
   const fields = (known ? performerFieldsFor(kind) : [])
@@ -87,7 +87,7 @@ export function PerformerEditor({
   return html`<div class="process-performer-editor">
     ${showKind && html`<${NodeSelect} fieldKey=${`${path}.kind`} label="kind"
       options=${kinds.includes(kind) ? kinds : [...kinds, kind]} value=${kind} readOnly=${readOnly}
-      apply=${(key, value) => mutate('kind', value, setPerformerKind)} />`}
+      apply=${(key, value) => mutate('kind', value, setKind)} />`}
     ${showKind && !known && html`<p class="process-node-empty ui-empty">Unknown performer kind ${kind}: validation rejects it — pick a supported kind.</p>`}
     ${fields.map((field) => {
       if (field.outcomeMap) {

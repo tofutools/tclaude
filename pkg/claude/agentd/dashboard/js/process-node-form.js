@@ -16,6 +16,14 @@
 
 export const PERFORMER_KINDS = ['human', 'agent', 'program'];
 
+// A decision has one more: a rule decides it by its cases, nobody asked
+// (model.PerformerRule). Its only fields are cases and else, which the
+// inspector edits as rows (process-rule-cases.js), not through
+// PERFORMER_FIELDS.
+export const RULE_KIND = 'rule';
+export const DECISION_KINDS = [...PERFORMER_KINDS, RULE_KIND];
+const RULE_KEYS = ['cases', 'else'];
+
 export const RETRY_ON_FAIL_MODES = ['feedback-same-session', 'fresh-attempt'];
 
 export const PLAN_APPROVAL_MODES = ['auto', 'human'];
@@ -59,7 +67,7 @@ export function performerFieldsFor(kind) {
 // (ask/prompt/run) stays absent until the author fills it — saves are
 // advisory, so the missing-field diagnostic guides without blocking.
 export function defaultPerformer(kind) {
-  if (!PERFORMER_KINDS.includes(kind)) throw new Error(`unknown performer kind ${kind}`);
+  if (!DECISION_KINDS.includes(kind)) throw new Error(`unknown performer kind ${kind}`);
   return { kind };
 }
 
@@ -67,12 +75,25 @@ export function defaultPerformer(kind) {
 // not define — a stale agent prompt must not ride along invisibly on a
 // program performer (the Go model rejects wrong-kind fields as authoring
 // errors). Common fields (profile, timeout, contact) survive the switch.
+// A rule keeps nothing of a person's or agent's slot (not even profile,
+// timeout or contact, which the model refuses on a rule), and its cases go
+// when it stops being one. A rule's cases are seeded by the caller, which
+// knows the graph (seedRule in process-rules.js).
 export function setPerformerKind(performer, kind) {
-  if (!PERFORMER_KINDS.includes(kind)) throw new Error(`unknown performer kind ${kind}`);
+  if (!DECISION_KINDS.includes(kind)) throw new Error(`unknown performer kind ${kind}`);
   performer.kind = kind;
   for (const field of PERFORMER_FIELDS) {
     if (!field.kinds.includes(kind) && field.key in performer) delete performer[field.key];
   }
+  if (kind === RULE_KIND) delete performer.contact;
+  else for (const key of RULE_KEYS) delete performer[key];
+}
+
+// setRule sets a rule's cases and else.
+export function setRule(performer, { cases, else: otherwise }) {
+  if (performer.kind !== RULE_KIND) throw new Error('only a rule has cases');
+  performer.cases = cases.map((c) => ({ when: c.when, then: c.then }));
+  performer.else = otherwise;
 }
 
 // setPerformerField assigns one descriptor-declared field; blank values (and

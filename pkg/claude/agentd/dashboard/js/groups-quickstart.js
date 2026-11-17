@@ -28,6 +28,7 @@ import {
 import { UNTITLED_PROCESS, openProcessDraft } from './process-draft-handoff.js';
 import { PROCESS_SCRIBE_PROMPT_MAX } from './process-scribe.js';
 import { Button, Select } from './ui-components.js';
+import { TypedField } from './typed-field.js';
 
 const html = htm.bind(h);
 
@@ -36,22 +37,7 @@ const VALIDATE_DELAY_MS = 400;
 // A draft saves itself this long after its last change.
 export const AUTOSAVE_DELAY_MS = 800;
 
-// TypedField is a text input or textarea that commits on change. Until then
-// what the operator typed lives only in the field, and the editor re-renders
-// meanwhile (the dashboard's snapshot poll does, every couple of seconds): a
-// plain value= field would be reset to the committed text each time. So what
-// they type is kept here, against the value it was typed over, and shows
-// until a new value arrives (their own commit, an undo, a merge).
-export function TypedField({ as = 'input', value, onChange, ...rest }) {
-  const [typed, setTyped] = useState(null);
-  const shown = typed && typed.over === value ? typed.text : value;
-  // A new value drops what was typed over the old one for good, so it cannot
-  // come back should the value later return to the old one.
-  useEffect(() => { if (typed && typed.over !== value) setTyped(null); }, [value]);
-  return html`<${as} ...${rest} value=${shown}
-    onInput=${(event) => setTyped({ over: value, text: event.currentTarget.value })}
-    onChange=${(event) => { setTyped(null); onChange(event); }} />`;
-}
+export { TypedField };
 
 export { UNTITLED_PROCESS };
 

@@ -273,3 +273,36 @@ test('a decision takes another decider and edits as a gate', async (t) => {
   assert.equal(gate.deciders, undefined);
   assert.deepEqual(gate.performer, { kind: 'human', ask: 'Ship it?', choices: ['yes', 'no'] });
 });
+
+test('a decision can be decided by a rule: rows, its condition as text, and no prompt or bounds', async (t) => {
+  const ctx = await openEditor(t);
+  await ctx.open('gate');
+  await ctx.set('performer.kind', 'rule');
+  let gate = ctx.editor.model.saveBody().template.nodes.gate;
+  assert.deepEqual(gate.performer, { kind: 'rule', cases: [{ when: 'steps.build.result == succeeded', then: 'yes' }], else: 'no' },
+    'one case on the step just before it; the question goes');
+  assert.ok(!ctx.blocks().includes('prompt') && !ctx.blocks().includes('bounds'), 'a rule asks nobody and runs at once');
+  assert.equal(ctx.dock().querySelector('[data-node-add-decider]'), null, 'a rule takes no other deciders');
+  assert.equal(ctx.dock().querySelector('[data-mini-rule-words]').textContent, 'Build succeeded → yes · otherwise → no');
+
+  const value = ctx.dock().querySelector('[data-mini-rule-row="0.0"] select[aria-label="The value"]');
+  Object.defineProperty(value, 'value', { configurable: true, writable: true, value: 'failed' });
+  await ctx.harness.act(() => ctx.harness.fireEvent(value, 'change'));
+  assert.equal(ctx.editor.model.saveBody().template.nodes.gate.performer.cases[0].when, 'steps.build.result == failed');
+
+  const text = ctx.dock().querySelector('[data-mini-rule-when="0"]');
+  Object.defineProperty(text, 'value', { configurable: true, writable: true, value: 'steps.build.result == failed or params.ticket == none' });
+  await ctx.harness.act(() => ctx.harness.fireEvent(text, 'change'));
+  gate = ctx.editor.model.saveBody().template.nodes.gate;
+  assert.equal(gate.performer.cases[0].when, 'steps.build.result == failed or params.ticket == none');
+  assert.equal(ctx.dock().querySelector('[data-mini-rule-row="0.0"]'), null, 'an or shows as text only');
+
+  await ctx.set('performer.kind', 'agent');
+  assert.deepEqual(ctx.editor.model.saveBody().template.nodes.gate.performer, { kind: 'agent' }, 'the cases go with the rule');
+});
+
+test('a task added to the canvas comes with an agent doing it', async (t) => {
+  const ctx = await openEditor(t);
+  const { id } = ctx.editor.model.addConnectedNode('task', { connectFrom: 'spec' });
+  assert.deepEqual(ctx.editor.model.saveBody().template.nodes[id].performer, { kind: 'agent' });
+});

@@ -89,7 +89,8 @@ export const NODE_BLOCKS = [
     key: 'bounds', label: 'Bounds', icon: '🛡',
     kinds: ['task', 'decision'],
     hint: 'Performer timeout and contact schedule (nudge cadence, budget, escalation)',
-    available: (node) => !node.deciders?.length,
+    // A rule runs at once: it has no timeout and nobody to contact.
+    available: (node) => !node.deciders?.length && node.performer?.kind !== 'rule',
     present: (node) => !!(node.performer?.timeout || node.performer?.contact),
     clear: (node) => clearPerformerKeys(node, ['timeout', 'contact']),
   },

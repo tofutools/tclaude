@@ -12,6 +12,9 @@
 // editor.
 
 import { setStepWho } from './process-step-list.js';
+import { ruleOperands, seedRule } from './process-rules.js';
+
+export { ruleOperands };
 import { LOOP_DEFAULT_ROUNDS, edgeGoesBack, exhaustionChoices, loopBound, loopableEdge, setLoopBound } from './process-loops.js';
 
 // PASS_LABELS mirrors model.PassOutcomeLabels: the edge a task's pass
@@ -1386,42 +1389,6 @@ function rehomeFromAgree(view, id, node) {
 // order, each a condition and the outcome it picks, then else. Conditions are
 // written in process-rules.js's language; the inspector edits them as rows.
 
-// ruleOperands are what a rule at id can read, for the rows' first picker:
-// the results (and a command's exit code) of the steps before it, the
-// outputs they report, and the process's params. Each has the values it can
-// take when they are few (a step's result, a boolean param), else none.
-export function ruleOperands(view, id) {
-  const nodes = view.template.nodes;
-  const upstream = new Set();
-  const stack = [id];
-  while (stack.length) {
-    const at = stack.pop();
-    for (const edge of view.edges) {
-      if (edge.to === at && edge.from && !upstream.has(edge.from)) {
-        upstream.add(edge.from);
-        stack.push(edge.from);
-      }
-    }
-  }
-  const name = (stepID) => nodes[stepID]?.name || stepID;
-  const operands = [];
-  for (const stepID of [...upstream].sort()) {
-    const step = nodes[stepID];
-    if (step?.type !== 'task' || stepID === id) continue;
-    operands.push({ value: `steps.${stepID}.result`, label: `${name(stepID)} · result`, values: ['succeeded', 'failed', 'skipped'] });
-    if (step.performer?.kind === 'program' && !step.plan && !step.checks?.length && !step.review) {
-      operands.push({ value: `steps.${stepID}.exitCode`, label: `${name(stepID)} · exit code`, values: null });
-    }
-  }
-  for (const stepID of [...upstream].sort()) {
-    for (const output of nodes[stepID]?.captures || []) operands.push({ value: `outputs.${output}`, label: `output · ${output}`, values: null });
-  }
-  for (const [param, spec] of Object.entries(view.template.params || {}).sort(([a], [b]) => a.localeCompare(b))) {
-    const boolean = spec?.type === 'boolean' || spec?.type === 'bool';
-    operands.push({ value: `params.${param}`, label: `param · ${param}`, values: boolean ? ['true', 'false'] : null });
-  }
-  return operands;
-}
 
 // makeRule turns decision id into a rule: one case on the first thing it can
 // read, picking its first outcome, and else its next. Its outcomes, loops
@@ -1430,10 +1397,7 @@ function makeRule(view, id) {
   const next = copyView(view);
   const node = next.template.nodes[id];
   const outcomes = outgoing(next, id).map((edge) => edge.outcome);
-  const first = ruleOperands(next, id)[0];
-  const when = first ? `${first.value} == ${first.values?.[0] || 'yes'}` : '';
-  const ways = outcomes.filter((outcome) => !loopBound(node, outcome));
-  node.performer = { kind: 'rule', cases: [{ when, then: outcomes[0] || '' }], else: ways.find((o) => o !== outcomes[0]) || ways[0] || outcomes[0] || '' };
+  node.performer = { kind: 'rule', ...seedRule(next, id, (outcome) => !!loopBound(node, outcome)) };
   syncLoops(next);
   defaultAgentExhaustion(next, id);
   return { view: next, id };

@@ -19,7 +19,11 @@ import {
   defaultPerformer, setStageEnabled, setPlanApproval, addCheck, removeCheck, moveCheck, setCheckID,
   setRetryField, setCaptures, setWaitField, setNodeText, formatLines,
   MAX_GATE_DECIDERS, addGateDecider, removeGateDecider,
+  DECISION_KINDS, RULE_KIND, setPerformerKind, setRule,
 } from './process-node-form.js';
+import { ruleOperands, seedRule } from './process-rules.js';
+import { RuleCases } from './process-rule-cases.js';
+import { loopBound } from './process-loops.js';
 import {
   nodeBlock, visibleBlocks, addableBlocks, removeBlock, moveKey, moveKeyBefore, mergeOrder,
   upstreamInputs, stageSummary,
@@ -93,16 +97,40 @@ function DecidersBlock({ node, commit, readOnly, edges }) {
   </div>`;
 }
 
-function PerformerBlock({ node, commit, readOnly, edges }) {
+// RuleBlock edits a rule decision's cases with the inline editor's rows,
+// plus each case's condition as text, which is how one with or, not or
+// parentheses is written.
+function RuleBlock({ node, nodeId, model, commit, readOnly, edges }) {
+  return html`<${RuleCases} rule=${node.performer} outcomes=${edges.map((edge) => edge.outcome)}
+    operands=${ruleOperands(model, nodeId)} loopsBack=${(outcome) => !!loopBound(node, outcome)}
+    stepName=${(id) => model.node(id)?.name || id} readOnly=${readOnly} editText=${true}
+    label="cases" fieldClass="process-node-rule"
+    onChange=${(rule) => commit('performer.rule', (draft) => setRule(draft.performer, rule))} />`;
+}
+
+// decisionKind switches a decision's decider; a new rule starts with one
+// case on the nearest thing it can read, and else its next way out.
+function decisionKind(model, nodeId, node) {
+  return (slot, kind) => {
+    setPerformerKind(slot, kind);
+    if (kind === RULE_KIND) setRule(slot, seedRule(model, nodeId, (outcome) => !!loopBound(node, outcome)));
+  };
+}
+
+function PerformerBlock({ node, nodeId, controller, commit, readOnly, edges }) {
   const type = node.type || 'task';
+  const model = controller.model;
+  const rule = type === 'decision' && node.performer?.kind === RULE_KIND;
   if (type === 'decision' && node.deciders?.length) return html`<${DecidersBlock} node=${node} commit=${commit} readOnly=${readOnly} edges=${edges} />`;
   if (type === 'task' && !node.performer && !readOnly) {
     return html`<${Button} size="sm" class="process-action process-node-add"
       onClick=${() => commit('work.add', (draft) => { draft.performer = defaultPerformer('agent'); })}>add work performer<//>`;
   }
   return html`<${PerformerEditor} path="performer" locate=${locateMain(type)} performer=${mainPerformer(node)}
-    commit=${commit} readOnly=${readOnly} choiceRouting=${type !== 'decision'} omit=${[...PROMPT_FIELDS, ...BOUNDS_FIELDS]} />
-    ${type === 'decision' && !readOnly && node.performer?.kind !== 'program' && edges.length > 1 && html`<${Button} size="sm" class="process-action process-node-add" data-node-add-decider
+    commit=${commit} readOnly=${readOnly} choiceRouting=${type !== 'decision'} omit=${[...PROMPT_FIELDS, ...BOUNDS_FIELDS]}
+    ...${type === 'decision' ? { kinds: DECISION_KINDS, setKind: decisionKind(model, nodeId, node) } : {}} />
+    ${rule && html`<${RuleBlock} node=${node} nodeId=${nodeId} model=${model} commit=${commit} readOnly=${readOnly} edges=${edges} />`}
+    ${type === 'decision' && !readOnly && node.performer?.kind !== 'program' && !rule && edges.length > 1 && html`<${Button} size="sm" class="process-action process-node-add" data-node-add-decider
       title="Several decide together, and all must agree" onClick=${() => commit('deciders.add', (draft) => addGateDecider(draft, edges.map((edge) => edge.outcome)))}>+ another decider<//>`}`;
 }
 
