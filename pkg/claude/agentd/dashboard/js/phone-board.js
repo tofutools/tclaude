@@ -30,6 +30,7 @@ import {
   DONE, boardColumns, cardView, columnMoves, columnSections, defaultColumn, positionMoves, sectionPeers,
 } from './phone-board-model.js';
 import { TaskPage, boardWrite } from './phone-task-page.js';
+import { openPhoneRun } from './phone-task-links.js';
 import { processContext } from './process-context.js';
 import { TaskRunLine, WillFollowLine, taskRunOf } from './process-task-run.js';
 
@@ -165,14 +166,6 @@ function GroupSheet({ groups, value, onPick, close }) {
   </ul>`;
 }
 
-// TaskCard is one task on the board.
-// openPhoneRun opens a task's run in Automations' Runs (phone-process-runs.js).
-async function openPhoneRun(run) {
-  const { openRunLink } = await import('./phone-process-runs.js');
-  const { PROCESSES_SUBTAB, openAutomationsEntry } = await import('./automations-subnav.js');
-  openRunLink({ selection: true, item: run.runId }, { open: () => openAutomationsEntry(PROCESSES_SUBTAB) });
-}
-
 // TaskCard is one task on the board. `run` is the task's process run
 // (tk_8aa88514), `follows` the board's default way of working.
 export function TaskCard({ task, view, onOpen, onMove, onComment, onAnswer, run = null, follows = '', nameOf = () => '' }) {
@@ -246,7 +239,7 @@ export function BoardView({ source, state, actions, fetchImpl = globalThis.fetch
 
   if (open) {
     return html`<${TaskPage} key=${open.id} id=${open.id} group=${open.group} source=${source} state=${state} api=${api}
-      onClose=${() => { boardTask.value = null; }} onMove=${(task, entry_) => openSheet('Move', MoveSheet, { task, entry: entry_, peers: sectionPeers(entry_, task) })} />`;
+      onClose=${() => { boardTask.value = null; }} onOpenTask=${(id) => { boardTask.value = { id, group: open.group }; }} onMove=${(task, entry_) => openSheet('Move', MoveSheet, { task, entry: entry_, peers: sectionPeers(entry_, task) })} />`;
   }
 
   if (status === 'unavailable') return html`<p class="ui-empty phone-empty">Task boards are turned off.</p>`;

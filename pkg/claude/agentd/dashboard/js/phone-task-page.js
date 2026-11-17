@@ -1,6 +1,7 @@
 // phone-task-page.js -- one task on a phone, pushed over the Board
 // (phone-board.js): its title and state, its tags, any question to the
-// operator with its options, the brief, its references, the activity with
+// operator with its options, the brief, its references (phone-task-links.js,
+// with its epic, the tasks it comes after and its run), the activity with
 // its comments, and a comment box. It reads; the writes a phone makes are
 // answering, commenting and Move ▸. Editing the task itself is the
 // desktop's task form, which a phone never opens: nothing here takes the
@@ -24,6 +25,7 @@ import { relTime } from './helpers.js';
 import { actorName, cardTags, taskStateLabel } from './phone-board-model.js';
 import { shellToast } from './shell-state.js';
 import { ChangeItem, QuestionItem, TaskIdLine, TaskMetaLine, historyEntries } from './phone-task-history.js';
+import { TaskAfter, TaskEpic, TaskRefs, TaskRun } from './phone-task-links.js';
 
 const html = htm.bind(h);
 
@@ -92,7 +94,7 @@ function QuestionBlock({ task, q, names, onAnswer }) {
   <//>`;
 }
 
-export function TaskPage({ id, group, source, state, api, onClose, onMove }) {
+export function TaskPage({ id, group, source, state, api, onClose, onMove, onOpenTask = () => {} }) {
   const [version, setVersion] = useState(0);
   const [comment, setComment] = useState('');
   const [sending, setSending] = useState(false);
@@ -126,7 +128,6 @@ export function TaskPage({ id, group, source, state, api, onClose, onMove }) {
   const live = task.status === 'open' || task.status === 'blocked';
   // A brief the read has no body for is empty, not still loading.
   const body = read.task ? (read.task.body || '') : (typeof task.body === 'string' ? task.body : null);
-  const refs = task.refs || (task.ref ? [task.ref] : []);
   const all = read.activity?.entries || read.activity?.events || [];
   const entries = historyEntries(all);
   const nameOf = (actor) => actorName(actor, names);
@@ -139,6 +140,7 @@ export function TaskPage({ id, group, source, state, api, onClose, onMove }) {
       <${StatePill} tone=${state_.tone}>${state_.text}<//>
       ${cardTags(task, names).map((tag) => html`<span key=${tag.key} class=${`phone-board-tag${tag.tone ? ` phone-board-tag-${tag.tone}` : ''}`}>${tag.text}</span>`)}
     </div>
+    <${TaskRun} task=${task} nameOf=${(agent) => names.get?.(agent)?.name || ''} />
     ${task.status === 'blocked' && task.block_reason && html`<p class="phone-board-note">${task.block_reason}</p>`}
     ${openQuestions(task).map((q) => html`<${QuestionBlock} key=${q.n || 0} task=${task} q=${q} names=${names} onAnswer=${answer} />`)}
     ${live && html`<${ButtonRow} buttons=${[{ key: 'move', label: 'Move ▸', onClick: () => onMove(task, entry) }]} />`}
@@ -151,16 +153,9 @@ export function TaskPage({ id, group, source, state, api, onClose, onMove }) {
           : html`<p class="ui-empty">No brief.</p>`}
     <//>
 
-    ${refs.length > 0 && html`<${Section} title="Refs" count=${refs.length}>
-      <ul class="phone-list phone-task-refs">
-        ${refs.map((ref) => html`<li key=${ref.url || ref.label}>
-          ${/^https?:\/\//i.test(ref.url || '')
-            ? html`<a href=${ref.url} target="_blank" rel="noopener noreferrer">${ref.pr?.number ? `PR #${ref.pr.number}` : ref.label || ref.url}</a>`
-            : html`<span class="phone-task-ref-label">${ref.label || ref.url || ''}</span>`}
-          ${ref.pr?.title && html`<span class="phone-task-ref-sub">${ref.pr.title}${ref.pr.checks?.total ? ` · ${ref.pr.checks.passed}/${ref.pr.checks.total} checks` : ''}</span>`}
-        </li>`)}
-      </ul>
-    <//>`}
+    <${TaskRefs} task=${task} />
+    <${TaskEpic} task=${task} entry=${entry} full=${read.task} onOpen=${onOpenTask} />
+    <${TaskAfter} task=${task} entry=${entry} onOpen=${onOpenTask} />
 
     <${Section} title="Activity" count=${entries.length}>
       ${read.activity === null
