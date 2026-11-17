@@ -110,6 +110,19 @@ test('an agent step with outputs, a first step, or a command does not decide', (
   assert.match(m.canBranch(captures, 'review'), /clear its outputs/);
   assert.throws(() => m.toAgentDecision(ship, 'implement'), /one step before it/);
   assert.throws(() => m.toAgentDecision(ship, 'merge'), /command/);
+  const checks = m.updateStep(ship, 'review', (step) => ({ ...step, node: { ...step.node, checks: [{ run: 'make test' }] } })).view;
+  assert.match(m.canBranch(checks, 'review'), /full editor/, 'a compound task keeps its stages');
+  const twoWays = { ...ship, edges: [...ship.edges, { from: 'review', outcome: 'other', to: 'merge' }] };
+  assert.match(m.canBranch(twoWays, 'review'), /more than one way out/);
+});
+
+test('⑂ is not offered where going back would overlap another loop', () => {
+  // A step after approve: going back to approve would share only approve
+  // with approve's own loop back to implement (loop_overlap).
+  const after = m.insertAfter(ship, 'approve', 'agent');
+  assert.match(m.canBranch(after.view, after.id), /cross another loop/);
+  // review → implement nests inside approve's loop: fine.
+  assert.equal(m.canBranch(ship, 'review'), '');
 });
 
 test('alongside fans out through a parallel node and joins at what came next', () => {

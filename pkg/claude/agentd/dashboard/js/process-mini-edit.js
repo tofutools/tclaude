@@ -145,9 +145,41 @@ export function canDecide(view, id) {
   if (node?.type !== 'task') return 'only a task becomes a decision';
   if (node.performer?.kind !== 'agent') return 'a command continues one way; add a "you" step after it to branch';
   if (node.captures?.length) return 'a step with outputs continues one way; clear its outputs to let its agent decide';
+  // Plan, checks, review and retry are a task's; a decision would drop them.
+  if (['plan', 'checks', 'review', 'retry'].some((key) => node[key] !== undefined)) return 'its plan, checks, review or retry are a task\'s; change it in the full editor';
+  if (outgoing(view, id).length > 1) return 'it already has more than one way out; change it in the full editor';
   const into = incoming(view, id);
   if (into.length !== 1 || !isStep(view.template.nodes[into[0].from])) return 'it needs exactly one step before it to send changes back to';
+  if (overlapsALoop(view, [into[0].from, id])) return 'going back from it would cross another loop; the server refuses loops that overlap';
   return '';
+}
+
+// overlapsALoop says whether a loop whose body is `body` would overlap an
+// existing loop without one containing the other, which the server refuses
+// (loop_overlap). An existing loop's body is what lies on a forward path from
+// its target to the decision that goes back.
+function overlapsALoop(view, body) {
+  const { nodes } = view.template;
+  const forward = view.edges.filter((edge) => edge.from !== '' && !loopBound(nodes[edge.from], edge.outcome));
+  const reach = (start, step) => {
+    const seen = new Set([start]);
+    const stack = [start];
+    while (stack.length) {
+      const at = stack.pop();
+      for (const next of step(at)) if (!seen.has(next)) { seen.add(next); stack.push(next); }
+    }
+    return seen;
+  };
+  const mine = new Set(body);
+  for (const edge of view.edges) {
+    if (!edge.from || !loopBound(nodes[edge.from], edge.outcome)) continue;
+    const ahead = reach(edge.to, (at) => forward.filter((e) => e.from === at).map((e) => e.to));
+    const behind = reach(edge.from, (at) => forward.filter((e) => e.to === at).map((e) => e.from));
+    const theirs = [...ahead].filter((n) => behind.has(n));
+    const shared = theirs.filter((n) => mine.has(n)).length;
+    if (shared && shared !== theirs.length && shared !== mine.size) return true;
+  }
+  return false;
 }
 
 // toAgentDecision turns an agent step into an agent decision, the review
