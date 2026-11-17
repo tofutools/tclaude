@@ -935,8 +935,9 @@ function performersOf(node) {
 // names gives a gone step's name, as it read before.
 function dropDanglingRefs(view, ids, names) {
   const dropped = [];
-  const stale = (ref) => ids.includes(ref) && !agentPerformed(view.template.nodes[ref]);
-  const name = (ref) => names[ref] || ref;
+  // Trimmed, as the engine reads a reference.
+  const stale = (ref) => ids.includes(String(ref).trim()) && !agentPerformed(view.template.nodes[String(ref).trim()]);
+  const name = (ref) => names[String(ref).trim()] || String(ref).trim();
   for (const [id, node] of Object.entries(view.template.nodes)) {
     for (const performer of performersOf(node)) {
       const who = node.name || id;

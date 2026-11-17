@@ -1183,7 +1183,8 @@ export function MiniGraphEditor({
       }}
       onKind=${(kind, who) => run(() => {
         const result = changeKind(draft, selected, kind);
-        return who ? updateStep(result.view, selected, (s) => setStepWho(s, who)) : result;
+        // The Who lands on the changed step; its note (what it cleared) stays.
+        return who ? { ...updateStep(result.view, selected, (s) => setStepWho(s, who)), ...(result.note ? { note: result.note } : {}) } : result;
       })} />`}
     <div class="gm-foot">
       <span class="gq-dim">${isDraft ? 'It saves itself as you go; runs already going keep their version.' : 'Saving makes a new version; runs already going keep theirs.'}</span>

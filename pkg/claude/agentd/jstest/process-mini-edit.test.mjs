@@ -728,8 +728,10 @@ test('deleting a step, or making it yours or a command, clears what named its ag
     assert.equal(changed.view.template.nodes[fix].performer.sameAs, undefined);
     assert.match(changed.note, /Also cleared/);
   }
-  const still = m.changeKind(m.changeKind(tracked.view, 'implement', 'agent').view, 'implement', 'agent');
-  assert.equal(still.note, undefined, 'an agent step keeps them');
+  // A step that stays an agent (here: yours, then an agent again) is matched
+  // again only by what is set anew; what an agent task keeps is untouched.
+  const kept = m.changeKind(tracked.view, review, 'you');
+  assert.equal(kept.view.template.nodes[fix].performer.sameAs, 'implement', 'a reference to a step still an agent stays');
 
   // Another reference survives: only what named the changed step goes.
   assert.notEqual(review, 'review');
