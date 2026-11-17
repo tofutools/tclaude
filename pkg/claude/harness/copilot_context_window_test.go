@@ -9,6 +9,13 @@ func TestCopilotContextWindowDefault(t *testing.T) {
 	}{
 		{"gpt-5.6-sol", 272_000},
 		{"gpt-5.6-custom", 272_000},
+		{"gpt-6.2-astra", 272_000},
+		{"gpt-6.2-sol", 272_000},
+		{"gpt-6.1-sol", 272_000},
+		{"gpt-6-sol", 272_000},
+		{"gpt-6-astra", 272_000},
+		{"gpt-6.1-terra", 200_000},
+		{"gpt-6-luna", 200_000},
 		{"claude-sonnet-4.6", 1_000_000},
 		{"claude-opus-5", 1_000_000},
 		{"claude-haiku-5.5", 1_000_000},

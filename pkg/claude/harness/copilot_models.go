@@ -30,6 +30,8 @@ var copilotKnownModels = []string{
 	"claude-opus-4.7",
 	"claude-opus-4.6",
 	"claude-opus-4.5",
+	"gpt-6.2-astra",
+	"gpt-6.2-sol",
 	"gpt-6.1-sol",
 	"gpt-6.1-terra",
 	"gpt-6-astra",
@@ -94,7 +96,9 @@ const (
 func CopilotContextWindowDefault(model string) int64 {
 	model = strings.TrimSpace(model)
 	switch {
-	case strings.HasPrefix(model, "gpt-5.6"):
+	case strings.HasPrefix(model, "gpt-5.6"),
+		strings.HasPrefix(model, "gpt-6.2"),
+		strings.HasPrefix(model, "gpt-6") && (strings.Contains(model, "-sol") || strings.Contains(model, "-astra")):
 		return CopilotContextWindow
 	case model == "claude-haiku-5.5":
 		return 1_000_000
