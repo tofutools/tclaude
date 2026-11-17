@@ -121,9 +121,9 @@ test('the row helpers: subject and preview line, inline decisions, plain access 
 
 test('the list shows mailbox chips, rows with previews and files, and marks decisions without answering them', async (t) => {
   const { $, $$, calls, tap } = await setup(t);
-  const chips = $$('.phone-mail-chip').map((chip) => chip.textContent.trim());
+  const chips = $$('.phone-mail-chips .ui-tab').map((chip) => chip.textContent.trim());
   assert.deepEqual(chips, ['Human 1', 'All agent mail', 'Access 2', 'webshop 3'], 'pinned folders first, then groups');
-  assert.equal($('.phone-mail-chip.on').getAttribute('aria-pressed'), 'true');
+  assert.equal($('.phone-mail-chips .ui-tab.active').getAttribute('aria-pressed'), 'true');
   const rows = $$('.phone-mail-row');
   assert.equal(rows.length, 2);
   assert.ok(rows[0].classList.contains('unread'));
@@ -138,7 +138,7 @@ test('the list shows mailbox chips, rows with previews and files, and marks deci
   await tap(rows[1].querySelector('.phone-mail-decide'));
   assert.deepEqual(calls.at(-1), ['selectMessage', 2, { navigate: true }], 'a tap on the pill opens the message');
 
-  await tap($$('.phone-mail-chip')[3]);
+  await tap($$('.phone-mail-chips .ui-tab')[3]);
   assert.deepEqual(calls.at(-1), ['selectMailbox', 'group:webshop', { navigate: true }]);
   await tap($('.phone-mail-pager .ui-btn:last-child'));
   assert.deepEqual(calls.at(-1), ['goToPage', 2]);
@@ -162,7 +162,7 @@ test('the title names the mailbox; its ▾ lists every mailbox, agent folders on
   assert.equal(dialog(), null, 'picking one closes the sheet');
   assert.deepEqual(calls.filter(([name]) => name === 'listAgents').at(-1), ['listAgents', false]);
   assert.ok($('.phone-mail-list'));
-  assert.equal($$('.phone-mail-chip').length, 4);
+  assert.equal($$('.phone-mail-chips .ui-tab').length, 4);
 });
 
 test('🔍 opens a search over the mailbox; a kept search shows it open', async (t) => {
@@ -218,7 +218,7 @@ test('an open message is a full-screen page with a back button and a reply bar',
 
 test('an agent filter narrows the agent picker, never the folder chips', async (t) => {
   const { $$ } = await setup(t, { boxQuery: 'bet' });
-  assert.deepEqual($$('.phone-mail-chip').map((chip) => chip.textContent.trim()),
+  assert.deepEqual($$('.phone-mail-chips .ui-tab').map((chip) => chip.textContent.trim()),
     ['Human 1', 'All agent mail', 'Access 2', 'webshop 3']);
 });
 

@@ -51,7 +51,7 @@ import { trustLock } from './lock-reason.js';
 import { usePhoneBar, usePhonePage } from './phone-page.js';
 import { NavToggle, navShown } from './phone-nav-toggle.js';
 import { Button } from './ui-components.js';
-import { Avatar, SheetHead, avatarHue } from './phone-ui.js';
+import { Avatar, ChipRow, SheetHead, avatarHue } from './phone-ui.js';
 import { findAgentRoute } from './agent-route.js';
 
 const html = htm.bind(h);
@@ -306,11 +306,8 @@ function MailboxChips({ current, controller }) {
   const chips = chipsFor(controller.mailboxView({ unfiltered: true }), controller.mailboxLabel);
   const agentFolder = !chips.some((chip) => chip.id === current.selected) && current.selected;
   const all = agentFolder ? [{ id: current.selected, label: mailboxName(current, controller), count: 0 }, ...chips] : chips;
-  return html`<div class="phone-mail-chips" role="group" aria-label="Mailboxes">
-    ${all.map((chip) => html`<button data-ui-exempt key=${chip.id} type="button"
-      class=${`phone-mail-chip${chip.id === current.selected ? ' on' : ''}`} aria-pressed=${chip.id === current.selected}
-      onClick=${() => controller.selectMailbox(chip.id, { navigate: true })}>${chip.label}${chip.count > 0 && html` <span class="phone-mail-chip-count">${chip.count}</span>`}</button>`)}
-  </div>`;
+  return html`<div class="phone-mail-chips"><${ChipRow} toggle label="Mailboxes" onSelect=${(id) => controller.selectMailbox(id, { navigate: true })}
+    items=${all.map((chip) => ({ key: chip.id, label: chip.label, count: chip.count > 0 ? chip.count : null, pressed: chip.id === current.selected }))} /></div>`;
 }
 
 // MailboxSheet is the title's ▾: every mailbox, the agent folders with the

@@ -5,8 +5,6 @@
    An island that failed to load keeps its alert on screen. */
 :root[data-layout="phone"] #tab-usage[data-subview] :is(#usage-root, #costs-root):not(:has(> [role="alert"])) { display: none; }
 
-:root[data-layout="phone"] .phone-usage-chips { margin-bottom: 12px; }
-:root[data-layout="phone"] .phone-cost-spans { margin-bottom: 10px; }
 :root[data-layout="phone"] .phone-usage-foot { margin: 14px 0 4px; color: var(--ui-muted-text); font-size: 12px; }
 :root[data-layout="phone"] .phone-usage-warn { margin: 0 0 10px; color: var(--phone-warn); font-size: 13px; }
 

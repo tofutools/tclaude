@@ -102,20 +102,29 @@ export function SheetHead({ class: extra, children, ...rest }) {
   return html`<h3 ...${rest} class=${join('ui-eyebrow phone-sheet-subhead', extra)}>${children}</h3>`;
 }
 
-// ChipRow is a row of rounded chips that scrolls sideways: one view's
-// filters or groups, one of them picked. items: [{ key, label, count?,
-// badge?, badgeTone? }]; count is muted after the label, badge a bubble
-// (something waiting there), blue unless badgeTone says danger or warn. It is a tab row (ui-tabs.js), so the keyboard and screen
-// reader see the same tabs as everywhere else; only the look is the
-// phone's.
-export function ChipRow({ items, value, onSelect, label, class: extra }) {
+// ChipRow is the phone's one row of rounded chips that scrolls sideways
+// (phone.css .phone-chips): a view's sub-views, filters or groups. items:
+// [{ key, label, count?, badge?, badgeTone?, title?, disabled?, href?,
+// class?, attrs? }]; count is muted after the label, badge a bubble
+// (something waiting there), blue unless badgeTone says danger or warn.
+//
+// By default one chip is picked (value) and the row is a tab row
+// (ui-tabs.js), so the keyboard and screen reader see the same tabs as
+// everywhere else. toggle makes the chips pressed buttons in a group
+// instead, for filters over one list rather than views (Mail's folders,
+// Agents' groups, several of which may be on): an item is pressed when its
+// own pressed is true, and onSelect(key) toggles it.
+export function ChipRow({ items, value, onSelect, label, toggle = false, class: extra }) {
+  const text = (item) => html`${item.label}${item.count !== undefined && item.count !== null && html` <span class="phone-chip-count">${item.count}</span>`}${item.badge > 0 && html` <span class=${`ui-badge ui-badge-${item.badgeTone || 'accent'}`}>${item.badge}</span>`}`;
+  if (toggle) {
+    return html`<div class=${join('phone-chips', extra)} role="group" aria-label=${label}>
+      ${items.map((item) => html`<button data-ui-exempt key=${item.key} type="button" ...${item.attrs}
+        class=${join('ui-tab', item.class, item.pressed && 'active')} aria-pressed=${item.pressed ? 'true' : 'false'}
+        title=${item.title} disabled=${item.disabled} onClick=${() => onSelect?.(item.key)}>${text(item)}</button>`)}
+    </div>`;
+  }
   return html`<${Tabs} class=${join('phone-chips', extra)} label=${label} value=${value} onSelect=${onSelect}
-    items=${items.map((item) => ({
-      key: item.key,
-      title: item.title,
-      disabled: item.disabled,
-      label: html`${item.label}${item.count !== undefined && item.count !== null && html` <span class="phone-chip-count">${item.count}</span>`}${item.badge > 0 && html` <span class=${`ui-badge ui-badge-${item.badgeTone || 'accent'}`}>${item.badge}</span>`}`,
-    }))} />`;
+    items=${items.map((item) => ({ ...item, label: text(item) }))} />`;
 }
 
 // SCOPE_KINDS say how much of a view a phone offers: ro (read-only, blue),

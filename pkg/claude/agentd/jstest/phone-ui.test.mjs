@@ -97,6 +97,29 @@ test("RowMore is a row's muted ⋯: a sheet's popup by default, none when it goe
   assert.deepEqual(taps, ['lead', 'group']);
 });
 
+test('ChipRow: tabs that keep a link\'s href and hooks, or toggles that several may have on', async (t) => {
+  const { harness, mod } = await load(t, 'js/phone-ui.js');
+  const { html } = harness;
+  const toggled = [];
+  const { container } = await harness.mount(html`<div>
+    <${mod.ChipRow} label="Views" value="b" items=${[{ key: 'a', label: 'A', href: '/a' }, { key: 'b', label: 'B', class: 'hook', attrs: { 'data-subtab': 'b' } }]} />
+    <${mod.ChipRow} toggle label="Groups" onSelect=${(key) => toggled.push(key)}
+      items=${[{ key: 'x', label: 'X', count: 3, pressed: true }, { key: 'y', label: 'Y', pressed: true }, { key: 'z', label: 'Z' }]} />
+  </div>`);
+  const [tabs, toggles] = container.querySelectorAll('.phone-chips');
+  assert.equal(tabs.getAttribute('role'), 'tablist');
+  assert.equal(tabs.querySelector('a.ui-tab').getAttribute('href'), '/a', 'a link tab keeps its href');
+  const b = tabs.querySelector('[data-subtab="b"]');
+  assert.ok(b.classList.contains('hook') && b.classList.contains('active'), 'and a tab its class and hooks');
+  assert.equal(toggles.getAttribute('role'), 'group');
+  assert.equal(toggles.getAttribute('aria-label'), 'Groups');
+  const buttons = [...toggles.querySelectorAll('button.ui-tab')];
+  assert.deepEqual(buttons.map((el) => el.getAttribute('aria-pressed')), ['true', 'true', 'false'], 'several on at once');
+  assert.equal(buttons[0].querySelector('.phone-chip-count').textContent, '3');
+  await harness.act(() => buttons[2].click());
+  assert.deepEqual(toggled, ['z']);
+});
+
 test('pillTone maps agent states onto the mock\'s pill colours', async (t) => {
   const { mod } = await load(t, 'js/phone-ui.js');
   assert.deepEqual(['asking', 'working', 'idle', 'offline', 'error', 'approval', 'key', 'mystery'].map(mod.pillTone),
