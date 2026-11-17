@@ -252,8 +252,9 @@
 }
 :root[data-layout="phone"] .phone-empty { margin: 6px 0; }
 /* ErrorNote (phone-ui.js): the error banner, padded, its Retry at the end.
-   A desktop island the phone shares (Usage's overview) writes .island-error,
-   which has no style of its own: on the phone it is the same note. */
+   Desktop islands the phone shares (Usage's overview, an island that failed
+   to load) write .island-error, which has no style of its own: on the phone
+   it is the same note. */
 :root[data-layout="phone"] .island-error {
   border-left: 3px solid var(--ui-danger); background: rgba(248, 81, 73, .08);
   color: var(--ui-danger-text); font-size: 12px; line-height: 1.4;
