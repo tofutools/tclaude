@@ -23,16 +23,20 @@ import {
   addOutcome, branch, canBranch, toAgentDecision, canDelete, canInsertAfter, canInsertBefore, canRunAlongside, changeKind, changeSummary,
   deleteOrphans, deleteStep, draftProjection, duplicate, insertAfter, insertBefore, isStep, miniKind, outcomesOf,
   canRemoveOutcome, removeOutcome, renameOutcome, runAlongside, setLoopRounds, setOutcomeTarget, targetsFor, updateStep,
-  addDecider, canAddDecider, gateDeciders, removeDecider, setAgree, setDecider, setGateText,
+  addDecider, canAddDecider, gateDeciders, removeDecider, setAgree, setDecider,
   exhaustionOptions, setDecisionWho, setExhaustion,
 } from './process-mini-edit.js';
 import { LOOP_MAX_ROUNDS, LOOP_MIN_ROUNDS, loopBound, normalizeRounds } from './process-loops.js';
 import {
-  agentStepIDs, collapseParamShorthand, constraintFromValue, constraintValue, outputRef, setStepConstraint, setStepName, setStepOutputs,
+  agentStepIDs, collapseParamShorthand, expandParamShorthand, constraintFromValue, constraintValue, outputRef, setStepConstraint, setStepName, setStepOutputs,
   FAILURE_RETRIES_MAX, setStepFailure, setStepText, setStepWho, stepConstraint, stepFailure, stepOutputs, stepText, stepWho, viewToStepList,
 } from './process-step-list.js';
 import { openProcessDraft } from './process-draft-handoff.js';
 import { followName } from './process-step-ids.js';
+import {
+  deciderOwnAsk, deciderSummary, gateAsk, setDeciderAsk, setDeciderFallback, setDeciderNot, setGateAsk, spawnIfNobody,
+  stuckGate, withReviewerDefault,
+} from './process-gate-deciders.js';
 import {
   AUTOSAVE_DELAY_MS, DRAFT_DESCRIPTION_MAX, FallbackPicker, TypedField, UNTITLED_PROCESS, WhoPicker, defaultNotify, inheritLabel, useSpawnProfiles,
 } from './groups-quickstart.js';
@@ -138,8 +142,78 @@ function KindChips({ onPick, disabled = '', label = '' }) {
   </span>`;
 }
 
-function deciderAsk(decider) {
-  return collapseParamShorthand(decider?.kind === 'human' ? decider.ask || decider.prompt || '' : decider?.prompt || '');
+// DeciderRow is one decider of a gate: who, and a ▸ that opens its own ask,
+// "If nobody" and "Not" in place. Closed, it says what is set ("not
+// implement").
+function DeciderRow({ view, id, index, decider, shared, open, onToggle, roster, roles, fallbackInfo, onApply }) {
+  const node = view.template.nodes[id];
+  const agent = decider.kind === 'agent';
+  const summary = deciderSummary(view, id, index, shared);
+  const stepName = (stepID) => view.template.nodes[stepID]?.name || stepID;
+  // A decider naming one agent takes no "not" (the validator refuses both).
+  const others = agent && !decider.assignee ? agentStepIDs(view.template, id) : [];
+  const not = decider.differentFrom || [];
+  const notValue = decider.sameAs ? `same:${decider.sameAs}` : not.join(',');
+  const fallbackValue = agent ? stepFallbackValue({ node: { performer: decider } }) : '';
+  const panel = `gm-decider-${id}-${index}`;
+  return html`<div class=${`gm-decider${open ? ' is-open' : ''}`} data-mini-decider=${index}>
+    <div class="gm-decider-row">
+      <${Button} size="sm" icon=${true} variant="ghost" class="gm-decider-toggle" data-mini-decider-toggle=${index}
+        aria-expanded=${open ? 'true' : 'false'} aria-controls=${panel}
+        aria-label=${`${open ? 'Close' : 'Open'} decider ${index + 1}'s settings`} onClick=${onToggle}>${open ? '▾' : '▸'}<//>
+      <${WhoPicker} step=${{ id: `${id}.vote.${index + 1}`, node: { type: 'decision', performer: decider } }} roster=${roster} roles=${roles} spawn=${false}
+        label=${`Who casts vote ${index + 1}`}
+        onChange=${(who) => {
+    if (who.mode === 'command') return;
+    const changed = setDecider(view, id, index, who);
+    onApply(decider.kind === 'agent' ? changed : withReviewerDefault(changed.view, id, index));
+  }} />
+      ${!open && summary && html`<span class="gq-dim gm-decider-summary" data-mini-decider-summary=${index}>${summary}</span>`}
+      <${Button} size="sm" icon=${true} variant="ghost danger" aria-label=${`Remove decider ${index + 1}`}
+        onClick=${() => onApply(removeDecider(view, id, index))}>✕<//>
+    </div>
+    ${open && html`<div class="gm-decider-panel" id=${panel} data-mini-decider-panel=${index}>
+      <label class="gm-field"><span>Its own ask</span><${TypedField} as="textarea" name="gm-decider-ask" rows="2" data-mini-decider-ask=${index}
+        value=${collapseParamShorthand(deciderOwnAsk(node, index, shared))} placeholder="the same as Asks"
+        onChange=${(event) => onApply(setDeciderAsk(view, id, index, event.currentTarget.value, shared))} /></label>
+      ${agent && html`<div class="gm-field" data-mini-decider-fallback=${index}><span>If nobody</span><${FallbackPicker} value=${fallbackValue}
+        label=${`If no member can cast vote ${index + 1}`} inherit=${inheritLabel(fallbackInfo.fallback, fallbackInfo.defaultSpawnProfile)}
+        defaultSpawnProfile=${fallbackInfo.defaultSpawnProfile} profiles=${fallbackInfo.profiles}
+        onChange=${(next) => onApply(setDeciderFallback(view, id, index, next))} /></div>`}
+      ${agent && others.length > 0 && html`<div class="gm-field" data-mini-decider-not=${index}><span>Not</span><${Select} size="sm"
+        aria-label=${`Vote ${index + 1} is not cast by`} value=${notValue}
+        onChange=${(event) => { const picked = event.currentTarget.value; if (!picked.startsWith('same:')) onApply(setDeciderNot(view, id, index, picked.split(','))); }}>
+        <option value="">anyone who fits</option>
+        ${decider.sameAs && html`<option value=${notValue}>the same agent as ${stepName(decider.sameAs)}</option>`}
+        ${not.length > 1 && html`<option value=${notValue}>not the agents of ${not.map(stepName).join(', ')}</option>`}
+        ${others.map((other) => html`<option key=${other} value=${other}>the agent who did ${stepName(other)}</option>`)}
+      <//></div>`}
+    </div>`}
+  </div>`;
+}
+
+// GateDeciders lists a gate's deciders, one row each, and warns when the gate
+// would wait forever: more agent deciders than members who can vote, and one
+// of them does not spawn.
+function GateDeciders({ view, id, shared, roster, roles, fallbackInfo, noMoreDeciders, onApply }) {
+  const deciders = gateDeciders(view.template.nodes[id]);
+  const [open, setOpen] = useState({ id, rows: {} });
+  const rows = open.id === id ? open.rows : {};
+  const toggle = (index) => setOpen({ id, rows: { ...rows, [index]: !rows[index] } });
+  const stuck = stuckGate(view, id, roster || [], fallbackInfo.fallback, fallbackInfo.defaultSpawnProfile);
+  const fix = stuck && spawnIfNobody(fallbackInfo);
+  const ordinal = (n) => ['first', 'second', 'third', 'fourth', 'fifth', 'sixth', 'seventh', 'eighth'][n] || `vote ${n + 1}`;
+  return html`<div class="gm-field" data-mini-deciders=${id}><span>Deciders</span><div class="gm-deciders">
+    ${deciders.map((decider, index) => html`<${DeciderRow} key=${index} view=${view} id=${id} index=${index} decider=${decider} shared=${shared}
+      open=${!!rows[index]} onToggle=${() => toggle(index)} roster=${roster} roles=${roles} fallbackInfo=${fallbackInfo}
+      onApply=${(change) => { if (change.view !== view && deciders.length !== change.view.template.nodes[id]?.deciders?.length) setOpen({ id, rows: {} }); onApply(change); }} />`)}
+    <div><${Button} size="sm" icon=${true} class="gm-add-outcome" data-mini-add-decider title=${noMoreDeciders || 'Add a decider'} disabled=${!!noMoreDeciders}
+      onClick=${() => { const added = addDecider(view, id, { mode: 'nobody' }); onApply(withReviewerDefault(added.view, id, deciders.length)); }}>+<//></div>
+    ${stuck && html`<p class="gm-stuck" role="status" data-mini-stuck=${stuck.index}>${`⚠ ${stuck.deciders} agent deciders but ${stuck.members} ${stuck.noun} in the group: the ${ordinal(stuck.index)} vote waits forever.`}${fix
+    ? html` <${Button} size="sm" variant="link" class="gq-link" data-mini-stuck-fix
+        onClick=${() => onApply(setDeciderFallback(view, id, stuck.index, fix))}>Spawn one if nobody<//> (${fix.profile ? `with ${fix.profile}, ` : ''}on decider ${stuck.index + 1})`
+    : ' Add a member, or a spawn profile to spawn one.'}</p>`}
+  </div></div>`;
 }
 
 // Inspector is the compact editor of one step: the step list's fields.
@@ -184,6 +258,11 @@ const FAILURE_RETRIES_DEFAULT = 2;
 
 function Inspector({ view, id, roster, roles, fallbackInfo, onApply, onRename, onKind, onClose, onFullEditor }) {
   const node = view.template.nodes[id];
+  // The gate's Asks as last shown, per gate: a tie keeps it, so giving one
+  // decider its own ask never swaps which text is the shared one.
+  const shownAsk = useRef({});
+  const shared = node?.deciders?.length ? gateAsk(node, shownAsk.current[id] ?? null) : '';
+  if (node?.deciders?.length) shownAsk.current[id] = shared;
   if (!node) return null;
   const kind = miniKind(node);
   if (!isStep(node)) {
@@ -209,7 +288,6 @@ function Inspector({ view, id, roster, roles, fallbackInfo, onApply, onRename, o
   };
   const label = { agent: 'What', you: 'Asks', command: 'Runs', gate: 'Asks' }[kind];
   const gate = kind === 'gate';
-  const deciders = gateDeciders(node);
   const noMoreDeciders = node.type === 'decision' ? canAddDecider(view, id) : 'only a decision';
   const stepName = (stepID) => view.template.nodes[stepID]?.name || stepID;
   // Which agent: the same as, or not the one of, another agent step.
@@ -225,22 +303,14 @@ function Inspector({ view, id, roster, roles, fallbackInfo, onApply, onRename, o
     onKeyDown=${(event) => { if (event.key === 'Escape') { event.stopPropagation(); onClose(); } }}>
     <label class="gm-field"><span>Step</span><${TypedField} name="groups-mini-editor-input" type="text" data-mini-name value=${node.name || ''} placeholder=${id}
       onChange=${(event) => onRename(event.currentTarget.value)} /></label>
-    <label class="gm-field"><span>${label}</span><${TypedField} as="textarea" name="groups-mini-editor-textarea" rows="3" data-mini-text value=${gate ? deciderAsk(deciders[0]) : text}
-      title=${gate ? 'Every decider is asked this; ask each their own in the full editor' : undefined}
-      onChange=${(event) => onApply(gate ? setGateText(view, id, event.currentTarget.value)
+    <label class="gm-field"><span>${label}</span><${TypedField} as="textarea" name="groups-mini-editor-textarea" rows="3" data-mini-text value=${gate ? collapseParamShorthand(shared) : text}
+      title=${gate ? "Every decider is asked this, unless its ▸ gives it its own ask" : undefined}
+      onChange=${(event) => onApply(gate ? ((typed) => { shownAsk.current[id] = expandParamShorthand(typed); return setGateAsk(view, id, typed, shared); })(event.currentTarget.value)
         : updateStep(view, id, (s) => setStepText(s, event.currentTarget.value)))} /></label>
     ${readable.length > 0 && kind !== 'command' && html`<p class="gq-dim gm-readable" data-mini-readable>Can use: ${readable.map((name, i) => html`${i > 0 && ', '}<code key=${name}>${outputRef(name)}</code>`)}</p>`}
     ${gate
-    ? html`<div class="gm-field" data-mini-deciders=${id}><span>Deciders</span><div class="gm-outcomes">
-        ${deciders.map((decider, index) => html`<span key=${index} class="gm-outcome" data-mini-decider=${index}>
-          <${WhoPicker} step=${{ id: `${id}.vote.${index + 1}`, node: { type: 'decision', performer: decider } }} roster=${roster} roles=${roles} spawn=${false}
-            onChange=${(who) => { if (who.mode !== 'command') onApply(setDecider(view, id, index, who)); }} />
-          <${Button} size="sm" icon=${true} variant="ghost danger" aria-label=${`Remove decider ${index + 1}`}
-            onClick=${() => onApply(removeDecider(view, id, index))}>✕<//>
-        </span>`)}
-        <${Button} size="sm" icon=${true} class="gm-add-outcome" data-mini-add-decider title=${noMoreDeciders || 'Add a decider'} disabled=${!!noMoreDeciders}
-          onClick=${() => onApply(addDecider(view, id, { mode: 'nobody' }))}>+<//>
-      </div></div>
+    ? html`<${GateDeciders} view=${view} id=${id} shared=${shared} roster=${roster} roles=${roles} fallbackInfo=${fallbackInfo}
+        noMoreDeciders=${noMoreDeciders} onApply=${onApply} />
       <div class="gm-field" data-mini-agree=${id}><span>All must choose</span><${Select} size="sm" aria-label="The outcome every decider must choose"
         value=${node.agree || ''} onChange=${(event) => onApply(setAgree(view, id, event.currentTarget.value))}>
         ${outcomes.filter(({ outcome }) => !loopBound(node, outcome)).map(({ outcome }) => html`<option key=${outcome} value=${outcome}>${outcome}</option>`)}
@@ -250,7 +320,7 @@ function Inspector({ view, id, roster, roles, fallbackInfo, onApply, onRename, o
       defaultSpawnProfile=${fallbackInfo.defaultSpawnProfile} onChange=${setWho} />
       ${node.type === 'decision' && kind !== 'command' && html`<${Button} size="sm" variant="link" class="gq-link" data-mini-add-decider
         disabled=${!!noMoreDeciders} title=${noMoreDeciders || 'Several decide together: all must agree'}
-        onClick=${() => onApply(addDecider(view, id, { mode: 'nobody' }))}>+ another decider<//>`}</div>
+        onClick=${() => { const added = addDecider(view, id, { mode: 'nobody' }); onApply(withReviewerDefault(added.view, id, 1)); }}>+ another decider<//>`}</div>
       ${node.type === 'decision' && kind === 'agent' && html`<div class="gm-field" data-mini-decided-by=${id}><span>Decided by</span>
         <span class="gq-dim">🤖 ${whoLine(node, fallbackInfo).replace(/^pick who$/, 'the agent you pick')} reports one outcome as its verdict. Nobody is asked.</span></div>`}`}
     ${others.length > 0 && html`<div class="gm-field" data-mini-constraint=${id}><span>Which agent</span><${Select} size="sm" aria-label="Which agent does this step"
