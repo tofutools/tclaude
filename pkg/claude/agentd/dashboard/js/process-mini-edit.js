@@ -485,6 +485,10 @@ export function changeKind(view, id, kind) {
   next.template.nodes[id] = changed;
   // Only a task reports outputs.
   if (changed.type !== 'task') delete changed.captures;
+  // A retry runs only on agent and command tasks, and only an agent can be
+  // handed its own failure back: what the new kind cannot run goes.
+  if (changed.type !== 'task') delete changed.retry;
+  else if (kind === 'command' && changed.retry?.onFail && changed.retry.onFail !== 'fresh-attempt') delete changed.retry.onFail;
   let orphans = [];
   if (from === 'you') {
     // A task continues one way: only the main answer's path stays, and the

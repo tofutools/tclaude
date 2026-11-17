@@ -841,13 +841,14 @@ export function stepFailure(step) {
 }
 
 // setStepFailure returns the step with its "If it fails" set. The retry
-// policy's other fields (onFail, from the full editor) are kept while it
-// stays a retry policy; retries are clamped to 1..FAILURE_RETRIES_MAX.
+// policy's onFail (from the full editor) is kept while it stays a retry
+// policy; a backoff, which the engine does not run, is dropped. Retries are
+// clamped to 1..FAILURE_RETRIES_MAX.
 export function setStepFailure(step, { mode, retries = 1 } = {}) {
   const node = clone(step.node);
   if (mode === 'hold' || mode === 'retry') {
     const count = Math.min(FAILURE_RETRIES_MAX, Math.max(1, Math.round(Number(retries) || 1)));
-    node.retry = { ...(node.retry || {}), maxAttempts: mode === 'hold' ? 1 : count + 1 };
+    node.retry = { maxAttempts: mode === 'hold' ? 1 : count + 1, ...(node.retry?.onFail ? { onFail: node.retry.onFail } : {}) };
   } else {
     delete node.retry;
   }

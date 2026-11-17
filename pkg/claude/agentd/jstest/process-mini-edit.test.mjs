@@ -155,6 +155,15 @@ test('a gate carries its who as a caption under the diamond; a plain decision do
   assert.equal(m.draftProjection(gated, { whoOf }).nodes.find((n) => n.id === 'approve').caption, '2 deciders · all ship');
 });
 
+test('changing a step\'s kind drops a retry the new kind cannot run', () => {
+  const retrying = structuredClone(ship);
+  retrying.template.nodes.implement.retry = { maxAttempts: 3, onFail: 'feedback-same-session' };
+  const asked = m.changeKind(retrying, 'implement', 'you').view;
+  assert.equal(asked.template.nodes.implement.retry, undefined, 'a question has no retries');
+  const command = m.changeKind(retrying, 'implement', 'command').view;
+  assert.deepEqual(command.template.nodes.implement.retry, { maxAttempts: 3 }, 'a command keeps its budget, not a session to hand back');
+});
+
 test('a step that retries if it fails projects its retries for the ↻N badge', () => {
   const retrying = structuredClone(ship);
   retrying.template.nodes.merge.retry = { maxAttempts: 3 };

@@ -460,4 +460,6 @@ test('"If it fails" maps onto the retry policy the engine runs', () => {
   assert.deepEqual(setStepFailure(feedback, { mode: 'retry', retries: 1 }).node.retry, { maxAttempts: 2, onFail: 'feedback-same-session' }, 'the full editor\'s mode stays');
   assert.equal(setStepFailure(feedback, { mode: 'fail' }).node.retry, undefined);
   assert.equal(step.node.retry, undefined, 'the step given is not changed');
+  const backoff = { ...step, node: { ...step.node, retry: { maxAttempts: 2, backoff: '30s' } } };
+  assert.deepEqual(setStepFailure(backoff, { mode: 'hold' }).node.retry, { maxAttempts: 1 }, 'a backoff the engine refuses goes');
 });

@@ -153,7 +153,9 @@ function ExhaustionPicker({ view, id, outcome, value, onApply }) {
 // default; hold it for the operator; or retry N times, then hold it. The
 // N× box shows only for retry. Routing a failure to another step is not
 // something the engine runs, so it is not offered.
-function FailureRow({ id, failure, onChange }) {
+// On a step with plan, check or review stages the budget is its one rework
+// budget: a stage sending the work back counts as a failure too.
+function FailureRow({ id, failure, staged = false, onChange }) {
   return html`<div class="gm-field" data-mini-failure=${id}><span>If it fails</span><div class="gm-failure">
       <div class="gq-pick-pair">
         <${Select} size="sm" aria-label="If this step fails" value=${failure.mode} data-failure=${failure.mode}
@@ -166,7 +168,7 @@ function FailureRow({ id, failure, onChange }) {
           <${TypedField} name="gm-retries" type="number" min="1" max=${FAILURE_RETRIES_MAX} aria-label="Retries" data-mini-retries value=${failure.retries}
             onChange=${(event) => onChange({ mode: 'retry', retries: event.currentTarget.value })} />×</label>`}
       </div>
-      ${failure.mode !== 'fail' && html`<span class="gq-dim" data-mini-failure-note>Held, it waits for you to retry, skip or cancel it.</span>`}
+      ${failure.mode !== 'fail' && html`<span class="gq-dim" data-mini-failure-note>Held, it waits for you to retry, skip or cancel it.${staged ? ' Its check or review sending it back counts as a failure too.' : ''}</span>`}
     </div></div>`;
 }
 
@@ -253,7 +255,7 @@ function Inspector({ view, id, roster, roles, fallbackInfo, onApply, onRename, o
       label="If no member can take this step" inherit=${inheritLabel(fallbackInfo.fallback, fallbackInfo.defaultSpawnProfile)}
       defaultSpawnProfile=${fallbackInfo.defaultSpawnProfile} profiles=${fallbackInfo.profiles}
       onChange=${(next) => onApply(updateStep(view, id, (s) => setStepFallback(s, next)))} /></div>`}
-    ${(kind === 'agent' || kind === 'command') && node.type === 'task' && html`<${FailureRow} id=${id} failure=${stepFailure(step)}
+    ${(kind === 'agent' || kind === 'command') && node.type === 'task' && html`<${FailureRow} id=${id} failure=${stepFailure(step)} staged=${!!(node.plan || node.checks?.length || node.review)}
       onChange=${(next) => onApply(updateStep(view, id, (s) => setStepFailure(s, next)))} />`}
     ${kind === 'agent' && node.type === 'task' && html`<label class="gm-field" data-mini-outputs=${id}><span>Outputs</span><${TypedField} name="none-e-g-pr" type="text"
       value=${outputs.join(', ')} placeholder="none (e.g. pr)" title="Names this step reports, which later steps read as {{ outputs.<name> }}"
