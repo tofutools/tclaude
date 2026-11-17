@@ -11,6 +11,11 @@
 // the write took, and how soon output followed input there. Copy report
 // gives the lot as text, to compare a phone with a desktop.
 //
+// dashboard-imperative-boundary: platform-layout
+// The readout is plain DOM inside the xterm host (terminals-core.js owns it
+// and stops it with the widget), as the xterm core's own nodes are; see
+// CONTRIBUTING.md.
+//
 // Diagnostics only: it changes nothing about the stream, the terminal or the
 // renderer. Off by default and remembered per device (localStorage, not the
 // dashboard prefs, which every device shares). Off, the widget's hooks are a
@@ -343,19 +348,19 @@ export function mountDiagnostics({ host, term, serverSide = false, sendControl =
   head.className = 'term-diag-head';
   const title = doc.createElement('b');
   title.textContent = 'Diagnostics';
-  const copyButton = doc.createElement('button');
-  copyButton.type = 'button';
-  copyButton.textContent = 'Copy report';
+  const button = (text, label = '') => {
+    const made = doc.createElement('button');
+    made.className = 'ui-btn ui-btn-ghost ui-sm term-diag-btn';
+    made.type = 'button';
+    made.textContent = text;
+    if (label) made.setAttribute('aria-label', label);
+    return made;
+  };
+  const copyButton = button('Copy report');
   copyButton.setAttribute('data-term-diag-copy', '');
-  const foldButton = doc.createElement('button');
-  foldButton.type = 'button';
-  foldButton.textContent = '▾';
-  foldButton.setAttribute('aria-label', 'Fold the readout');
+  const foldButton = button('▾', 'Fold the readout');
   foldButton.setAttribute('aria-expanded', 'true');
-  const closeButton = doc.createElement('button');
-  closeButton.type = 'button';
-  closeButton.textContent = '✕';
-  closeButton.setAttribute('aria-label', 'Turn diagnostics off');
+  const closeButton = button('✕', 'Turn diagnostics off');
   const body = doc.createElement('pre');
   body.className = 'term-diag-body';
   head.append(title, foldButton, copyButton, closeButton);
