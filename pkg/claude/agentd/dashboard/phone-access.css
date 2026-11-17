@@ -1,5 +1,4 @@
 /* Access (js/phone-access-island.js). */
-:root[data-layout="phone"] .phone-access-chips { margin-bottom: 12px; }
 :root[data-layout="phone"] .phone-access-row {
   display: flex; align-items: center; gap: 10px; min-height: 52px; padding: 10px 0;
   border-bottom: var(--phone-row-sep);

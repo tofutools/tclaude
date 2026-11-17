@@ -22,9 +22,8 @@ import { PhoneGrant, grantFor } from './phone-grant.js';
 import { createMessageAccessDialogActions } from './message-access-dialog-actions.js';
 import { DesktopOnlyNote } from './phone-desktop-only.js';
 import { usePhoneBar } from './phone-page.js';
-import { Section } from './phone-ui.js';
+import { ChipRow, Section } from './phone-ui.js';
 import { Button, Input } from './ui-components.js';
-import { Tabs } from './ui-tabs.js';
 
 const html = htm.bind(h);
 
@@ -215,7 +214,7 @@ export function PhoneAccessApp({ state, actions, snapshot, fetchImpl = globalThi
       granted=${() => { setGranting(false); select('sudo'); }} />`;
   }
   return html`<div class="phone-access">
-    <${Tabs} class="phone-chips phone-access-chips" label="Access views" value=${shown} onSelect=${select} items=${items} />
+    <${ChipRow} label="Access views" value=${shown} onSelect=${select} items=${items} />
     ${!current.snapshotLoaded
       ? html`<p class="ui-empty phone-empty">Loading…</p>`
       : html`<div role="tabpanel" aria-label=${VIEWS.find((view) => view.key === shown)?.label}>

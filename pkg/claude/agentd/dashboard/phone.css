@@ -264,10 +264,14 @@
 /* A chip row (phone-ui.js ChipRow, or any tab row with .phone-chips): rounded
    chips in a row that scrolls sideways, edge to edge. A chip is drawn 32px
    tall; the row's padding and each chip's ::after keep a finger-sized hit
-   area. */
+   area. Every view's row is this one, at the same place under the bar and
+   with the same space under it: no view styles its own (tk_81b4849c). A
+   chip scrolled into sight (the picked one) stops inside the gutter, not
+   under the screen's edge. */
 :root[data-layout="phone"] .phone-chips {
   display: flex; flex-wrap: nowrap; gap: 8px; overflow-x: auto; scrollbar-width: none;
-  max-width: none; margin: -6px calc(-1 * var(--phone-gutter)) 4px; padding: 6px var(--phone-gutter);
+  max-width: none; margin: -6px calc(-1 * var(--phone-gutter)) 10px; padding: 6px var(--phone-gutter);
+  scroll-padding-inline: var(--phone-gutter);
   background: none; border: 0; border-radius: 0;
 }
 :root[data-layout="phone"] .phone-chips::-webkit-scrollbar { display: none; }
@@ -278,7 +282,7 @@
   font-size: 13px; font-weight: 400;
 }
 :root[data-layout="phone"] .phone-chips .ui-tab::after { content: ""; position: absolute; inset: -6px 0; }
-:root[data-layout="phone"] .phone-chips .ui-tab:is(.active, [aria-selected="true"]) {
+:root[data-layout="phone"] .phone-chips .ui-tab:is(.active, [aria-selected="true"], [aria-pressed="true"]) {
   background: var(--phone-on-bg); border-color: var(--phone-accent-bg); color: var(--ui-text-strong); font-weight: 500;
 }
 :root[data-layout="phone"] .phone-chip-count { color: var(--ui-muted-text); }

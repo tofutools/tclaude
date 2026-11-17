@@ -90,12 +90,6 @@
   display: flex; justify-content: center; align-items: center; gap: 6px; width: 100%; min-height: var(--phone-tap); margin-top: 6px;
   background: none; border: 0; color: var(--ui-focus); font: inherit; cursor: pointer;
 }
-/* The chips over Now (All, Needs you, Idle, Recent, Problems): the shared
-   .phone-chips look, a little narrower. */
-/* On a narrower phone the row scrolls inside itself; a chip scrolled into
-   view stops inside the page's gutter, not at the screen edge. */
-:root[data-layout="phone"] .phone-chips.phone-now-chips { gap: 5px; margin-bottom: 10px; scroll-padding-inline: 16px; }
-:root[data-layout="phone"] .phone-now-chips .ui-tab { padding-inline: 8px; }
 /* A row's time or reason line (idle 12m, updated 4m ago, PR #9 checks
    failing): red when broken, amber (quiet) for a quiet busy agent. */
 :root[data-layout="phone"] .phone-now-when { flex-basis: 100%; color: var(--ui-muted-text); font-size: 13px; }

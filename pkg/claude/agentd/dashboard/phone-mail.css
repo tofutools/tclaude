@@ -11,17 +11,7 @@
 
 /* The list. */
 :root[data-layout="phone"] .phone-mail { padding-bottom: 88px; }
-:root[data-layout="phone"] .phone-mail-chips {
-  display: flex; gap: 8px; overflow-x: auto; padding: 10px var(--phone-gutter);
-  scrollbar-width: none;
-}
-:root[data-layout="phone"] .phone-mail-chip {
-  flex: none; min-height: var(--phone-tap); padding: 0 14px; border-radius: 18px;
-  background: none; border: 1px solid var(--ui-line); color: var(--ui-text);
-  font: inherit; font-size: 14px; white-space: nowrap; cursor: pointer;
-}
-:root[data-layout="phone"] .phone-mail-chip.on { background: var(--phone-on-bg); border-color: var(--phone-accent-bg); color: var(--ui-text-strong); }
-:root[data-layout="phone"] .phone-mail-chip-count { color: var(--ui-muted-text); }
+:root[data-layout="phone"] .phone-mail-chips { padding: 12px var(--phone-gutter) 0; }
 /* 🔍 in the bar opens the search over this mailbox. */
 :root[data-layout="phone"] .phone-mail-tools { padding: 0 var(--phone-gutter) 4px; }
 :root[data-layout="phone"] .phone-mail-search { width: 100%; min-height: var(--phone-tap); }

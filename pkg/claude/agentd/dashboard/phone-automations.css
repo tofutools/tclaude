@@ -1,8 +1,7 @@
 /* Automations (js/phone-automations-island.js) and process runs
    (js/phone-process-runs.js): lists with a switch and Run now, pushed pages,
    and the gate cards Now shows. */
-:root[data-layout="phone"] .phone-auto { padding: 0 var(--phone-gutter) 24px; }
-:root[data-layout="phone"] .phone-auto-chips { margin: 8px 0; }
+:root[data-layout="phone"] .phone-auto { padding-bottom: 24px; }
 :root[data-layout="phone"] .phone-auto-tools { margin: 4px 0 6px; }
 :root[data-layout="phone"] .phone-auto-search { width: 100%; }
 :root[data-layout="phone"] .phone-auto-row { display: flex; align-items: center; gap: 10px; }

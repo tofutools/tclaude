@@ -37,7 +37,7 @@ import { DiscardAsk, useDraftGuard } from './phone-draft-guard.js';
 import { AgentMenu } from './phone-agent-menu.js';
 import { useHold } from './phone-hold.js';
 import { usePhoneBar, usePhonePage } from './phone-page.js';
-import { Avatar, ButtonRow, Card, RowMore, Section, SheetHead, StatePill } from './phone-ui.js';
+import { Avatar, ButtonRow, Card, ChipRow, RowMore, Section, SheetHead, StatePill } from './phone-ui.js';
 import { ContextMeter } from './context-meter.js';
 import { dashPrefs } from './prefs.js';
 import { openBoardGroup } from './phone-board.js';
@@ -181,15 +181,11 @@ export function SpawnSheet({ state, group: initial, fetchImpl = globalThis.fetch
 }
 
 // GroupChips is the filter row: All, then each group, any number of them
-// picked. It has the phone's chip look (phone.css .phone-chips), but its
-// chips are toggle buttons, not tabs: tabs pick one.
+// picked, so its chips are toggles (ChipRow toggle), not tabs: tabs pick one.
 function GroupChips({ tabs, picked, onToggle }) {
-  const chip = (t, on) => html`<button data-ui-exempt key=${t.key} type="button" class=${`ui-tab${on ? ' active' : ''}`}
-    aria-pressed=${on ? 'true' : 'false'} title=${`${t.online} of ${t.total} online`} onClick=${() => onToggle(t.key)}>
-    ${t.label} <span class="phone-chip-count">${t.total}</span></button>`;
-  return html`<div class="phone-chips phone-agents-chips" role="group" aria-label="Show groups">
-    ${tabs.map((t) => chip(t, t.key === ALL ? !picked.length : picked.includes(t.key)))}
-  </div>`;
+  return html`<${ChipRow} toggle class="phone-agents-chips" label="Show groups" onSelect=${onToggle}
+    items=${tabs.map((t) => ({ key: t.key, label: t.label, count: t.total, title: `${t.online} of ${t.total} online`,
+      pressed: t.key === ALL ? !picked.length : picked.includes(t.key) }))} />`;
 }
 
 // summaryText is a group's state summary in words: "1 error, 3 working".
