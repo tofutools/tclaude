@@ -78,13 +78,13 @@ function QuestionBlock({ task, q, names, onAnswer }) {
     <p class="phone-board-title">${q.title || task.title}</p>
     <p class="phone-board-asked">asked by ${actorName(q.asked_by || task.assigned_by, names) || 'an agent'}${options.length ? ` · ${options.length} options` : ''}</p>
     ${q.body && html`<${MarkdownDocument} source=${q.body} className="markdown-document phone-task-md" />`}
-    ${options.length > 0 && html`<div class="phone-btns phone-board-options" role="group" aria-label=${`Answer: ${q.title || task.title}`}>
-      ${options.map((option) => html`<${Button} key=${option.key}
-        class=${`phone-btn${q.multi && picked.includes(option.key) ? ' phone-btn-pri' : ''}`}
-        aria-pressed=${q.multi ? String(picked.includes(option.key)) : undefined}
-        title=${option.description || (option.key === q.recommend ? 'Recommended' : undefined)}
-        onClick=${() => (q.multi ? toggle(option.key) : onAnswer(q, [option.key], ''))}>${option.key === q.recommend && html`<span class="phone-board-star" aria-label="recommended">★ </span>`}${option.label || option.key}<//>`)}
-    </div>`}
+    ${options.length > 0 && html`<${ButtonRow} class="phone-board-options" label=${`Answer: ${q.title || task.title}`} buttons=${options.map((option) => ({
+      key: option.key, grow: false, tone: q.multi && picked.includes(option.key) ? 'pri' : '',
+      attrs: q.multi ? { 'aria-pressed': String(picked.includes(option.key)) } : undefined,
+      title: option.description || (option.key === q.recommend ? 'Recommended' : undefined),
+      onClick: () => (q.multi ? toggle(option.key) : onAnswer(q, [option.key], '')),
+      label: html`${option.key === q.recommend && html`<span class="phone-board-star" aria-label="recommended">★ </span>`}${option.label || option.key}`,
+    }))} />`}
     <form class="phone-task-answer" onSubmit=${async (event) => {
       event.preventDefault();
       if (!text.trim() && !picked.length) return;

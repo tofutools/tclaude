@@ -17,7 +17,7 @@ import { approvalContext, cardOptions, countdown, planDetails } from './phone-no
 import { openPhoneSheet, requestClosePhoneSheet } from './phone-sheet.js';
 import { DiscardAsk, useDraftGuard } from './phone-draft-guard.js';
 import { Button, Input } from './ui-components.js';
-import { Avatar, ButtonRow, Card, StatePill } from './phone-ui.js';
+import { Avatar, ButtonRow, Card, SheetTitle, StatePill } from './phone-ui.js';
 import { ContextMeter } from './context-meter.js';
 import { useHold } from './phone-hold.js';
 
@@ -144,7 +144,7 @@ export function DecisionSheet({ decision, from = '', fetchImpl, notify, close })
   // be an answer a stray Enter would send.
   return html`<div ref=${root} class="phone-decision-sheet">
     <div class="phone-sheet-head">
-      <h2 class="phone-sheet-title">${question}</h2>
+      <${SheetTitle}>${question}<//>
       <button data-ui-exempt type="button" class="phone-sheet-close" aria-label="Close" onClick=${requestClosePhoneSheet}>✕</button>
     </div>
     ${from && html`<p class="phone-sheet-sub">from ${from}</p>`}

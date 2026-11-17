@@ -23,7 +23,7 @@ import { defaultRowContext, railRowActions } from './collab-rail-menu.js';
 import { onPeerPage } from './node-api.js';
 import { openPhoneSheet } from './phone-sheet.js';
 import { useHold } from './phone-hold.js';
-import { Avatar, Card, RowMore, Section } from './phone-ui.js';
+import { Avatar, Card, RowMore, Section, SheetTitle } from './phone-ui.js';
 import { terminalShellState } from './terminal-shell-state.js';
 import { openShellResource } from './terminals-tab.js';
 import { writeClipboard } from './insecure-origin.js';
@@ -129,7 +129,7 @@ export function ShellMenu({ item, ctx, notify = () => {}, copy = writeClipboard,
   const copyEntry = (c) => html`<li key=${c.id}><button data-ui-exempt type="button" data-shell-action=${c.id} class="phone-menu-item"
     onClick=${async () => { close(); notify(await copy(c.text) ? c.done : c.text); }}>${c.label}</button></li>`;
   return html`<div class="phone-shell-menu">
-    <h2 class="phone-sheet-title">${item.title}</h2>
+    <${SheetTitle}>${item.title}<//>
     ${dir && html`<p class="phone-sheet-meta phone-shell-dir">${dir}</p>`}
     <ul class="phone-menu">${open.map(entry)}${shellCopies(item).map(copyEntry)}${end.map(entry)}</ul>
   </div>`;
@@ -144,7 +144,7 @@ export function openShellMenu(item, { open, notify = () => {} }) {
 // GroupPick is ＋ Shell's sheet when there is more than one group.
 function GroupPick({ groups, start, close }) {
   return html`<div class="phone-shell-menu">
-    <h2 class="phone-sheet-title">Start a shell in</h2>
+    <${SheetTitle}>Start a shell in<//>
     <ul class="phone-menu">${groups.map((group) => html`<li key=${group}><button data-ui-exempt type="button" class="phone-menu-item"
       data-shell-group=${group} onClick=${() => { close(); void start(group); }}>${group}</button></li>`)}</ul>
   </div>`;

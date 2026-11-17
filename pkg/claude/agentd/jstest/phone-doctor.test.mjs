@@ -91,6 +91,7 @@ test('the sandbox decision\'s page offers its choice; a check that clears says s
   assert.deepEqual(calls.at(-1), ['setSandboxDefault', 'tclaude-layer']);
   await harness.act(() => { state.checks.value = CHECKS.filter((check) => check.id !== 'sandbox-default'); });
   assert.match(root.querySelector('.phone-doctor-page').textContent, /This check has cleared/);
+  assert.doesNotMatch(root.querySelector('.phone-doctor-page').textContent, /Back to the Doctor/, "the bar's ‹ is the way back; no second one");
 });
 
 test('leaving the Doctor closes an open finding', async (t) => {

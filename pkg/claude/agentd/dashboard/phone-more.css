@@ -27,7 +27,6 @@
 /* Update tclaude (js/phone-update.js): the version facts, the confirm, a
    run's phase with a spinner, then the result and the job's own view. */
 :root[data-layout="phone"] .phone-update { display: flex; flex-direction: column; gap: 10px; }
-:root[data-layout="phone"] .phone-update-title { margin: 4px 0 0; font-size: 17px; color: var(--ui-text-strong); }
 :root[data-layout="phone"] .phone-update-facts { display: grid; grid-template-columns: auto 1fr; gap: 6px 14px; margin: 0; font-size: 14px; }
 :root[data-layout="phone"] .phone-update-facts dt { color: var(--ui-muted-text); }
 :root[data-layout="phone"] .phone-update-facts dd { margin: 0; color: var(--ui-text-strong); overflow-wrap: anywhere; }

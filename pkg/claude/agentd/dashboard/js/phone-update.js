@@ -35,6 +35,7 @@ import htm from 'htm';
 import { SheetHead } from './phone-ui.js';
 import { Button } from './ui-components.js';
 import { useSheetGuard } from './phone-sheet.js';
+import { ButtonRow, SheetTitle } from './phone-ui.js';
 import { featureState } from './peer-view-limits.js';
 import { shellToast } from './shell-state.js';
 import { writeClipboard } from './insecure-origin.js';
@@ -139,7 +140,7 @@ export function UpdateSheet({ close, navigate, actions = defaultActions(), timer
   // back. With none saved each binary updates the way it was installed.
   const refusal = updateNowRefusal(method, status);
   const running = methodText(method, status);
-  const head = html`<h2 class="phone-update-title">Update tclaude</h2>`;
+  const head = html`<${SheetTitle}>Update tclaude<//>`;
   if (error) return html`<div class="phone-update" data-update="error-read">${head}<${ErrorNote}>${accessText(error, node)}<//>
     <${Button} class="phone-btn" onClick=${close}>Close<//></div>`;
   if (!status) return html`<div class="phone-update" data-update="loading">${head}<p class="phone-update-note">Reading the version…</p></div>`;
@@ -189,13 +190,13 @@ export function UpdateSheet({ close, navigate, actions = defaultActions(), timer
   const plan = applyConfirm({ node, status, method: method.id, methodLabel: method.label });
   if (confirming) {
     return html`<div class="phone-update" data-update="confirm">
-      <h2 class="phone-update-title">Update and restart agentd?</h2>
+      <${SheetTitle}>Update and restart agentd?<//>
       <p class="phone-update-body">${plan.body.charAt(0).toUpperCase() + plan.body.slice(1)}</p>
-      <div class="phone-btns">
-        <${Button} class="phone-btn phone-btn-grow" onClick=${() => setConfirming(false)}>Cancel<//>
-        <${Button} class="phone-btn phone-btn-pri phone-btn-grow" data-sheet-focus disabled=${busy || active}
-          onClick=${() => { setConfirming(false); setSince(job?.id || ''); start('apply'); }}>${plan.okLabel}<//>
-      </div>
+      <${ButtonRow} buttons=${[
+        { key: 'cancel', label: 'Cancel', onClick: () => setConfirming(false) },
+        { key: 'apply', label: plan.okLabel, tone: 'pri', disabled: busy || active, attrs: { 'data-sheet-focus': '' },
+          onClick: () => { setConfirming(false); setSince(job?.id || ''); start('apply'); } },
+      ]} />
     </div>`;
   }
   return html`<div class="phone-update" data-update="ready">${head}${facts}
@@ -203,10 +204,10 @@ export function UpdateSheet({ close, navigate, actions = defaultActions(), timer
     <p class="phone-update-note">${method.id
       ? `Runs ${method.label.toLowerCase()} on ${node.label}, then restarts agentd.`
       : `No method is saved, so each binary on ${node.label} updates the way it was installed${installedText(status) ? ` (${installedText(status)})` : ''}, then agentd restarts.`} Agents keep running.</p>
-    <div class="phone-btns">
-      <${Button} class="phone-btn phone-btn-grow" disabled=${busy || active} onClick=${() => start('check')}>${active ? 'Checking…' : 'Check now'}<//>
-      <${Button} class="phone-btn phone-btn-pri phone-btn-grow" disabled=${busy || active} onClick=${() => setConfirming(true)}>Update…<//>
-    </div>
+    <${ButtonRow} buttons=${[
+      { key: 'check', label: active ? 'Checking…' : 'Check now', disabled: busy || active, onClick: () => start('check') },
+      { key: 'update', label: 'Update…', tone: 'pri', disabled: busy || active, onClick: () => setConfirming(true) },
+    ]} />
     ${!method.id && html`<p class="phone-update-note" data-update-unsaved>Nothing updates on its own until a method is saved: set one up, and a schedule, in Config › Updates on the desktop.</p>${toDesktop}`}
   </div>`;
 }

@@ -175,13 +175,26 @@ export function IconButton({ icon, label, onClick, disabled = false, danger = fa
   </button>`;
 }
 
-// ButtonRow lays out a card's actions: buttons of equal width (grow) in one
-// row, wrapping on a narrow phone. buttons: [{ key, label, onClick, tone?:
-// 'pri'|'ok'|'no', grow?: false, disabled?, title?, ariaLabel? }]; grow
-// defaults to true, a short "⋯" can opt out.
-export function ButtonRow({ buttons, class: extra }) {
-  return html`<div class=${join('phone-btns', extra)}>
-    ${buttons.map((b) => html`<${Button} key=${b.key || b.label} class=${join('phone-btn', b.tone && `phone-btn-${b.tone}`, b.grow !== false && 'phone-btn-grow')}
+// SheetTitle is a sheet's title, the same in every sheet (phone.css
+// .phone-sheet-title; tk_81b4849c). clip keeps it to one line, ending in …
+// (an agent's name, a message's recipient); in a head row beside other
+// controls it takes the room left.
+export function SheetTitle({ children, clip = false, class: extra, ...rest }) {
+  return html`<h2 ...${rest} class=${join('phone-sheet-title', clip && 'phone-sheet-title-clip', extra)}>${children}</h2>`;
+}
+
+// ButtonRow lays out a card's or a sheet's actions: buttons of equal width
+// (grow) in one row, wrapping on a narrow phone. It is the phone's one
+// button row: no view writes its own .phone-btns (tk_81b4849c). buttons:
+// [{ key, label, onClick, tone?: 'pri'|'ok'|'no', grow?: false, disabled?,
+// title?, ariaLabel?, type?: 'submit', class?, attrs? }]; grow defaults to
+// true, a short "⋯" can opt out; attrs spreads onto the button (data-*
+// hooks, aria-pressed, aria-haspopup). label makes the row a group named so
+// (an answer's options).
+export function ButtonRow({ buttons, label = '', class: extra }) {
+  return html`<div class=${join('phone-btns', extra)} role=${label ? 'group' : undefined} aria-label=${label || undefined}>
+    ${buttons.map((b) => html`<${Button} key=${b.key || b.label} type=${b.type} ...${b.attrs}
+      class=${join('phone-btn', b.tone && `phone-btn-${b.tone}`, b.grow !== false && 'phone-btn-grow', b.class)}
       disabled=${!!b.disabled} title=${b.title} aria-label=${b.ariaLabel} onClick=${b.onClick}>${b.label}<//>`)}
   </div>`;
 }

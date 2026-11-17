@@ -98,10 +98,6 @@
    whatever is open. Mail's replies reuse it. */
 :root[data-layout="phone"] .phone-compose { display: flex; flex-direction: column; gap: 10px; }
 :root[data-layout="phone"] .phone-compose-head { display: flex; align-items: center; gap: 8px; }
-:root[data-layout="phone"] .phone-compose-title {
-  flex: 1; min-width: 0; margin: 0 2px; font-size: 17px; color: var(--ui-text-strong);
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-}
 :root[data-layout="phone"] .phone-compose-chip {
   flex: none; min-width: 44px; min-height: 36px; padding: 0 14px; border-radius: 18px;
   background: var(--phone-panel2); border: 1px solid var(--phone-line); color: var(--ui-text);

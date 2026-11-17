@@ -72,7 +72,6 @@ function CheckPage({ check, state, actions, notify, back }) {
   if (!check) {
     return html`<div class="phone-doctor-page">
       <${Empty}>✅ This check has cleared.<//>
-      <${Button} class="phone-btn phone-wide" onClick=${back}>Back to the Doctor<//>
     </div>`;
   }
   return html`<div class=${`phone-doctor-page sev-${check.severity}`} data-check=${check.id}>
