@@ -803,7 +803,14 @@ func TestReplacementProjectorReschedulesInheritedPendingRemoval(t *testing.T) {
 			}
 
 			originalMark := markOpenCodePricingStepsRemoved
-			t.Cleanup(func() { markOpenCodePricingStepsRemoved = originalMark })
+			originalDelay := openCodeRemovalRetryDelay
+			t.Cleanup(func() {
+				markOpenCodePricingStepsRemoved = originalMark
+				openCodeRemovalRetryDelay = originalDelay
+			})
+			// The retry's delay is not under test, only who owns the retry: run
+			// it promptly instead of racing a 1 s timer against a 2 s wait.
+			openCodeRemovalRetryDelay = 10 * time.Millisecond
 			var markAttempts atomic.Int32
 			markOpenCodePricingStepsRemoved = func(
 				convID, sessionID, messageID string,
@@ -837,12 +844,14 @@ func TestReplacementProjectorReschedulesInheritedPendingRemoval(t *testing.T) {
 			require.False(t, backfillOpenCodeContextUsage(context.Background(), runtime),
 				"at least one replacement marker write still fails and transfers batch ownership")
 
-			require.Eventually(t, func() bool {
-				return markAttempts.Load() >= int32(2*len(removals)) &&
-					!hasOpenCodePendingRemoval(convID, removals[0].MessageID) &&
-					!hasOpenCodePendingRemoval(convID, removals[1].MessageID)
-			}, 2*openCodeSSERetryDelay, 25*time.Millisecond,
-				"the current replacement generation takes over every inherited retry")
+			// A liveness guard only; the retry runs within milliseconds.
+			require.EventuallyWithT(t, func(c *assert.CollectT) {
+				assert.GreaterOrEqual(c, markAttempts.Load(), int32(2*len(removals)), "marker write attempts")
+				for _, removal := range removals {
+					assert.False(c, hasOpenCodePendingRemoval(convID, removal.MessageID),
+						"the current replacement generation takes over the inherited retry of %s", removal.MessageID)
+				}
+			}, 30*time.Second, 10*time.Millisecond)
 		})
 	}
 }
