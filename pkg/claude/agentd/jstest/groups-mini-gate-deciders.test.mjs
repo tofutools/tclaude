@@ -47,6 +47,24 @@ test('a decider has its own ask, and the gate\'s Asks changes only those without
   assert.equal(view.template.nodes.review.deciders[1].prompt, 'Review it.', 'a blank own ask is the gate\'s again');
 });
 
+test('giving the first decider its own ask keeps the shared one as the Asks, and {{x}} is stored expanded', () => {
+  let view = gateView([reviewer({ prompt: 'A' }), reviewer({ prompt: 'A' })]);
+  view = setDeciderAsk(view, 'review', 0, 'B', 'A').view;
+  const node = () => view.template.nodes.review;
+  assert.equal(gateAsk(node(), 'A'), 'A', 'the tie keeps the Asks shown');
+  assert.equal(deciderOwnAsk(node(), 0, 'A'), 'B');
+  assert.equal(deciderOwnAsk(node(), 1, 'A'), '');
+  view = setGateAsk(view, 'review', 'C', 'A').view;
+  assert.deepEqual(node().deciders.map((d) => d.prompt), ['B', 'C'], 'the Asks changes the decider that follows it');
+  view = setDeciderAsk(view, 'review', 0, 'Review {{ticket}}', 'C').view;
+  assert.equal(node().deciders[0].prompt, 'Review {{params.ticket}}');
+});
+
+test('a decider naming one agent takes no "not"', () => {
+  const view = gateView([reviewer(), reviewer({ assignee: 'rita', role: undefined })]);
+  assert.equal(setDeciderNot(view, 'review', 1, ['implement']).view.template.nodes.review.deciders[1].differentFrom, undefined);
+});
+
 test('a new agent decider is kept off the agent whose work it reviews', () => {
   const view = gateView([reviewer(), reviewer()]);
   assert.equal(reviewedStep(view, 'review'), 'implement', 'it reports the output the gate reads');
@@ -78,12 +96,21 @@ test('the gate warns only when a vote would wait forever', () => {
   const two = gateView([reviewer(), reviewer()]);
   assert.deepEqual(stuckGate(two, 'review', roster), { deciders: 2, members: 1, noun: 'reviewer', index: 1 });
   assert.equal(stuckGate(two, 'review', [...roster, { name: 'rob', role: 'reviewer' }]), null, 'two reviewers: no warning');
-  assert.equal(stuckGate(setDeciderFallback(two, 'review', 1, { action: 'spawn' }).view, 'review', roster), null, 'the second spawns');
-  assert.equal(stuckGate(two, 'review', roster, { action: 'spawn' }), null, 'the process spawns');
+  assert.equal(stuckGate(setDeciderFallback(two, 'review', 1, { action: 'spawn', profile: 'sonnet-dev' }).view, 'review', roster), null, 'the second spawns');
+  assert.equal(stuckGate(two, 'review', roster, { action: 'spawn', profile: 'sonnet-dev' }), null, 'the process spawns');
   assert.equal(stuckGate(gateView([reviewer(), { kind: 'human', ask: 'OK?' }]), 'review', roster), null, 'a person votes too');
   assert.equal(stuckGate(gateView([reviewer(), { kind: 'agent', prompt: ASK }]), 'review', roster), null, 'nobody picked yet');
   assert.deepEqual(stuckGate(gateView([reviewer(), { kind: 'agent', anyone: true, prompt: ASK }, reviewer()]), 'review', roster),
     { deciders: 3, members: 2, noun: 'members who can vote', index: 2 });
+  // "Not implement" takes the one dev out: anyone-but-the-builder and a reviewer both need rita.
+  const notBuilder = gateView([{ kind: 'agent', anyone: true, prompt: ASK, differentFrom: ['implement'] }, reviewer()]);
+  assert.deepEqual(stuckGate(notBuilder, 'review', roster), { deciders: 2, members: 1, noun: 'member who can vote', index: 1 });
+  // Matched, not first-fit: anyone first does not take the only reviewer from the reviewer decider.
+  assert.equal(stuckGate(gateView([{ kind: 'agent', anyone: true, prompt: ASK }, reviewer()]), 'review',
+    [{ name: 'rita', role: 'reviewer' }, { name: 'dana', role: 'dev' }]), null);
+  // A spawn with no profile to use waits.
+  assert.ok(stuckGate(two, 'review', roster, { action: 'spawn' }, ''), 'no default spawn profile: it waits');
+  assert.equal(stuckGate(two, 'review', roster, { action: 'spawn' }, 'sonnet-dev'), null);
 });
 
 test('the inspector opens a decider in place, sums up a closed one, and its warning link spawns', async (t) => {

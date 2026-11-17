@@ -6,6 +6,7 @@
 // own ask. Pure: no DOM, no fetch.
 
 import { firstSpawn } from './process-quickstart.js';
+import { expandParamShorthand } from './process-step-list.js';
 
 function clone(value) {
   return JSON.parse(JSON.stringify(value));
@@ -20,9 +21,11 @@ function withText(decider, text) {
   else decider.prompt = text;
 }
 
-// gateAsk is the text most of a gate's deciders are asked (the first on a
-// tie): the gate's Asks.
-export function gateAsk(node) {
+// gateAsk is the text most of a gate's deciders are asked: the gate's Asks.
+// On a tie it is `prefer` when that is one of them (the editor passes the
+// Asks it showed last, so giving one decider its own ask never swaps which
+// text is the shared one), else the first.
+export function gateAsk(node, prefer = null) {
   const counts = new Map();
   for (const decider of node?.deciders || []) {
     const text = textOf(decider);
@@ -31,14 +34,15 @@ export function gateAsk(node) {
   let best = '';
   let most = 0;
   for (const [text, count] of counts) if (count > most) { best = text; most = count; }
+  if (prefer !== null && prefer !== best && counts.get(prefer) === most) return prefer;
   return best;
 }
 
 // deciderOwnAsk is decider index's own ask, or '' when it is asked the
 // gate's Asks.
-export function deciderOwnAsk(node, index) {
+export function deciderOwnAsk(node, index, shared = gateAsk(node)) {
   const text = textOf(node?.deciders?.[index]);
-  return text === gateAsk(node) ? '' : text;
+  return text === shared ? '' : text;
 }
 
 function edit(view, id, change) {
@@ -49,20 +53,22 @@ function edit(view, id, change) {
   return { view: next, id };
 }
 
-// setGateAsk changes the gate's Asks: every decider without its own ask.
-export function setGateAsk(view, id, text) {
+// setGateAsk changes the gate's Asks (`shared`, the one shown): every
+// decider without its own ask. The text is stored with {{x}} expanded.
+export function setGateAsk(view, id, text, shared = null) {
   return edit(view, id, (node) => {
-    const shared = gateAsk(node);
-    for (const decider of node.deciders) if (textOf(decider) === shared) withText(decider, text);
+    const old = shared ?? gateAsk(node);
+    for (const decider of node.deciders) if (textOf(decider) === old) withText(decider, expandParamShorthand(text));
   });
 }
 
-// setDeciderAsk gives decider index its own ask; blank asks it the gate's.
-export function setDeciderAsk(view, id, index, text) {
+// setDeciderAsk gives decider index its own ask; blank asks it the gate's
+// (`shared`, the one shown).
+export function setDeciderAsk(view, id, index, text, shared = null) {
   return edit(view, id, (node) => {
     const decider = node.deciders[index];
     if (!decider) return;
-    withText(decider, text.trim() ? text : gateAsk(node));
+    withText(decider, text.trim() ? expandParamShorthand(text) : shared ?? gateAsk(node));
   });
 }
 
@@ -79,10 +85,11 @@ export function setDeciderFallback(view, id, index, fallback) {
 }
 
 // setDeciderNot keeps decider index off the agents who did steps.
+// A decider naming one agent takes no "not": the validator refuses both.
 export function setDeciderNot(view, id, index, steps) {
   return edit(view, id, (node) => {
     const decider = node.deciders[index];
-    if (decider?.kind !== 'agent') return;
+    if (decider?.kind !== 'agent' || decider.assignee) return;
     delete decider.sameAs;
     delete decider.differentFrom;
     const kept = [...new Set((steps || []).filter(Boolean))];
@@ -119,21 +126,24 @@ export function withReviewerDefault(view, id, index) {
   return reviewed ? setDeciderNot(view, id, index, [reviewed]) : { view, id };
 }
 
-function fallbackAction(decider, processFallback) {
-  if (decider.fallback?.action) return decider.fallback.action;
-  if (decider.spawn === 'allowed') return 'spawn';
-  return processFallback?.action || 'wait';
+// spawns says whether decider spawns when no member can vote: its own
+// fallback, else the legacy spawn field, else the process's; a spawn with no
+// profile to use (none named, no group default) waits.
+function spawns(decider, processFallback, defaultSpawnProfile) {
+  if (decider.fallback?.action) return decider.fallback.action === 'spawn' && !!(decider.fallback.profile || defaultSpawnProfile);
+  if (decider.spawn === 'allowed') return !!decider.profile;
+  return processFallback?.action === 'spawn' && !!(processFallback.profile || defaultSpawnProfile);
 }
 
 // deciderSummary is what a closed decider row says is set besides who:
 // "own ask · not implement · if nobody: spawn sonnet-dev".
-export function deciderSummary(view, id, index) {
+export function deciderSummary(view, id, index, shared = null) {
   const node = view.template.nodes[id];
   const decider = node?.deciders?.[index];
   if (!decider) return '';
   const name = (step) => view.template.nodes[step]?.name || step;
   const parts = [];
-  if (deciderOwnAsk(node, index)) parts.push('own ask');
+  if (deciderOwnAsk(node, index, shared ?? gateAsk(node))) parts.push('own ask');
   if (decider.kind === 'agent') {
     if (decider.differentFrom?.length) parts.push(`not ${decider.differentFrom.map(name).join(', ')}`);
     if (decider.sameAs) parts.push(`same as ${name(decider.sameAs)}`);
@@ -145,40 +155,59 @@ export function deciderSummary(view, id, index) {
 }
 
 // eligible is the names of the roster members who could cast decider's vote;
-// null when it names nobody yet.
-function eligible(decider, roster) {
-  if (decider.assignee) return roster.filter((m) => m.name === decider.assignee).map((m) => m.name);
-  const role = decider.role || (!decider.anyone && !decider.lead ? decider.profile : '');
-  if (role) return roster.filter((m) => m.role === role).map((m) => m.name);
-  if (decider.anyone) return roster.map((m) => m.name);
-  if (decider.lead) {
+// null when it names nobody yet. A "not" step's performer is out when the
+// editor can tell who that is: its named agent, or the one member with its
+// role.
+function eligible(view, decider, roster) {
+  let names;
+  const role = decider.role || (!decider.assignee && !decider.anyone && !decider.lead ? decider.profile : '');
+  if (decider.assignee) names = roster.filter((m) => m.name === decider.assignee);
+  else if (role) names = roster.filter((m) => m.role === role);
+  else if (decider.anyone) names = roster;
+  else if (decider.lead) {
     const leads = roster.filter((m) => m.role === 'lead');
-    return (leads.length ? leads : roster.slice(0, 1)).map((m) => m.name);
+    names = leads.length ? leads : roster.slice(0, 1);
+  } else return null;
+  const out = new Set();
+  for (const step of decider.differentFrom || []) {
+    const performer = view.template.nodes[step]?.performer;
+    if (performer?.kind !== 'agent') continue;
+    if (performer.assignee) out.add(performer.assignee);
+    const stepRole = performer.role || (!performer.assignee && !performer.anyone && !performer.lead ? performer.profile : '');
+    const holders = stepRole ? roster.filter((m) => m.role === stepRole) : [];
+    if (holders.length === 1) out.add(holders[0].name);
   }
-  return null;
+  return names.map((m) => m.name).filter((name) => !out.has(name));
 }
 
-// stuckGate says when a gate would wait forever: its agent deciders, taken in
-// order (no agent votes twice at one gate), run out of members and one of
-// them does not spawn. Returns {deciders, members, noun, index} for the
-// first vote left waiting, or null.
-export function stuckGate(view, id, roster = [], processFallback = null) {
+// stuckGate says when a gate would wait forever: no agent votes twice at one
+// gate, so its agent deciders need as many members who can vote, and one
+// that cannot be given a member does not spawn. Deciders that do not spawn
+// are matched first. Returns {deciders, members, noun, index} for the vote
+// left waiting, or null.
+export function stuckGate(view, id, roster = [], processFallback = null, defaultSpawnProfile = '') {
   const deciders = view.template.nodes[id]?.deciders || [];
-  const agents = deciders.map((decider, index) => ({ decider, index, names: decider.kind === 'agent' ? eligible(decider, roster) : null }))
+  const agents = deciders.map((decider, index) => ({ decider, index, names: decider.kind === 'agent' ? eligible(view, decider, roster) : null }))
     .filter((entry) => entry.names);
   if (agents.length < 2) return null;
+  const held = new Map(); // member name → the entry holding it
+  const place = (entry, seen) => {
+    for (const name of entry.names) {
+      if (seen.has(name)) continue;
+      seen.add(name);
+      const holder = held.get(name);
+      if (!holder || place(holder, seen)) { held.set(name, entry); return true; }
+    }
+    return false;
+  };
+  const waiting = agents.filter((entry) => !spawns(entry.decider, processFallback, defaultSpawnProfile));
+  const unplaced = waiting.filter((entry) => !place(entry, new Set()));
+  if (!unplaced.length) return null;
   const pool = new Set(agents.flatMap((entry) => entry.names));
-  const taken = new Set();
-  for (const { decider, index, names } of agents) {
-    const free = names.find((name) => !taken.has(name));
-    if (free) { taken.add(free); continue; }
-    if (fallbackAction(decider, processFallback) === 'spawn') continue;
-    const roles = new Set(agents.map((entry) => entry.decider.role || ''));
-    const role = roles.size === 1 ? [...roles][0] : '';
-    const noun = role ? (pool.size === 1 ? role : `${role}s`) : (pool.size === 1 ? 'member who can vote' : 'members who can vote');
-    return { deciders: agents.length, members: pool.size, noun, index };
-  }
-  return null;
+  const roles = new Set(agents.map((entry) => entry.decider.role || ''));
+  const role = roles.size === 1 ? [...roles][0] : '';
+  const noun = role ? (pool.size === 1 ? role : `${role}s`) : (pool.size === 1 ? 'member who can vote' : 'members who can vote');
+  return { deciders: agents.length, members: pool.size, noun, index: unplaced[0].index };
 }
 
 // spawnIfNobody is the fallback the stuck-gate warning's link sets.

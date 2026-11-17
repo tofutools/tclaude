@@ -11,6 +11,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/process/engine"
 	"github.com/tofutools/tclaude/pkg/claude/process/model"
+	"github.com/tofutools/tclaude/pkg/testutil"
 )
 
 // tk_44d02f32: the process editor sets each decider of a gate on its own row:
@@ -52,7 +53,7 @@ func TestProcessGateDeciders_OwnAskIfNobodyAndNotTheImplementer(t *testing.T) {
 	rev := havePerformerAgent(t, f, "crew", revConv, "rita", "reviewer", "working")
 	_, err := db.CreateSpawnProfile(&db.SpawnProfile{Name: "sonnet-dev", Harness: "claude"})
 	require.NoError(t, err)
-	_, err = db.SetAgentGroupDefaultCwd("crew", t.TempDir())
+	_, err = db.SetAgentGroupDefaultCwd("crew", testutil.CanonicalTempDir(t))
 	require.NoError(t, err)
 
 	tmpl := &model.Template{APIVersion: model.APIVersion, Kind: model.Kind, ID: "gate-deciders", Start: "start",
