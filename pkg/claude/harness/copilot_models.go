@@ -30,6 +30,8 @@ var copilotKnownModels = []string{
 	"claude-opus-4.7",
 	"claude-opus-4.6",
 	"claude-opus-4.5",
+	"gpt-6.2-astra",
+	"gpt-6.2-sol",
 	"gpt-6.1-sol",
 	"gpt-6.1-terra",
 	"gpt-6-astra",

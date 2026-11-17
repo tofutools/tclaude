@@ -310,6 +310,8 @@ type codexModels struct{}
 // dropdown while ValidateModel continues to pass future/custom OpenAI IDs
 // through to Codex.
 var codexKnownModels = []string{
+	"gpt-6.2-astra",
+	"gpt-6.2-sol",
 	"gpt-6.1-sol",
 	"gpt-6.1-terra",
 	"gpt-6-astra",
