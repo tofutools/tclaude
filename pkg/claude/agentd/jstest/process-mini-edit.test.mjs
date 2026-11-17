@@ -75,6 +75,9 @@ function cases() {
     'first-step-decision': fill(m.insertAfter(ship, 'start', 'decide')),
     'decision-three-way-agent': threeWay('decide').view,
     'decision-three-way-you': threeWay('decide-you').view,
+    'alongside-after-decision': fill(m.runAlongside(fill(m.insertAfter(ship, 'implement', 'decide')), 'review', 'agent')),
+    'kind-decision-command': fill(m.changeKind(fill(m.insertAfter(ship, 'implement', 'decide')), 'decision', 'command')),
+    'kind-decision-you': m.changeKind(fill(m.insertAfter(ship, 'implement', 'decide')), 'decision', 'you').view,
     'loop-approve-rounds': m.setLoopRounds(ship, 'approve', 'changes', 4).view,
   };
 }
@@ -143,6 +146,27 @@ test('⑂ on the operator\'s first step with outputs and nobody yet puts an agen
   const who = m.setDecisionWho(out.view, out.id, { mode: 'you' }).view.template.nodes[out.id];
   assert.equal(who.type, 'decision');
   assert.deepEqual(who.performer.choices, ['yes', 'no']);
+});
+
+test('the step after a new decision has one step before it, and its answers draw as one edge', () => {
+  const view = m.insertAfter(ship, 'implement', 'decide').view;
+  assert.equal(m.canRunAlongside(view, 'review'), '', 'yes and no both lead to review, from one step');
+  assert.equal(m.canDecide(view, 'review'), '', 'and its agent can still decide, sending changes back to the decision');
+  const along = m.runAlongside(view, 'review', 'agent');
+  assert.equal(edge(along.view, 'decision', 'yes'), along.fork);
+  assert.equal(edge(along.view, 'decision', 'no'), along.fork);
+  const drawn = m.draftProjection(view).edges.filter((e) => e.from === 'decision');
+  assert.deepEqual(drawn.map((e) => [e.to, e.label]), [['review', 'yes / no']], 'one arrow, both answers named');
+});
+
+test('a decision changes kind: to a command it continues one way, to you it keeps its answers', () => {
+  const view = threeWay('decide').view;
+  const command = m.changeKind(view, 'decision', 'command').view;
+  assert.equal(command.template.nodes.decision.type, 'task');
+  assert.deepEqual(command.edges.filter((e) => e.from === 'decision').map((e) => [e.outcome, e.to]), [['next', 'review']]);
+  const you = m.changeKind(view, 'decision', 'you').view.template.nodes.decision;
+  assert.equal(you.type, 'decision');
+  assert.deepEqual(you.performer.choices, ['small', 'large', 'skip']);
 });
 
 test('a decision step has named answers: renamed, added to, each with its own next step', () => {

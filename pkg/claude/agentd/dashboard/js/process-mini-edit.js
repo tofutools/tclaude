@@ -78,6 +78,12 @@ function incoming(view, id) {
   return view.edges.filter((edge) => edge.to === id && edge.from !== '');
 }
 
+// before is the distinct nodes with an edge into id: a decision whose
+// several answers lead to id is one step before it, not several.
+function before(view, id) {
+  return [...new Set(incoming(view, id).map((edge) => edge.from))];
+}
+
 // mainEdge is the edge a step continues along: a task's pass edge, a
 // decision's first answer that does not loop back, a start's only edge.
 export function mainEdge(view, id) {
@@ -177,9 +183,9 @@ export function canDecide(view, id) {
   // Plan, checks, review and retry are a task's; a decision would drop them.
   if (['plan', 'checks', 'review', 'retry'].some((key) => node[key] !== undefined)) return 'its plan, checks, review or retry are a task\'s; change it in the full editor';
   if (outgoing(view, id).length > 1) return 'it already has more than one way out; change it in the full editor';
-  const into = incoming(view, id);
-  if (into.length !== 1 || !isStep(view.template.nodes[into[0].from])) return 'it needs exactly one step before it to send changes back to';
-  if (overlapsALoop(view, [into[0].from, id])) return 'going back from it would cross another loop; the server refuses loops that overlap';
+  const into = before(view, id);
+  if (into.length !== 1 || !isStep(view.template.nodes[into[0]])) return 'it needs exactly one step before it to send changes back to';
+  if (overlapsALoop(view, [into[0], id])) return 'going back from it would cross another loop; the server refuses loops that overlap';
   return '';
 }
 
@@ -221,7 +227,7 @@ export function toAgentDecision(view, id) {
   const next = copyView(view);
   const node = next.template.nodes[id];
   const main = mainEdge(next, id);
-  const previous = incoming(next, id)[0].from;
+  const previous = before(next, id)[0];
   node.type = 'decision';
   let after = main?.to;
   next.edges = next.edges.filter((edge) => edge.from !== id);
@@ -239,7 +245,7 @@ export function canRunAlongside(view, id) {
   const node = view.template.nodes[id];
   if (!isStep(node)) return 'only a step runs alongside another';
   if (view.template.start === id || view.edges.some((edge) => edge.from === '' && edge.to === id)) return 'the first step has no step before it to fan out from';
-  if (incoming(view, id).length !== 1) return 'it has several steps leading to it';
+  if (before(view, id).length !== 1) return 'it has several steps leading to it';
   const main = mainEdge(view, id);
   if (!main) return 'it has no next step to join at';
   // The fork must close where it opened: one way out of the step, into a
@@ -534,11 +540,12 @@ export function runAlongside(view, id, kind) {
   const why = canRunAlongside(view, id);
   if (why) throw new Error(why);
   const next = copyView(view);
-  const [into] = incoming(next, id);
   const main = mainEdge(next, id);
   const added = addNode(next, newStepNode(kind));
   const fork = addNode(next, { type: 'parallel', name: 'Together' }, 'together');
-  into.to = fork;
+  // Every edge in comes from the one step before it (a decision's answers
+  // may be several): they all lead to the fork now.
+  for (const into of incoming(next, id)) into.to = fork;
   next.edges.push({ from: fork, outcome: id, to: id }, { from: fork, outcome: added, to: added });
   linkOn(next, added, kind, main.to);
   next.template.nodes[main.to].join = 'all';
@@ -582,7 +589,10 @@ export function changeKind(view, id, kind) {
   const step = setStepWho({ id, node: next.template.nodes[id] }, who);
   const changed = step.node;
   const main = mainEdge(next, id);
-  if (kind === 'you') {
+  if (kind === 'you' && node.type === 'decision') {
+    // An agent's decision becomes yours with the same answers.
+    changed.performer.choices = outgoing(next, id).map((edge) => edge.outcome);
+  } else if (kind === 'you') {
     changed.type = 'decision';
     if (main) main.outcome = CONTINUE.you;
     const answers = outgoing(next, id).map((edge) => edge.outcome);
@@ -596,7 +606,7 @@ export function changeKind(view, id, kind) {
   if (changed.type !== 'task') delete changed.retry;
   else if (kind === 'command' && changed.retry?.onFail && changed.retry.onFail !== 'fresh-attempt') delete changed.retry.onFail;
   let orphans = [];
-  if (from === 'you') {
+  if (node.type === 'decision' && kind !== 'you') {
     // A task continues one way: only the main answer's path stays, and the
     // steps only the other answers led to go.
     const before = reachable(next);
@@ -874,7 +884,23 @@ export function draftProjection(view, { whoOf = () => '', noteOf = () => '', nam
     const exhausted = after ? (isFailedEnd(view.template.nodes[after]) ? 'fail' : bound.onExhausted) : '';
     return { ...projected, label: projected.label || edge.outcome, back: true, maxIterations: max, ...(exhausted ? { exhausted } : {}) };
   });
-  return { id: 'draft', name: name || view.template?.name || 'draft', status: 'planned', nodes, edges };
+  return { id: 'draft', name: name || view.template?.name || 'draft', status: 'planned', nodes, edges: mergeParallel(edges) };
+}
+
+// mergeParallel draws a decision's answers that go to the same step as one
+// edge labelled with all of them ("yes / no"): drawn apart they would share
+// one path, and their labels would print over each other.
+function mergeParallel(edges) {
+  const out = [];
+  const seen = new Map();
+  for (const edge of edges) {
+    if (edge.back) { out.push(edge); continue; }
+    const key = `${edge.from}\u0000${edge.to}`;
+    const first = seen.get(key);
+    if (!first) { seen.set(key, edge); out.push(edge); continue; }
+    first.label = [first.label, edge.label].filter(Boolean).join(' / ');
+  }
+  return out;
 }
 
 // changeSummary names what a draft changed against the stored view: steps
