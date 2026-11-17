@@ -186,11 +186,11 @@ button.pk-run-icon { cursor: pointer; }
 .pk-edge.loop { stroke: var(--pk-waiting); stroke-dasharray: 4 3; stroke-width: 1.5; }
 .pk-arrow.loop path { fill: var(--pk-waiting); }
 .pk-elabel.loop { color: var(--pk-waiting-text); border: 1px solid color-mix(in srgb, var(--pk-waiting) 55%, transparent); border-radius: 999px; padding: 0 6px; }
-/* ↻N: a step that retries N times if it fails (the inline editor's "If it
-   fails"), on the node's top right edge. */
-.pk-retries { position: absolute; right: 6px; top: 0; transform: translateY(-50%); padding: 1px 5px; border-radius: 8px;
-  font-size: 9.5px; font-weight: 600; line-height: 1.2; color: var(--pk-waiting-text); background: var(--pk-surface);
-  border: 1px solid color-mix(in srgb, var(--pk-waiting) 55%, transparent); pointer-events: none; }
+/* ↻N after a step's name: it retries N times if it fails (the inline
+   editor's "If it fails"). */
+.pk-retries { display: inline-block; margin-left: 5px; padding: 0 4px; border-radius: 7px; vertical-align: 1px;
+  font-size: 9.5px; font-weight: 600; line-height: 1.35; color: var(--pk-waiting-text);
+  border: 1px solid color-mix(in srgb, var(--pk-waiting) 55%, transparent); }
 .pk-round { position: absolute; left: 6px; top: 0; transform: translateY(-50%); font-size: 9.5px; font-weight: 600; line-height: 1;
   padding: 2px 6px; border-radius: 999px; border: 1px solid var(--pk-waiting); background: var(--pk-surface); color: var(--pk-waiting-text); white-space: nowrap; }
 .pk-gnode {

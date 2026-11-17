@@ -672,7 +672,8 @@ export function ProcessMiniGraph({
     // their round in the tooltip.
     const badge = round && (node.state === 'running' || node.state === 'waiting')
       ? html`<span class="pk-round" data-process-round=${round} aria-hidden="true">↺ ${round}</span>` : null;
-    // ↻N: an editor's step that retries N times if it fails, then waits.
+    // ↻N, after the name: an editor's step that retries N times if it fails,
+    // then waits. Not on an edge, where the editor's handles sit.
     const retries = Number(node.retries) || 0;
     const retryBadge = retries > 0 && !isTerminalKind(node.kind) && node.kind !== 'decision'
       ? html`<span class="pk-retries" data-process-retries=${retries} aria-hidden="true">↻${retries}</span>` : null;
@@ -680,7 +681,7 @@ export function ProcessMiniGraph({
       ? html`<span class="pk-gnode-label">${node.kind}</span>`
       : node.kind === 'decision'
         ? html`<span class="pk-gnode-label">${node.label}</span>${!compact && node.caption && html`<span class="pk-gnode-caption">${node.caption}</span>`}${badge}`
-        : html`<${ProcessNodeGlyph} kind=${node.kind} wizard=${wizard} /><span class="pk-gnode-text"><span class="pk-gnode-label">${node.label}</span>${!compact && node.sub && html`<span class="pk-gnode-sub">${node.sub}</span>`}</span><${ProcessPerformers} performers=${node.performers} />${badge}${retryBadge}`;
+        : html`<${ProcessNodeGlyph} kind=${node.kind} wizard=${wizard} /><span class="pk-gnode-text"><span class="pk-gnode-label">${node.label}${retryBadge}</span>${!compact && node.sub && html`<span class="pk-gnode-sub">${node.sub}</span>`}</span><${ProcessPerformers} performers=${node.performers} />${badge}`;
     // Performer ids let the Groups Both lens link a step to its agents' rows.
     const performerIds = (node.performers || []).map((performer) => performer?.id).filter(Boolean).join(' ') || undefined;
     const extra = {
