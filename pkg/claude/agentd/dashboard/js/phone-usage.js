@@ -270,20 +270,20 @@ export function PhoneCosts({ costs, wizard, pickSpan, spanLabel }) {
     <${PhoneSpendChart} costs=${costs} wizard=${wizard} />
     <${Section} title=${w('By provider', 'By house')} count=${t.providers.length}>
       ${t.providers.length
-        ? html`<ul class="phone-cost-list">${t.providers.map((entry) => html`<${CostRow} key=${entry.key} name=${entry.key}
-          sub=${`${entry.agentCount} agent${entry.agentCount === 1 ? '' : 's'}`} cost=${entry.cost} share=${entry.share} />`)}</ul>`
+        ? html`<${Card} as="ul" class="phone-cost-list">${t.providers.map((entry) => html`<${CostRow} key=${entry.key} name=${entry.key}
+          sub=${`${entry.agentCount} agent${entry.agentCount === 1 ? '' : 's'}`} cost=${entry.cost} share=${entry.share} />`)}<//>`
         : html`<div class="phone-empty">${w('No spend in this span.', 'The coffers are untouched.')}</div>`}
     <//>
     <${Section} title=${w('By model', 'By familiar')} count=${t.models.length}>
       ${t.models.length
-        ? html`<ul class="phone-cost-list">${t.models.map((entry) => html`<${CostRow} key=${entry.key} name=${entry.key}
-          sub=${entry.subs.join(', ')} cost=${entry.cost} share=${entry.share} />`)}</ul>`
+        ? html`<${Card} as="ul" class="phone-cost-list">${t.models.map((entry) => html`<${CostRow} key=${entry.key} name=${entry.key}
+          sub=${entry.subs.join(', ')} cost=${entry.cost} share=${entry.share} />`)}<//>`
         : html`<div class="phone-empty">${w('No spend in this span.', 'The coffers are untouched.')}</div>`}
     <//>
     <${Section} title=${w('Top agents', 'Top spenders')} count=${t.top.length}>
       ${t.top.length
-        ? html`<ul class="phone-cost-list">${t.top.map((agent) => html`<${CostRow} key=${agent.key} name=${agent.title}
-          sub=${shortAgentId(agent.agentID, agent.convID)} cost=${agent.cost} whatIf=${agent.whatIf} />`)}</ul>`
+        ? html`<${Card} as="ul" class="phone-cost-list">${t.top.map((agent) => html`<${CostRow} key=${agent.key} name=${agent.title}
+          sub=${shortAgentId(agent.agentID, agent.convID)} cost=${agent.cost} whatIf=${agent.whatIf} />`)}<//>`
         : html`<div class="phone-empty">${w('No spend in this span.', 'The coffers are untouched.')}</div>`}
     <//>
     <p class="phone-usage-foot">${w('Running totals, months, filters and multipliers are on the desktop.', 'The full ledger is kept at the desktop.')}</p>

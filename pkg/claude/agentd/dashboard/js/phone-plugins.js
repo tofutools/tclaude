@@ -16,6 +16,7 @@ import htm from 'htm';
 import { pluginLamp, PluginsBadge, statusPill, stepLamp, usePluginsTabShown } from './plugins-island.js';
 import { pluginBusyKey } from './plugins-state.js';
 import { DesktopOnlyNote } from './phone-desktop-only.js';
+import { Card } from './phone-ui.js';
 import { usePhoneBar } from './phone-page.js';
 import { relTime } from './helpers.js';
 import { Button, Switch } from './ui-components.js';
@@ -96,7 +97,7 @@ function PluginCard({ plugin, actions, busy }) {
   // and a screen reader hears it.
   const summary = cardSummary(plugin, folded);
   const status = statusPill(plugin).text;
-  return html`<div class=${`phone-plugin ui-card${off ? ' off' : ''}`} data-key=${`plugin-${plugin.name}`}>
+  return html`<${Card} class=${`phone-plugin${off ? ' off' : ''}`} data-key=${`plugin-${plugin.name}`}>
     <div class="phone-plugin-head">
       <span class=${`phone-plugin-dot ${lamp.cls}`} aria-hidden="true">${lamp.glyph}</span>
       <button data-ui-exempt type="button" class="phone-plugin-text phone-plugin-fold" aria-expanded=${folded ? 'false' : 'true'}
@@ -111,7 +112,7 @@ function PluginCard({ plugin, actions, busy }) {
       <${StepRow} key=${`${plugin.name}:${index}`} plugin=${plugin} step=${step} index=${index} actions=${actions} busy=${busy} />`)}</ul>`}
     ${!folded && html`<${Button} class="phone-wide phone-plugin-check" disabled=${busy.has(checkKey)} onClick=${() => actions.checkPlugin(plugin, checkKey)}>
       ${busy.has(checkKey) ? 'Checking…' : 'Check'}<//>`}
-  </div>`;
+  <//>`;
 }
 
 export function PhonePlugins({ state, actions }) {

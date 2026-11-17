@@ -1,6 +1,5 @@
 /* Plugins (js/phone-plugins.js): a card per plugin, its steps as rows. */
 
-:root[data-layout="phone"] .phone-plugin { padding: 12px; margin-bottom: 10px; }
 :root[data-layout="phone"] :is(.phone-plugin-head, .phone-plugin-step) { display: flex; align-items: center; gap: 10px; }
 :root[data-layout="phone"] .phone-plugin-head { min-height: var(--phone-tap); }
 :root[data-layout="phone"] .phone-plugin-dot { flex: none; width: 14px; text-align: center; }

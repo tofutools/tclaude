@@ -34,10 +34,8 @@
 :root[data-layout="phone"] .phone-cost-big { font-size: 30px; font-weight: 600; color: var(--phone-ok); line-height: 1.2; }
 :root[data-layout="phone"] .phone-cost-meta { color: var(--ui-muted-text); font-size: 13px; }
 :root[data-layout="phone"] .phone-cost-caveat { margin-top: 6px; color: var(--phone-warn); font-size: 12px; }
-:root[data-layout="phone"] .phone-cost-list {
-  list-style: none; margin: 0; padding: 0 12px;
-  background: var(--phone-panel); border: 1px solid var(--phone-line); border-radius: var(--phone-r);
-}
+/* A Card that is the list: its rows run to its edges, top and bottom. */
+:root[data-layout="phone"] .phone-cost-list { list-style: none; margin: 0; padding: 0 12px; }
 :root[data-layout="phone"] .phone-cost-row {
   display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 10px; align-items: baseline;
   padding: 10px 0; border-bottom: 1px solid var(--phone-line);

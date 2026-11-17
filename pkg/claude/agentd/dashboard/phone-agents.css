@@ -199,7 +199,7 @@
 :root[data-layout="phone"] .phone-agents-crumbs { margin: 0 4px 10px; color: var(--ui-muted-text); font-size: 13px; }
 :root[data-layout="phone"] .phone-agents-crumbs b { color: var(--ui-text-strong); }
 :root[data-layout="phone"] .phone-agents-crumbs .phone-link { padding: 0; font-size: 13px; }
-:root[data-layout="phone"] .phone-group-card { display: flex; flex-direction: column; gap: 10px; margin-bottom: 14px; }
+:root[data-layout="phone"] .phone-group-card { display: flex; flex-direction: column; gap: 10px; }
 :root[data-layout="phone"] .phone-group-card .phone-agent-sheet-meta { margin: 0; }
 :root[data-layout="phone"] .phone-group-card .phone-agents-summary { margin: -4px 0 0; }
 :root[data-layout="phone"] .phone-agents-subcards { display: flex; flex-direction: column; gap: 8px; }
