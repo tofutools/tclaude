@@ -41,7 +41,7 @@ function initialValues(process) {
 }
 
 // StartStrip is the start form of one saved process.
-function StartStrip({ group, process, api, source, wizard, notify, editing = '', removing = false, scribeDraft = null, scribes = [], onRemoving, onEdit, onClose }) {
+function StartStrip({ group, process, api, source, wizard, notify, editing = '', removing = false, scribeDraft = null, scribes = [], onRemoving, onEdit, onClose, onRemoved = null }) {
   const [values, setValues] = useState(() => initialValues(process));
   const [authorized, setAuthorized] = useState(() => new Set());
   const [extraProfiles, setExtraProfiles] = useState([]);
@@ -122,6 +122,7 @@ function StartStrip({ group, process, api, source, wizard, notify, editing = '',
   const remove = () => act('remove', async () => {
     await api.unpinProcess(group.name, process.templateId);
     notify(`Removed ${process.name} from ${group.name}`);
+    onRemoved?.(process.templateId);
     void source?.refresh?.();
     onClose();
   });
@@ -173,7 +174,9 @@ function StartStrip({ group, process, api, source, wizard, notify, editing = '',
 // SavedProcesses is the group's saved-process chips and the open strip.
 // `editing` is the template id open in the inline editor below; ✎ opens one
 // there as a graph.
-export function SavedProcesses({ group, processes, api, source, wizard = false, notify = defaultNotify, editing = '', scribes = [], onEdit, confirm = shellConfirm }) {
+// onRemoved(templateId) is told when the operator removes one here (the
+// bin or Remove), so what is open on it closes.
+export function SavedProcesses({ group, processes, api, source, wizard = false, notify = defaultNotify, editing = '', scribes = [], onEdit, onRemoved = null, confirm = shellConfirm }) {
   const [open, setOpen] = useState('');
   const [removing, setRemoving] = useState(false);
   const [loading, setLoading] = useState('');
@@ -205,6 +208,7 @@ export function SavedProcesses({ group, processes, api, source, wizard = false, 
       await api.unpinProcess(group.name, templateId);
       if (open === templateId) setOpen('');
       notify(`Removed ${process.name} from ${group.name}`);
+      onRemoved?.(templateId);
       void source?.refresh?.();
     } catch (cause) {
       notify(`Could not remove ${process.name}: ${cause.message}`, true);
@@ -258,7 +262,7 @@ export function SavedProcesses({ group, processes, api, source, wizard = false, 
     <//>
     ${current && html`<${StartStrip} key=${current.templateId} removing=${removing} onRemoving=${setRemoving} editing=${editing}
       scribeDraft=${scribeDraftsOf(scribes, [current])[0] || null} scribes=${scribes} group=${group} process=${current} api=${api} source=${source}
-      wizard=${wizard} notify=${notify} onClose=${() => setOpen('')}
+      wizard=${wizard} notify=${notify} onClose=${() => setOpen('')} onRemoved=${onRemoved}
       onEdit=${(edit) => { setOpen(''); onEdit({ ...edit, origin: '' }); }} />`}
   </div>`;
 }

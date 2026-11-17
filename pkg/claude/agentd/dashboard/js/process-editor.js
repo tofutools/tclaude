@@ -844,8 +844,18 @@ export class ProcessTemplateEditor {
     this.publish?.();
   }
 
+  // observeTemplateDeleted: the head poll no longer lists this saved
+  // template, so it was deleted elsewhere (another tab, node or the CLI).
+  // Said once; a save then asks before bringing it back (resolveConflict).
+  observeTemplateDeleted() {
+    if (this.destroyed || this.templateDeleted || !this.model?.sourceHash) return;
+    this.templateDeleted = true;
+    this.status(`${this.model.template?.name || this.model.template?.id} was deleted elsewhere. Saving would bring it back, and asks first.`, true);
+  }
+
   observeExternalHead({ ref: currentRef, sourceHash: currentSourceHash, actor, authoredAt } = {}) {
     if (this.destroyed) return this.externalChange;
+    this.templateDeleted = false;
     const previous = this.externalChange;
     const observedKey = currentRef && currentSourceHash ? `${currentRef}\n${currentSourceHash}` : '';
     if (this.externalReviewRequest && this.externalReviewRequest.key !== observedKey) cancelExternalReview(this);
@@ -2845,6 +2855,29 @@ export class ProcessTemplateEditor {
   // version on top of theirs (rebasing this draft's CAS base).
   async resolveConflict(conflict, requestSeq = this.saveSeq) {
     const firstSave = !this.model.sourceHash;
+    // A template saved before whose head is now gone was deleted while open:
+    // never save it back silently. Leaving it deleted is the default.
+    if (!firstSave && !conflict.currentSourceHash) {
+      const name = this.model.template?.name || this.model.template?.id;
+      const again = await this.choiceModal({
+        title: 'Template was deleted',
+        body: `${name} was deleted while you were editing it (in another tab, on another node or from the CLI). Saving it again brings it back with this id.`,
+        choices: [
+          { key: 'leave', label: 'Leave it deleted', primary: true },
+          { key: 'force', label: 'Save it again' },
+        ],
+      });
+      if (requestSeq !== this.saveSeq) return;
+      if (again === 'force') {
+        this.model.sourceHash = '';
+        this.templateDeleted = false;
+        await this.saveRequest(requestSeq);
+      } else {
+        this.templateDeleted = true;
+        this.status(`${name} was deleted; nothing was saved.`, true);
+      }
+      return;
+    }
     const choice = await this.choiceModal({
       title: firstSave ? 'Template id already exists' : 'Template changed while you were editing',
       body: firstSave

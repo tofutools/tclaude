@@ -512,6 +512,40 @@ function GroupRuns({ group, roster, context, filter, wizard, api, runApi = runDe
   const editing = !!quick;
   const people = groupRoster({ members }, busy);
   const say = notify || defaultNotify;
+  // Closing what is open on a process that is gone (tk_1396c48d):
+  //  - the operator removes it here (the bin, Remove): close at once;
+  //  - it leaves the group's live list otherwise (another tab, node, the
+  //    CLI): read its head, and close only when it was deleted (404). One
+  //    unpinned or moved elsewhere still exists and stays open with its
+  //    edits, and a read that briefly lost the list does not close anything;
+  //  - the inline editor's own read or save finds it deleted (onGone).
+  // A deleted one is never discarded as an untouched draft on its way out.
+  const openId = quick?.process?.templateId || quick?.saved?.templateId || '';
+  const startId = starting?.templateId || '';
+  const goneIds = useRef(new Set());
+  const closeOn = (templateId) => {
+    setQuick((current) => ((current?.process?.templateId || current?.saved?.templateId) === templateId ? null : current));
+    setStarting((current) => (current && current.templateId === templateId ? false : current));
+  };
+  const templateGone = (templateId, name) => {
+    goneIds.current.add(templateId);
+    closeOn(templateId);
+    say(`${name || templateId} was deleted; its editor closed`);
+  };
+  const seenListed = useRef(new Map());
+  const listedKey = entry ? savedProcesses.map((saved) => `${saved.templateId}\t${saved.name}`).join('\n') : null;
+  useEffect(() => {
+    if (listedKey === null) return;
+    const listed = new Map(savedProcesses.map((saved) => [saved.templateId, saved.name || saved.templateId]));
+    for (const id of new Set([openId, startId])) {
+      if (!id || listed.has(id) || !seenListed.current.has(id)) continue;
+      const name = seenListed.current.get(id);
+      if (typeof api.getTemplateHead !== 'function') continue;
+      api.getTemplateHead(id).then(() => {}, (cause) => { if (cause?.status === 404) templateGone(id, name); });
+    }
+    seenListed.current = new Map([openId, startId].filter((id) => id && listed.has(id)).map((id) => [id, listed.get(id)]));
+  }, [listedKey, openId, startId]);
+
   // New process stores an untitled draft of the group's (pinned, not in the
   // library) and opens it here as a graph: one click from ＋, no name asked.
   // A second click while it is stored makes nothing more.
@@ -611,9 +645,9 @@ function GroupRuns({ group, roster, context, filter, wizard, api, runApi = runDe
         view=${quick.view} stored=${quick.stored || quick.view} changed=${!!quick.changed} api=${api} source=${source} wizard=${wizard}
         draft=${!!quick.draft} untouched=${!!quick.untouched} scribes=${scribes}
         otherNames=${savedProcesses.filter((saved) => saved.templateId !== quick.process?.templateId).map((saved) => saved.name)}
-        notify=${say} onClose=${() => setQuick(null)} onSteps=${toSteps} onRun=${runSaved}
+        notify=${say} onClose=${() => setQuick(null)} onSteps=${toSteps} onRun=${runSaved} onGone=${templateGone}
         onDiscard=${(templateId, options) => { setQuick(null); void discardDraft(templateId, options); }}
-        onAbandon=${(templateId, options) => void discardDraft(templateId, options)}
+        onAbandon=${(templateId, options) => { if (!goneIds.current.has(templateId)) void discardDraft(templateId, options); }}
         onImport=${pickPwf}
         onDescribe=${(text, view) => draftWithScribe(api, { group, text, roster: people, confirm, template: view })
           .then((draft) => { if (draft) { setQuick({ mode: 'scribe', key: Date.now(), draft }); void source?.refresh?.(); } })
@@ -638,7 +672,7 @@ function GroupRuns({ group, roster, context, filter, wizard, api, runApi = runDe
     dropped=${droppedPwf} onImported=${() => void source.refresh()} /></span>`;
   const body = html`${savedProcesses.length > 0 && html`<${SavedProcesses} group=${group} processes=${savedProcesses} api=${api} source=${source}
       wizard=${wizard} notify=${notify || defaultNotify}
-      editing=${editing ? quick.process?.templateId || quick.saved?.templateId || quick.draft?.templateId || '' : ''} scribes=${scribes}
+      editing=${editing ? quick.process?.templateId || quick.saved?.templateId || quick.draft?.templateId || '' : ''} scribes=${scribes} onRemoved=${closeOn}
       onEdit=${(edit) => {
         setStarting(false);
         setQuick(edit.mode === 'graph' ? { ...edit, stored: edit.view, key: Date.now() } : { ...edit, key: Date.now() });
