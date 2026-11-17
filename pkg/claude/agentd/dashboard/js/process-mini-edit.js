@@ -995,6 +995,9 @@ export function canRemoveOutcome(view, id, outcome) {
   // A gate's used-up loop must go somewhere: change that first.
   const exhausting = (node?.deciders?.length || node?.performer?.kind === 'rule') && Object.entries(node.loops || {}).find(([, bound]) => bound.onExhausted === outcome);
   if (exhausting) return `it is where ${exhausting[0]} goes once it runs out of rounds; choose another there first`;
+  // A rule keeps at least one case: one picking another outcome must stay.
+  const cases = node?.performer?.kind === 'rule' ? node.performer.cases || [] : [];
+  if (cases.length && cases.every((c) => c.then === outcome)) return 'every case of the rule picks it; point one at another outcome first';
   if (!loopBound(node, outcome) && !out.some((edge) => edge.outcome !== outcome && !loopBound(node, edge.outcome))) {
     return 'its only outcome that does not loop back';
   }

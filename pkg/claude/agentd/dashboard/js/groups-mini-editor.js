@@ -304,7 +304,8 @@ function RuleCases({ view, id, onApply }) {
           ${operand.values.map((value) => html`<option key=${value} value=${value}>${value}</option>`)}
         <//>`
     : html`<${TypedField} name="gm-rule-value" type="text" class="gm-rule-value" aria-label="The value" value=${r.value}
-          onChange=${(event) => setRow({ value: event.currentTarget.value.trim() || r.value })} />`}
+          title="A value cannot hold both ' and \""
+          onChange=${(event) => { const value = event.currentTarget.value.trim(); setRow({ value: value && !(value.includes("'") && value.includes('"')) ? value : r.value }); }} />`}
       ${i === 0 && html`<span class="gm-rule-arrow">→</span>${outcomeSelect(cases[index].then, `Case ${index + 1} picks`, (then) => setCase(index, { then }))}`}
       ${(rows.length > 1 || cases.length > 1) && html`<${Button} size="sm" icon=${true} variant="ghost danger" aria-label=${rows.length > 1 ? 'Remove this condition' : 'Remove this case'}
         onClick=${() => (rows.length > 1 ? setCase(index, { when: fromRows(rows.filter((_, j) => j !== i)) }) : apply(cases.filter((_, j) => j !== index)))}>✕<//>`}
@@ -437,7 +438,7 @@ function Inspector({ view, id, roster, roles, fallbackInfo, onApply, onRename, o
       <//></div>
       <p class="gq-dim">Otherwise the first decider, in this order, who chose something else decides; the work goes back with everyone's notes.</p>`
     : html`<div class="gm-field"><span>Who</span><${WhoPicker} step=${step} roster=${roster} roles=${roles} profiles=${fallbackInfo.profiles}
-      defaultSpawnProfile=${fallbackInfo.defaultSpawnProfile} rule=${node.type === 'decision'} onChange=${setWho} />
+      defaultSpawnProfile=${fallbackInfo.defaultSpawnProfile} rule=${node.type === 'decision' && (kind === 'rule' || ruleOperands(view, id).length > 0)} onChange=${setWho} />
       ${node.type === 'decision' && kind !== 'command' && !rule && html`<${Button} size="sm" variant="link" class="gq-link" data-mini-add-decider
         disabled=${!!noMoreDeciders} title=${noMoreDeciders || 'Several decide together: all must agree'}
         onClick=${() => onApply(addReviewer(view, id))}>+ another decider<//>`}</div>

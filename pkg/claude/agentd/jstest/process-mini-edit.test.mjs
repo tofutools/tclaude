@@ -679,10 +679,16 @@ test('a decision decided by a rule: cases on what ran before, then else', () => 
     ['steps.implement.result', 'steps.review.result', 'params.issue'], 'the steps before it and the params');
   const renamed = m.renameOutcome(view, 'approve', 'ship', 'merge').view;
   assert.equal(renamed.template.nodes.approve.performer.cases[0].then, 'merge', 'a renamed outcome follows into the rule');
-  const removed = m.removeOutcome(view, 'approve', 'ship').view;
-  assert.deepEqual(removed.template.nodes.approve.performer.cases, [], 'a case for a removed outcome goes');
   assert.throws(() => m.setRule(view, 'approve', { cases: [{ when: 'params.issue == x', then: 'nope' }], else: 'hold' }), /not an outcome/);
   const agent = m.setDecisionWho(view, 'approve', { mode: 'role', role: 'dev' }).view;
   assert.equal(agent.template.nodes.approve.performer.kind, 'agent');
   assert.equal(agent.template.nodes.approve.performer.cases, undefined, 'the cases go with the rule');
+});
+
+test('a rule keeps a case: the outcome every case picks cannot be removed', () => {
+  const { view } = m.setDecisionWho(ship, 'approve', { mode: 'rule' });
+  assert.match(m.canRemoveOutcome(view, 'approve', 'ship'), /every case of the rule picks it/);
+  const two = m.setRule(view, 'approve', { cases: [{ when: 'steps.review.result == failed', then: 'changes' }, { when: 'steps.implement.result == succeeded', then: 'ship' }], else: 'hold' }).view;
+  assert.equal(m.canRemoveOutcome(two, 'approve', 'ship'), '');
+  assert.equal(m.removeOutcome(two, 'approve', 'ship').view.template.nodes.approve.performer.cases.length, 1);
 });
