@@ -95,7 +95,8 @@ type processTemplateSourceRequest struct {
 
 type processTemplatesLsParams struct {
 	JSON     bool   `long:"json" help:"Output the whole listing as JSON instead of the human table."`
-	All      bool   `long:"all" help:"Include templates saved to a group but not published to the library."`
+	Library  bool   `long:"library" help:"List only templates published to the library, leaving out group drafts."`
+	All      bool   `long:"all" help:"Include group drafts (the default now; kept for existing scripts)."`
 	AskHuman string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (for example 30s). Capped at 300s; timeout means deny."`
 }
 
@@ -103,7 +104,7 @@ func processTemplatesLsCmd() *cobra.Command {
 	return boa.CmdT[processTemplatesLsParams]{
 		Use:         "ls",
 		Short:       "List stored process templates",
-		Long:        "Lists the process template library (with --all, also templates saved to a group but not published) as a human table, or as one JSON object with --json. The listing is bounded, so --json emits the complete collection in one document; there is no streaming variant.",
+		Long:        "Lists the stored process templates: the library and the drafts saved to a group but not published (marked draft, and \"listed\": false in --json), as a human table or as one JSON object with --json. --library leaves the drafts out. The listing is bounded, so --json emits the complete collection in one document; there is no streaming variant.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		InitFuncCtx: func(ctx *boa.HookContext, p *processTemplatesLsParams, _ *cobra.Command) error {
 			boa.GetParamT(ctx, &p.AskHuman).SetAlternativesFunc(completeAskHumanDurations)
@@ -127,9 +128,11 @@ func runProcessTemplatesLs(p *processTemplatesLsParams, stdout, stderr io.Writer
 	var response struct {
 		Templates []processTemplateListJSON `json:"templates"`
 	}
-	path := "/v1/process/templates"
-	if p.All {
-		path += "?all=1"
+	// Group drafts are listed by default: an agent asked to work on the draft
+	// the operator has open must find it here, as the dashboard shows it.
+	path := "/v1/process/templates?all=1"
+	if p.Library && !p.All {
+		path = "/v1/process/templates"
 	}
 	if err := DaemonRequest(http.MethodGet, path, nil, &response, DaemonOpts{AskHuman: ask}); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
@@ -166,6 +169,9 @@ func runProcessTemplatesLs(p *processTemplatesLsParams, stdout, stderr io.Writer
 		fmt.Fprintf(stdout, "%s\t%s\tversions=%d\tref=%s", tmpl.ID, label, tmpl.VersionCount, tmpl.LatestVersion.Ref)
 		if tmpl.LatestVersion.Actor != "" {
 			fmt.Fprintf(stdout, "\tactor=%s", tmpl.LatestVersion.Actor)
+		}
+		if !tmpl.Listed {
+			fmt.Fprint(stdout, "\tdraft (saved to a group, not in the library)")
 		}
 		fmt.Fprintln(stdout)
 		if tmpl.Description != "" {

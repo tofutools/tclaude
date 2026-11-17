@@ -303,8 +303,13 @@ func validateLoops(tmpl *Template, edges []Edge) Diagnostics {
 		}
 		for _, exit := range loop.Exits {
 			if tmpl.Nodes[exit.From].Type != NodeTypeDecision {
+				// Plain words, as the editor's problems line shows them: which
+				// step, which route, and the two ways to fix it.
 				add("loop_exit", "nodes."+exit.From+".next."+exit.Outcome, fmt.Sprintf(
-					"%q leaves the loop back to %q for %q; only a decision may leave a loop", exit.From, loop.To, exit.To))
+					"step %q is inside the loop that %q sends back to %q, but its %q route goes to %q, outside the loop. "+
+						"Only the decision %q may lead out of the loop: point %q at a step inside the loop, "+
+						"or remove that route (a %q with no route fails the run)",
+					exit.From, loop.From, loop.To, exit.Outcome, exit.To, loop.From, exit.Outcome, exit.Outcome))
 			}
 		}
 		for _, id := range loop.Body {

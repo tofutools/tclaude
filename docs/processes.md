@@ -77,7 +77,7 @@ performers, edges, layout, snippets, version history, authorship, and
 source-hash CAS checks. Agents author the same templates from the CLI:
 
 ```bash
-tclaude agent process-templates ls [--json]
+tclaude agent process-templates ls [--json] [--library]   # group drafts included unless --library
 tclaude agent process-templates show <template-id>
 tclaude agent process-templates validate --file template.yaml
 tclaude agent process-templates save --file template.yaml \

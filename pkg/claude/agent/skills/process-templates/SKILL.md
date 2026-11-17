@@ -62,6 +62,7 @@ carries:
 | `versionCount` | yes | Number of stored versions. |
 | `latestVersion` | yes | The current head version (see below). |
 | `versions` | yes | Every stored version, newest first; `[]` when there are none. |
+| `listed` | yes | `true` for a library template; `false` for a draft saved to a group but not published (what the human has open in a group's inline editor). `ls` lists both; `--library` leaves drafts out. |
 
 A version object carries `ref`, `semanticHash`, `sourceHash`, and `storedAt`.
 It also carries `actor` and `authoredAt`, but **both are optional and omitted

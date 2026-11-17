@@ -111,26 +111,25 @@ const daemonRequiredMsg = "tclaude agentd is not running.\n" +
 // override when one is in force.
 //
 // An override short-circuits every fallback — ClientSocketPaths returns it
-// ALONE — so a stale or mistyped TCLAUDE_AGENTD_SOCKET makes a perfectly
-// healthy daemon look absent. Reporting "not running" then sends the operator
-// off to start a daemon that is already up, so name the path actually dialled,
-// say where that path came from, and, when the default socket turns out to be
-// live, name unsetting the variable as the fix.
+// ALONE — so name the path actually dialled and where it came from, rather
+// than "not running". It never suggests unsetting or changing the variable,
+// nor names another live socket: the override is how a sandbox or launch
+// mode pins an agent to its own daemon, and an agent that followed such a
+// hint would reach a different daemon (the operator's real one, from a
+// sandbox). The fix is the operator's: start a daemon on the pinned socket or
+// fix the launch that set it.
 func daemonUnreachableMsg() string {
 	override := agentipc.ExplicitSocketPath()
 	if override == "" {
 		return daemonRequiredMsg
 	}
-	msg := fmt.Sprintf("tclaude agentd is not reachable on %s,\n"+
-		"which the %s environment variable pins it to.", override, agentipc.SocketEnv)
-	canonical := agentipc.CanonicalSocketPath()
-	if canonical != "" && canonical != override && agentipc.SocketReachable(canonical) {
-		return msg + fmt.Sprintf("\n\nA daemon IS listening on the default socket %s.\n"+
-			"Unset %s to use it.", canonical, agentipc.SocketEnv)
-	}
-	return msg + fmt.Sprintf("\n\nStart it from a non-sandboxed shell with:"+
-		" tclaude agentd serve --socket %s\n"+
-		"or unset %s to use the default socket.", shellQuote(override), agentipc.SocketEnv)
+	return fmt.Sprintf("tclaude agentd is not reachable on %s,\n"+
+		"which the %s environment variable pins it to.\n\n"+
+		"The variable is set on purpose (a sandbox or launch mode chose this socket):\n"+
+		"do not unset or change it to reach another daemon. If you are an agent, stop\n"+
+		"and tell the operator. The operator can start a daemon on it from a\n"+
+		"non-sandboxed shell with: tclaude agentd serve --socket %s",
+		override, agentipc.SocketEnv, shellQuote(override))
 }
 
 // shellQuote renders s so a POSIX shell reproduces it as a single argument.
