@@ -899,12 +899,21 @@ func (s *processProjectionSkeleton) project(run processRunView) processRunProjec
 	}
 	if failure := run.Checkpoint.Failure; failure != nil {
 		projection.Failure = &processProjectionFailure{NodeID: failure.NodeID, Label: failure.NodeID, Reason: failure.Reason}
-		for _, node := range projection.Nodes {
-			source := s.engineSource(node.ID)
-			if source == failure.NodeID || strings.HasPrefix(failure.NodeID, node.ID+".") {
-				projection.Failure.NodeID, projection.Failure.Label = node.ID, node.Label
+		// The graph node the failed engine node is: an exact match, else the
+		// longest id it is nested under (ids may hold dots: deploy and
+		// deploy.prod are both authored steps).
+		best := -1
+		for i, node := range projection.Nodes {
+			if s.engineSource(node.ID) == failure.NodeID {
+				best = i
 				break
 			}
+			if strings.HasPrefix(failure.NodeID, node.ID+".") && (best < 0 || len(node.ID) > len(projection.Nodes[best].ID)) {
+				best = i
+			}
+		}
+		if best >= 0 {
+			projection.Failure.NodeID, projection.Failure.Label = projection.Nodes[best].ID, projection.Nodes[best].Label
 		}
 	}
 	for i, edge := range projection.Edges {
