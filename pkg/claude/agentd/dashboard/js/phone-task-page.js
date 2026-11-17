@@ -1,8 +1,10 @@
 // phone-task-page.js -- one task on a phone, pushed over the Board
 // (phone-board.js): its title and state, its tags, any question to the
 // operator with its options, the brief, its references (phone-task-links.js,
-// with its epic, the tasks it comes after and its run), the activity with
-// its comments, and a comment box. It reads; the writes a phone makes are
+// with its epic, the tasks it comes after and its run), who worked on it
+// (each a tap from their terminal), its files, the activity with its
+// comments, and a comment box (phone-task-parts.js has the people, files and
+// comment parts). The brief draws the images it names. It reads; the writes a phone makes are
 // answering, commenting and Move ▸. Editing the task itself is the
 // desktop's task form, which a phone never opens: nothing here takes the
 // focus on its own, so the keyboard stays down until the operator taps a
@@ -26,6 +28,7 @@ import { actorName, cardTags, taskStateLabel } from './phone-board-model.js';
 import { shellToast } from './shell-state.js';
 import { ChangeItem, QuestionItem, TaskIdLine, TaskMetaLine, historyEntries } from './phone-task-history.js';
 import { TaskAfter, TaskEpic, TaskRefs, TaskRun } from './phone-task-links.js';
+import { CommentBody, CommentHead, FilesSection, PeopleSection, PersonName, TaskBrief } from './phone-task-parts.js';
 
 const html = htm.bind(h);
 
@@ -94,7 +97,7 @@ function QuestionBlock({ task, q, names, onAnswer }) {
   <//>`;
 }
 
-export function TaskPage({ id, group, source, state, api, onClose, onMove, onOpenTask = () => {} }) {
+export function TaskPage({ id, group, source, state, api, actions = null, onClose, onMove, onOpenTask = () => {} }) {
   const [version, setVersion] = useState(0);
   const [comment, setComment] = useState('');
   const [sending, setSending] = useState(false);
@@ -149,13 +152,17 @@ export function TaskPage({ id, group, source, state, api, onClose, onMove, onOpe
       ${body === null
         ? html`<p class="ui-empty">${read.failed ? 'Could not read the brief.' : 'Loading…'}</p>`
         : body.trim()
-          ? html`<${MarkdownDocument} source=${body} className="markdown-document phone-task-md" />`
+          ? html`<${TaskBrief} api=${api} task=${task} body=${body} />`
           : html`<p class="ui-empty">No brief.</p>`}
     <//>
 
     <${TaskRefs} task=${task} />
     <${TaskEpic} task=${task} entry=${entry} full=${read.task} failed=${read.failed} onOpen=${onOpenTask} />
     <${TaskAfter} task=${task} entry=${entry} onOpen=${onOpenTask} />
+
+    <${PeopleSection} task=${task} entries=${entries} names=${names} actions=${actions} />
+
+    <${FilesSection} api=${api} task=${task} />
 
     <${Section} title="Activity" count=${entries.length}>
       ${read.activity === null
@@ -165,13 +172,13 @@ export function TaskPage({ id, group, source, state, api, onClose, onMove, onOpe
             ? html`<${QuestionItem} key=${`q-${ev.comment.id}`} entry=${ev} nameOf=${nameOf} />`
             : ev.comment
               ? html`<li key=${`c-${ev.comment.id}`} class="phone-task-comment">
-                <span class="phone-task-who">${ev.actor_name || actorName(ev.actor, names)}</span>
+                <${PersonName} actor=${ev.comment.author} shown=${ev.comment.author_name} names=${names} actions=${actions} />
+                <${CommentHead} comment=${ev.comment} />
                 <span class="phone-task-when">${relTime(ev.at)}</span>
-                ${ev.comment.deleted_at
-                  ? html`<span class="phone-task-what ui-hint">deleted</span>`
-                  : html`<${MarkdownDocument} source=${ev.comment.body || ''} className="markdown-document phone-task-md" />`}
+                <${CommentBody} api=${api} taskId=${task.id} comment=${ev.comment} />
               </li>`
-              : html`<${ChangeItem} key=${ev.id || `e-${i}`} entry=${ev} nameOf=${nameOf} />`))}
+              : html`<${ChangeItem} key=${ev.id || `e-${i}`} entry=${ev} nameOf=${nameOf}
+                  who=${html`<${PersonName} actor=${ev.actor} shown=${ev.actor_name} names=${names} actions=${actions} />`} />`))}
         </ol>`}
     <//>
 

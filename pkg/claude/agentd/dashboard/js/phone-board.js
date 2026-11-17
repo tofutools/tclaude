@@ -249,7 +249,7 @@ export function BoardView({ source, state, actions, fetchImpl = globalThis.fetch
   }, !open);
 
   if (open) {
-    return html`<${TaskPage} key=${open.id} id=${open.id} group=${open.group} source=${source} state=${state} api=${api}
+    return html`<${TaskPage} key=${open.id} id=${open.id} group=${open.group} source=${source} state=${state} api=${api} actions=${actions}
       onClose=${() => { boardTask.value = closeTask(open); }} onOpenTask=${(id) => { boardTask.value = openFrom(open, id); }} onMove=${(task, entry_) => openSheet('Move', MoveSheet, { task, entry: entry_, peers: sectionPeers(entry_, task) })} />`;
   }
 

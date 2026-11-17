@@ -80,10 +80,11 @@ export function historyEntries(entries = []) {
   return entries.filter((entry) => entry.kind !== 'comment_edited' && !(entry.comment?.answers && asked.has(entry.comment.answers)));
 }
 
-// ChangeItem is one change: who, what in the desktop's words, when.
-export function ChangeItem({ entry, nameOf }) {
+// ChangeItem is one change: who, what in the desktop's words, when. who,
+// when given, draws the actor (the task page's jump to an agent).
+export function ChangeItem({ entry, nameOf, who = null }) {
   return html`<li class="phone-task-change" data-activity=${entry.kind}>
-    <span class="phone-task-who">${whoIs(entry.actor, entry.actor_name, nameOf)}</span>
+    ${who || html`<span class="phone-task-who">${whoIs(entry.actor, entry.actor_name, nameOf)}</span>`}
     <span class="phone-task-when">${relTime(entry.at)}</span>
     <span class="phone-task-what">${changeText(entry)}</span>
   </li>`;
