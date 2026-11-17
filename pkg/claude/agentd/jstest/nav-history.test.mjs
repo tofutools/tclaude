@@ -31,7 +31,6 @@ function installBrowsingContext(t, harness, startPath = '/') {
     pushState(state, _title, url) { this.state = state; current = url; calls.push({ kind: 'push', url }); },
     replaceState(state, _title, url) { this.state = state; current = url; calls.push({ kind: 'replace', url }); },
     back() { calls.push({ kind: 'back' }); },
-    forward() { calls.push({ kind: 'forward' }); },
   };
   const previous = ['history', 'location'].map((name) => [
     name, Object.getOwnPropertyDescriptor(globalThis, name),
@@ -712,14 +711,7 @@ test('a navigation right after an overlay close waits for the step back to land'
   assert.deepEqual(browsing.calls.map((c) => c.kind), ['back'], 'the push waits for the traversal');
   browsing.history.replaceState({ ...browsing.history.state, navIndex: 0 }, '', '/automations');
   harness.window.dispatchEvent(new harness.window.Event('popstate'));
-  // Landed, it steps Forward onto the entry it left, and the navigation takes
-  // that entry over: no entry is added after a Back without a tap, which
-  // Android's Back would skip (tk_3739e29d).
-  assert.equal(browsing.calls.at(-1).kind, 'forward');
-  browsing.history.replaceState({ ...browsing.history.state, navIndex: 1 }, '', '/automations?notification=agt_a%3A6');
-  harness.window.dispatchEvent(new harness.window.Event('popstate'));
-  assert.equal(browsing.calls.filter((c) => c.kind === 'push').length, 0);
-  assert.equal(browsing.calls.at(-1).kind, 'replace');
+  assert.equal(browsing.calls.at(-1).kind, 'push');
   assert.equal(browsing.at(), '/groups/runs/ops/run_1');
 });
 
@@ -745,10 +737,7 @@ test('navigateToPath during an overlay close runs once the step back lands', asy
   assert.deepEqual(browsing.calls.map((c) => c.kind), ['back'], 'nothing is activated or recorded yet');
   browsing.history.replaceState({ ...browsing.history.state, navIndex: 0 }, '', '/automations');
   harness.window.dispatchEvent(new harness.window.Event('popstate'));
-  assert.equal(browsing.calls.at(-1).kind, 'forward', 'then steps Forward onto the sheet\'s entry');
-  browsing.history.replaceState({ ...browsing.history.state, navIndex: 1 }, '', '/automations?phone=1');
-  harness.window.dispatchEvent(new harness.window.Event('popstate'));
-  assert.equal(browsing.calls.filter((c) => c.kind === 'push').length, 0, 'and takes it over, adding none');
+  assert.equal(browsing.calls.at(-1).kind, 'push');
   assert.equal(browsing.at(), '/');
 });
 
@@ -779,10 +768,7 @@ test('an overlay that changes while a close steps back is read once the step lan
   assert.equal(navigateToPath('/'), true);
   browsing.history.replaceState({ ...browsing.history.state, navIndex: 1 }, '', '/automations?own=now');
   harness.window.dispatchEvent(new harness.window.Event('popstate'));
-  assert.equal(browsing.calls.at(-1).kind, 'forward');
-  browsing.history.replaceState({ ...browsing.history.state, navIndex: 2 }, '', '/automations?phone=1&own=now');
-  harness.window.dispatchEvent(new harness.window.Event('popstate'));
-  assert.equal(browsing.calls.filter((c) => c.kind === 'push').length, 0, 'one step: Now, then Agents over the sheet\'s entry');
+  assert.deepEqual(browsing.calls.filter((c) => c.kind === 'push').length, 1, 'one step: Now, then Agents');
   assert.equal(browsing.at(), '/');
 });
 

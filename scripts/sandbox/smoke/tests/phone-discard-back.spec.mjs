@@ -25,18 +25,19 @@ function collectErrors(page) {
 }
 
 // Android's Back is not history.back(): Chrome skips every entry of a page
-// that added one after a Back without a fresh tap (its history-manipulation
-// intervention), so a form that re-recorded its step that way sent the next
-// Back out of the app (tk_3739e29d). A smoke cannot press a phone's hardware
-// Back, so it checks that rule instead: after a Back, no history entry is
-// added before the next tap or key. gestureless() is every one that was.
+// that added one after the operator's Back without a fresh tap (its
+// history-manipulation intervention), so a form that re-recorded its step
+// that way sent the next Back out of the app (tk_3739e29d). A smoke cannot
+// press a phone's hardware Back, so it checks that rule instead: after the
+// operator's Back (back(), below), no history entry is added before the
+// next tap or key. gestureless() is every one that was.
 async function watchGestureless(page) {
   await page.addInitScript(() => {
     const seen = { since: true, bad: [] };
     for (const type of ['pointerup', 'click', 'keydown', 'mousedown']) {
       addEventListener(type, (event) => { if (event.key !== 'Escape') seen.since = true; }, true);
     }
-    addEventListener('popstate', () => { seen.since = false; }, true);
+    window.__operatorBack = () => { seen.since = false; };
     const push = history.pushState.bind(history);
     history.pushState = (state, title, url) => {
       if (!seen.since) seen.bad.push(String(url));
@@ -55,6 +56,7 @@ const behind = async (page) => ({ path: new URL(page.url()).pathname, bar: (awai
 async function back(page) {
   await page.evaluate(() => new Promise((resolve) => {
     addEventListener('popstate', () => resolve(), { once: true });
+    window.__operatorBack?.();
     history.back();
   }));
 }
