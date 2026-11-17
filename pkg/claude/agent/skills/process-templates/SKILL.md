@@ -195,6 +195,22 @@ warns when placed in inert fields such as profile, timeout, or backoff.
 - `end`: no `next`; optional `result` such as `success`, `failed`, or
   `canceled`.
 
+### Steps and failures
+
+Model the steps the designer describes, no finer. Work an agent can keep at
+until it is done ("implement it, and keep going until CI passes") is one
+step whose prompt says so: the agent iterates inside it. Whether CI, a test
+run or a check is a step of its own is the designer's choice: when their
+spec names it as a step, model it; when it does not, leave it inside the
+agent's step. Do not push either way.
+
+Give a failure its own branch only where the spec expects that failure and
+handles it differently ("if CI fails, send it back to the implementor"): a
+task with `mayFail: true` and a rule decision after it on
+`steps.<id>.result`, or a decision someone takes. A step that fails with no
+such handling stops the run at that step (it shows as failed); do not add retries, `mayFail` or failure branches
+the spec did not ask for.
+
 Branching on a param or on an earlier result (a setting the operator gives
 at run time, such as "merge only if auto-merge is on", or "only if CI
 passed") is a rule decision: `performer: {kind: rule, cases: [{when:

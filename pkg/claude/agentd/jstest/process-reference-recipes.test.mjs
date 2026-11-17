@@ -12,7 +12,7 @@ import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync } from 'node:fs';
 import * as m from '../dashboard/js/process-mini-edit.js';
 import { addReviewer } from '../dashboard/js/process-gate-deciders.js';
-import { advanced, advancedTracks, simple } from './process-reference-recipes.mjs';
+import { InlineEditor, advanced, advancedTracks, simple } from './process-reference-recipes.mjs';
 import { canonical, fullAdvanced, fullSimple } from './process-reference-full.mjs';
 
 const FIXTURE = new URL('./process-reference-recipes.json', import.meta.url);
@@ -20,10 +20,10 @@ const FIXTURE = new URL('./process-reference-recipes.json', import.meta.url);
 // BUDGET is how many inline edits each process takes today. A change that
 // makes building one harder fails here; one that makes it easier lowers
 // the number (and should lower the budget with it).
-const BUDGET = { simple: 40, advanced: 78, 'advanced-tracks': 75 };
+const BUDGET = { simple: 36, advanced: 78, 'advanced-tracks': 75 };
 // FULL_BUDGET is the same for the full editor (process-reference-full.mjs),
 // which names a node apart from adding it and has no Who picker.
-const FULL_BUDGET = { simple: 63, advanced: 124 };
+const FULL_BUDGET = { simple: 56, advanced: 124 };
 
 const built = { simple: simple(), advanced: advanced(), 'advanced-tracks': advancedTracks() };
 const full = { simple: fullSimple(), advanced: fullAdvanced() };
@@ -49,24 +49,42 @@ for (const key of Object.keys(BUDGET)) {
   });
 }
 
-test('all open with the operator and the lead agreeing the idea, and close with ready, CI, then a rule that merges if allowed', () => {
+test('all open with the operator and the lead agreeing the idea, and close with ready, then a rule that merges if allowed', () => {
   for (const { view } of Object.values(built)) {
     const { nodes } = view.template;
     assert.equal(to(view, 'start', 'next'), 'discuss-the-idea');
     assert.equal(nodes['discuss-the-idea'].performer.lead, true);
     assert.equal(nodes['idea-decided'].performer.kind, 'human');
     assert.equal(to(view, 'idea-decided', 'not-yet'), 'discuss-the-idea');
-    assert.equal(to(view, 'ready-the-pr', 'next'), 'ci');
-    assert.equal(nodes.ci.performer.kind, 'program');
-    assert.equal(nodes.ci.mayFail, true, 'CI failing goes on, for the rule to see');
-    assert.equal(to(view, 'ci', 'next'), 'merge');
-    assert.deepEqual(nodes.merge.performer, {
-      kind: 'rule', cases: [{ when: 'steps.ci.result == succeeded and params.auto_merge == true', then: 'merge' }], else: 'leave',
-    });
+    assert.equal(nodes.merge.performer.kind, 'rule');
+    assert.equal(nodes.merge.performer.else, 'leave');
     assert.equal(to(view, 'merge', 'merge'), 'merge-the-pr');
     assert.equal(nodes[to(view, 'merge', 'leave')].type, 'end');
     assert.equal(view.template.params.auto_merge.type, 'boolean');
     assert.equal(view.template.params.auto_merge.default, false);
+  }
+});
+
+// Whether CI is a step is the designer's choice (tk_82f97468): one style each.
+test('example 2 keeps CI inside the agents\' steps: no CI step, and Merge reads only auto_merge', () => {
+  const { view } = built.simple;
+  const { nodes } = view.template;
+  assert.equal(nodes.ci, undefined);
+  assert.match(nodes['build-the-feature'].performer.prompt, /until CI on the PR passes/);
+  assert.match(nodes['ready-the-pr'].performer.prompt, /Once CI on the PR passes/);
+  assert.equal(to(view, 'ready-the-pr', 'next'), 'merge');
+  assert.deepEqual(nodes.merge.performer.cases, [{ when: 'params.auto_merge == true', then: 'merge' }]);
+});
+
+test('example 1 models CI as a step that may fail, and Merge needs it passed and auto_merge on', () => {
+  for (const key of ['advanced', 'advanced-tracks']) {
+    const { view } = built[key];
+    const { nodes } = view.template;
+    assert.equal(to(view, 'ready-the-pr', 'next'), 'ci');
+    assert.equal(nodes.ci.performer.kind, 'program');
+    assert.equal(nodes.ci.mayFail, true, 'CI failing goes on, for the rule to see');
+    assert.equal(to(view, 'ci', 'next'), 'merge');
+    assert.deepEqual(nodes.merge.performer.cases, [{ when: 'steps.ci.result == succeeded and params.auto_merge == true', then: 'merge' }]);
   }
 });
 
@@ -205,7 +223,10 @@ test('advanced with reviewer tracks: four reviews alongside, each loops on its o
 });
 
 test('a step that may fail stops being one when it becomes a decision (the server refuses mayFail off a task)', () => {
-  const { view } = built.simple;
+  const e = new InlineEditor('may fail');
+  e.step('after', 'start', 'command', { name: 'CI', text: 'make test' });
+  e.failure('ci', 'go-on');
+  const { view } = e;
   assert.equal(view.template.nodes.ci.mayFail, true);
   const yours = m.changeKind(view, 'ci', 'you').view.template.nodes.ci;
   assert.equal(yours.type, 'decision');
