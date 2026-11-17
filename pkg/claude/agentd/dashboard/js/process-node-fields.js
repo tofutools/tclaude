@@ -79,7 +79,7 @@ export function PerformerEditor({
 }) {
   const kind = typeof performer?.kind === 'string' && performer.kind ? performer.kind : 'agent';
   const known = DECISION_KINDS.includes(kind);
-  const mutate = (key, value, operation) => commit(`${path}.${key}`, (draft) => operation(locate(draft), value));
+  const mutate = (key, value, operation) => commit(`${path}.${key}`, (draft) => operation(locate(draft), value, draft));
   const skip = new Set(omit);
   const fields = (known ? performerFieldsFor(kind) : [])
     .filter((field) => (only ? only.includes(field.key) : !skip.has(field.key)));

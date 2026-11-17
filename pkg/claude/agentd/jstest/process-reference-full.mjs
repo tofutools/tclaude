@@ -63,7 +63,7 @@ export class FullEditor {
   // rule is a decision's Performer kind set to rule: one case on the step
   // just before it, picking its first answer, else its next.
   rule(id) {
-    this.op(`kind ${id} rule`, () => this.model.updateNode(id, (draft) => setDecisionKind(this.model, id, draft.performer ||= defaultPerformer('human'), 'rule')));
+    this.op(`kind ${id} rule`, () => this.model.updateNode(id, (draft) => setDecisionKind(this.model, id, draft, draft.performer ||= defaultPerformer('human'), 'rule')));
   }
 
   // ruleRow and ruleAnd are the rule rows' pickers and "+ and".

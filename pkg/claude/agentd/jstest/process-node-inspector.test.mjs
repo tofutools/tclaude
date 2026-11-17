@@ -290,6 +290,16 @@ test('a decision can be decided by a rule: rows, its condition as text, and no p
   await ctx.harness.act(() => ctx.harness.fireEvent(value, 'change'));
   assert.equal(ctx.editor.model.saveBody().template.nodes.gate.performer.cases[0].when, 'steps.build.result == failed');
 
+  await ctx.click('[data-mini-rule-and="0"]');
+  assert.equal(ctx.dock().querySelectorAll('[data-mini-rule-case="0"] [data-mini-rule-row]').length, 2, '+ and adds a row');
+  assert.equal(ctx.editor.model.saveBody().template.nodes.gate.performer.cases[0].when, 'steps.build.result == failed and steps.spec.result == succeeded');
+  const reads = ctx.dock().querySelector('[data-mini-rule-row="0.1"] select[aria-label="What the rule reads"]');
+  Object.defineProperty(reads, 'value', { configurable: true, writable: true, value: 'outputs.spec' });
+  await ctx.harness.act(() => ctx.harness.fireEvent(reads, 'change'));
+  const free = ctx.dock().querySelector('[data-mini-rule-row="0.1"] input[aria-label="The value"]');
+  assert.equal(free.getAttribute('title'), 'A value cannot hold both \' and "', 'an output takes free text, with its hint intact');
+  assert.equal(free.getAttribute('aria-label'), 'The value');
+  await ctx.click('[data-mini-rule-row="0.1"] [aria-label="Remove this condition"]');
   const text = ctx.dock().querySelector('[data-mini-rule-when="0"]');
   Object.defineProperty(text, 'value', { configurable: true, writable: true, value: 'steps.build.result == failed or params.ticket == none' });
   await ctx.harness.act(() => ctx.harness.fireEvent(text, 'change'));
@@ -326,4 +336,21 @@ test('a step can go on as failed, for a rule to see: the inline editor\'s "If it
   build = ctx.editor.model.saveBody().template.nodes.build;
   assert.equal(build.mayFail, undefined);
   assert.deepEqual(build.retry, { maxAttempts: 3 });
+});
+
+test('a rule gets a way out of its loops, and a stage ends going on as failed', async (t) => {
+  const ctx = await openEditor(t);
+  ctx.editor.model.updateNode('gate', (draft) => { draft.loops = { no: { maxIterations: 2 } }; });
+  await ctx.open('gate');
+  await ctx.set('performer.kind', 'rule');
+  assert.deepEqual(ctx.editor.model.saveBody().template.nodes.gate.loops, { no: { maxIterations: 2, onExhausted: 'yes' } },
+    'nobody can be asked once a rule\'s loop runs out');
+
+  ctx.editor.model.updateNode('build', (draft) => { draft.mayFail = true; });
+  await ctx.open('build');
+  await ctx.click('[data-add-block="stages"]');
+  await ctx.set('plan.enabled', true);
+  const build = ctx.editor.model.saveBody().template.nodes.build;
+  assert.ok(build.plan);
+  assert.equal(build.mayFail, undefined, 'a staged step cannot go on as failed');
 });

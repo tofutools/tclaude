@@ -93,14 +93,19 @@ export function setPerformerKind(performer, kind) {
   else for (const key of RULE_KEYS) delete performer[key];
 }
 
-// setDecisionKind switches decision nodeId's decider (slot, on the draft)
-// in `model` ({template, edges}): a new rule starts with one case on the
-// nearest thing it can read, and else its next way out.
-export function setDecisionKind(model, nodeId, slot, kind) {
+// setDecisionKind switches decision nodeId's decider (slot) on the draft
+// node in `model` ({template, edges}): a new rule starts with one case on
+// the nearest thing it can read, and else its next way out. Nobody can be
+// asked once a rule's loop runs out, so each loop without a way out gets
+// the first outcome that does not loop back, as a gate's do.
+export function setDecisionKind(model, nodeId, draft, slot, kind) {
   setPerformerKind(slot, kind);
-  if (kind === RULE_KIND) {
-    const node = model.template.nodes[nodeId];
-    setRule(slot, seedRule(model, nodeId, (outcome) => !!loopBound(node, outcome)));
+  if (kind !== RULE_KIND) return;
+  setRule(slot, seedRule(model, nodeId, (outcome) => !!loopBound(draft, outcome)));
+  const outcomes = model.edges.filter((edge) => edge.from === nodeId).map((edge) => edge.outcome);
+  for (const [outcome, bound] of Object.entries(draft.loops || {})) {
+    const way = outcomes.find((o) => o !== outcome && !draft.loops[o]);
+    if (!bound.onExhausted && way) draft.loops[outcome] = { ...bound, onExhausted: way };
   }
 }
 
@@ -247,6 +252,9 @@ export function setStageEnabled(node, stage, enabled) {
     return;
   }
   if (node[stage]) return;
+  // A step with stages cannot go on as failed (the model refuses mayFail
+  // on it): its stages are its one rework budget.
+  delete node.mayFail;
   const performer = defaultPerformer(stage === 'review' ? 'human' : 'agent');
   if (stage === 'plan' && node.performer?.profile) performer.profile = node.performer.profile;
   if (stage === 'review') performer.ask = 'Approve?';
@@ -271,6 +279,7 @@ export function addCheck(node, kind = 'program') {
   for (let n = 2; taken.has(id); n += 1) id = `check-${n}`;
   checks.push({ id, performer: defaultPerformer(kind) });
   node.checks = checks;
+  delete node.mayFail;
   return id;
 }
 

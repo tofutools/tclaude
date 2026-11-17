@@ -265,7 +265,9 @@ export function blankRow(operands, rows = []) {
 // The rows' edits, as RuleCases makes them, on a rule ({cases, else}); each
 // returns the new rule. A case whose condition the rows cannot show is left
 // alone by the row edits.
-const mapCase = (rule, index, change) => ({ ...rule, cases: (rule.cases || []).map((c, i) => (i === index ? { ...c, ...change(c) } : c)) });
+const mapCase = (rule, index, change) => ({
+  ...rule, cases: (rule.cases || []).map((c, i) => (i === index && toRows(c.when) ? { ...c, ...change(c) } : c)),
+});
 
 // withRow changes one row of case `index`: picking what it reads also
 // picks that operand's first value when it has few.

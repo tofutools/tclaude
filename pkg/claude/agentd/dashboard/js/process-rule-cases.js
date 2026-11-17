@@ -14,6 +14,7 @@ import { Button, Select } from './ui-components.js';
 const html = htm.bind(h);
 
 // A value the grammar cannot quote: it has no escapes.
+const UNQUOTABLE_HINT = 'A value cannot hold both \' and "';
 const unquotable = (value) => value.includes("'") && value.includes('"');
 
 // RuleCases renders `rule` ({cases, else}) and calls onChange({cases, else})
@@ -50,7 +51,7 @@ export function RuleCases({ rule, outcomes, operands, loopsBack = () => false, s
           ${operand.values.map((value) => html`<option key=${value} value=${value}>${value}</option>`)}
         <//>`
     : html`<${TypedField} name="gm-rule-value" type="text" class="gm-rule-value" aria-label="The value" value=${r.value} disabled=${readOnly}
-          title="A value cannot hold both ' and \""
+          title=${UNQUOTABLE_HINT}
           onChange=${(event) => { const value = event.currentTarget.value.trim(); setRow({ value: value && !unquotable(value) ? value : r.value }); }} />`}
       ${i === 0 && html`<span class="gm-rule-arrow">→</span>${outcomeSelect(cases[index].then, `Case ${index + 1} picks`, (then) => setCase(index, { then }))}`}
       ${!readOnly && (rows.length > 1 || cases.length > 1) && html`<${Button} size="sm" icon=${true} variant="ghost danger" aria-label=${rows.length > 1 ? 'Remove this condition' : 'Remove this case'}

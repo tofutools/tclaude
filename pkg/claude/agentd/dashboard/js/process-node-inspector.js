@@ -121,7 +121,7 @@ function PerformerBlock({ node, nodeId, controller, commit, readOnly, edges }) {
   }
   return html`<${PerformerEditor} path="performer" locate=${locateMain(type)} performer=${mainPerformer(node)}
     commit=${commit} readOnly=${readOnly} choiceRouting=${type !== 'decision'} omit=${[...PROMPT_FIELDS, ...BOUNDS_FIELDS]}
-    ...${type === 'decision' ? { kinds: DECISION_KINDS, setKind: (slot, kind) => setDecisionKind(model, nodeId, slot, kind) } : {}} />
+    ...${type === 'decision' ? { kinds: DECISION_KINDS, setKind: (slot, kind, draft) => setDecisionKind(model, nodeId, draft, slot, kind) } : {}} />
     ${rule && html`<${RuleBlock} node=${node} nodeId=${nodeId} model=${model} commit=${commit} readOnly=${readOnly} edges=${edges} />`}
     ${type === 'decision' && !readOnly && node.performer?.kind !== 'program' && !rule && edges.length > 1 && html`<${Button} size="sm" class="process-action process-node-add" data-node-add-decider
       title="Several decide together, and all must agree" onClick=${() => commit('deciders.add', (draft) => addGateDecider(draft, edges.map((edge) => edge.outcome)))}>+ another decider<//>`}`;
