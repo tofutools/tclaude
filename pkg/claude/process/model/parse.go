@@ -96,7 +96,7 @@ func parseSource(data []byte, authoring bool) (*ParsedTemplate, error) {
 
 	normalizeTemplate(&tmpl)
 	postDecodeDiagnostics := newTemplateDiagnosticCollector(diagnosticBudget)
-	if !normalizeFreeform(&tmpl, postDecodeDiagnostics) || authoring && !promoteLegacyJoins(&tmpl, postDecodeDiagnostics) {
+	if !normalizeFreeform(&tmpl, postDecodeDiagnostics) || authoring && (!promoteLegacyJoins(&tmpl, postDecodeDiagnostics) || !checkParamTypes(&tmpl, postDecodeDiagnostics)) {
 		diagnostics = append(diagnostics, postDecodeDiagnostics.Diagnostics()...)
 		return &ParsedTemplate{Template: &tmpl, Diagnostics: diagnostics, SourceHash: hashBytes(data)}, nil
 	}

@@ -19,18 +19,36 @@ function defaultText(value) {
   try { return JSON.stringify(value); } catch { return String(value); }
 }
 
-function parseDefault(value, type) {
-  if (type === 'boolean') {
+// PARAM_TYPES are the types the server accepts (model.ParamTypes); a type
+// is matched regardless of case, and int and bool are its short spellings.
+const PARAM_TYPES = ['string', 'number', 'integer', 'boolean', 'object', 'array'];
+const TYPE_ALIASES = { int: 'integer', bool: 'boolean' };
+
+// parseDefault turns a default typed as text into a value of the param's
+// type, as the server checks it.
+export function parseDefault(value, type) {
+  const kind = String(type || 'string').trim().toLowerCase();
+  const want = TYPE_ALIASES[kind] || kind;
+  if (want === 'string') return { value };
+  if (want === 'boolean') {
     if (value === 'true' || value === 'false') return { value: value === 'true' };
     return { error: 'must be exactly "true" or "false".' };
   }
-  if (type === 'number') {
-    if (value.trim() === '') return { error: 'must be a finite number.' };
-    const number = Number(value);
-    if (Number.isFinite(number)) return { value: number };
-    return { error: 'must be a finite number.' };
+  if (want === 'number' || want === 'integer') {
+    const number = value.trim() === '' ? NaN : Number(value);
+    if (!Number.isFinite(number)) return { error: 'must be a finite number.' };
+    if (want === 'integer' && !Number.isInteger(number)) return { error: 'must be a whole number.' };
+    return { value: number };
   }
-  return { value };
+  if (want === 'object' || want === 'array') {
+    let parsed;
+    try { parsed = JSON.parse(value); } catch { return { error: `must be a JSON ${want === 'object' ? 'object, such as {"a": 1}' : 'list, such as ["a", "b"]'}.` }; }
+    const isList = Array.isArray(parsed);
+    const isMap = parsed !== null && typeof parsed === 'object' && !isList;
+    if (want === 'array' ? isList : isMap) return { value: parsed };
+    return { error: `must be a JSON ${want === 'object' ? 'object, such as {"a": 1}' : 'list, such as ["a", "b"]'}.` };
+  }
+  return { error: `has an unknown type "${type}": use one of ${PARAM_TYPES.join(', ')}.` };
 }
 
 function nextParamName(rows) {
@@ -75,6 +93,13 @@ export function ParamsDialog({ model, onMutated, complete, confirmDiscard, regis
     if (new Set(names).size !== names.length) { setError('Parameter names must be unique.'); return false; }
     const params = Object.create(null);
     for (const row of rows) {
+      const kind = String(row.type || 'string').trim().toLowerCase();
+      // A type loaded with the template is kept as it came (validation names
+      // it); one typed here must be a type the server accepts.
+      if (row.type !== (row.param.type || 'string') && !PARAM_TYPES.includes(TYPE_ALIASES[kind] || kind)) {
+        setError(`"${row.name}" has an unknown type "${row.type}": use one of ${PARAM_TYPES.join(', ')}.`);
+        return false;
+      }
       const param = clone(row.param);
       param.type = row.type || 'string';
       if (row.description) param.description = row.description; else delete param.description;
@@ -127,7 +152,7 @@ export function ParamsDialog({ model, onMutated, complete, confirmDiscard, regis
     confirmDiscard=${confirmDiscard} onCloseError=${(closeError) => setError(`Discard confirmation failed: ${closeError?.message || String(closeError)}`)}
     guard=${{ requestClose, registerClose }} title="Template parameters">
     <p class="muted">Declare values referenced as {{ params.name }}. Renamed or deleted references are reported by live validation.</p>
-    <datalist id="process-param-types"><option value="string"></option><option value="number"></option><option value="boolean"></option></datalist>
+    <datalist id="process-param-types">${PARAM_TYPES.map((type) => html`<option value=${type}></option>`)}</datalist>
     <div ref=${list} class="process-param-list">
       ${!rowsRef.current.length && html`<div class="process-param-empty ui-empty-block">No parameters declared.</div>`}
       ${rowsRef.current.map((row, index) => html`<div key=${row.key} class="process-param-row" data-process-param=${row.name}>
