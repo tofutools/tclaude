@@ -204,3 +204,12 @@ test('advanced with reviewer tracks: four reviews alongside, each loops on its o
   assert.equal(nodes['fix-minors-or-proceed'].join, 'all', 'the lead goes on once every reviewer approved');
   assert.equal(nodes.review, undefined, 'no gate');
 });
+
+test('a step that may fail stops being one when it becomes a decision (the server refuses mayFail off a task)', () => {
+  const { view } = built.simple;
+  assert.equal(view.template.nodes.ci.mayFail, true);
+  const yours = m.changeKind(view, 'ci', 'you').view.template.nodes.ci;
+  assert.equal(yours.type, 'decision');
+  assert.equal(yours.mayFail, undefined);
+  assert.equal(m.changeKind(view, 'ci', 'agent').view.template.nodes.ci.mayFail, true, 'still a task: kept');
+});
