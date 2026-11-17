@@ -692,3 +692,20 @@ test('a rule keeps a case: the outcome every case picks cannot be removed', () =
   assert.equal(m.canRemoveOutcome(two, 'approve', 'ship'), '');
   assert.equal(m.removeOutcome(two, 'approve', 'ship').view.template.nodes.approve.performer.cases.length, 1);
 });
+
+test('a new reviewer track\'s review has a reviewer and is kept off the reviewed step, both editable', () => {
+  const plain = m.addReviewerTrack(ship, 'implement');
+  const review = plain.view.template.nodes[plain.id].performer;
+  assert.equal(review.anyone, true, 'with no reviewer role: anyone free');
+  assert.deepEqual(review.differentFrom, ['implement'], 'never the agent that implemented it');
+  const roled = m.insertAfter(ship, 'implement', m.REVIEWER_TRACK, { reviewerRole: 'reviewer' });
+  const second = m.runAlongside(roled.view, roled.id, m.REVIEWER_TRACK, { reviewerRole: 'reviewer' });
+  for (const id of [roled.id, second.id]) {
+    const performer = second.view.template.nodes[id].performer;
+    assert.equal(performer.role, 'reviewer', 'the group\'s reviewer role');
+    assert.equal(performer.anyone, undefined);
+    assert.deepEqual(performer.differentFrom, ['implement']);
+  }
+  assert.equal(m.reviewerRoleOf([{ role: 'dev', count: 2 }, { role: 'Reviewer', count: 1 }]), 'Reviewer');
+  assert.equal(m.reviewerRoleOf([{ role: 'dev', count: 2 }]), '');
+});

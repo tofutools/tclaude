@@ -3475,7 +3475,11 @@
       "name": "Review",
       "performer": {
        "kind": "agent",
-       "prompt": "Review the work. Report approved, or changes with what to fix."
+       "prompt": "Review the work. Report approved, or changes with what to fix.",
+       "anyone": true,
+       "differentFrom": [
+        "implement"
+       ]
       },
       "loops": {
        "changes": {
@@ -3647,7 +3651,11 @@
       "name": "Review",
       "performer": {
        "kind": "agent",
-       "prompt": "Review the work. Report approved, or changes with what to fix."
+       "prompt": "Review the work. Report approved, or changes with what to fix.",
+       "anyone": true,
+       "differentFrom": [
+        "implement"
+       ]
       },
       "loops": {
        "changes": {
@@ -3675,7 +3683,11 @@
       "name": "Review 2",
       "performer": {
        "kind": "agent",
-       "prompt": "Review the work. Report approved, or changes with what to fix."
+       "prompt": "Review the work. Report approved, or changes with what to fix.",
+       "anyone": true,
+       "differentFrom": [
+        "implement"
+       ]
       },
       "loops": {
        "changes": {
@@ -3876,7 +3888,11 @@
       "name": "Review",
       "performer": {
        "kind": "agent",
-       "prompt": "Review the work. Report approved, or changes with what to fix."
+       "prompt": "Review the work. Report approved, or changes with what to fix.",
+       "anyone": true,
+       "differentFrom": [
+        "implement"
+       ]
       },
       "loops": {
        "changes": {
@@ -3904,7 +3920,11 @@
       "name": "Review 2",
       "performer": {
        "kind": "agent",
-       "prompt": "Review the work. Report approved, or changes with what to fix."
+       "prompt": "Review the work. Report approved, or changes with what to fix.",
+       "anyone": true,
+       "differentFrom": [
+        "implement"
+       ]
       },
       "loops": {
        "changes": {
@@ -3931,7 +3951,11 @@
       "name": "Review 3",
       "performer": {
        "kind": "agent",
-       "prompt": "Review the work. Report approved, or changes with what to fix."
+       "prompt": "Review the work. Report approved, or changes with what to fix.",
+       "anyone": true,
+       "differentFrom": [
+        "implement"
+       ]
       },
       "loops": {
        "changes": {
@@ -4153,7 +4177,11 @@
       "name": "Review",
       "performer": {
        "kind": "agent",
-       "prompt": "Review the work. Report approved, or changes with what to fix."
+       "prompt": "Review the work. Report approved, or changes with what to fix.",
+       "anyone": true,
+       "differentFrom": [
+        "implement"
+       ]
       },
       "loops": {
        "changes": {
@@ -4181,7 +4209,11 @@
       "name": "Review 2",
       "performer": {
        "kind": "agent",
-       "prompt": "Review the work. Report approved, or changes with what to fix."
+       "prompt": "Review the work. Report approved, or changes with what to fix.",
+       "anyone": true,
+       "differentFrom": [
+        "implement"
+       ]
       },
       "loops": {
        "changes": {
@@ -4400,7 +4432,11 @@
       "name": "Review",
       "performer": {
        "kind": "agent",
-       "prompt": "Review the work. Report approved, or changes with what to fix."
+       "prompt": "Review the work. Report approved, or changes with what to fix.",
+       "anyone": true,
+       "differentFrom": [
+        "implement"
+       ]
       },
       "loops": {
        "changes": {
@@ -4428,7 +4464,11 @@
       "name": "Review 2",
       "performer": {
        "kind": "agent",
-       "prompt": "Review the work. Report approved, or changes with what to fix."
+       "prompt": "Review the work. Report approved, or changes with what to fix.",
+       "anyone": true,
+       "differentFrom": [
+        "implement"
+       ]
       },
       "loops": {
        "changes": {
@@ -4656,7 +4696,11 @@
       "name": "Review",
       "performer": {
        "kind": "agent",
-       "prompt": "Review the work. Report approved, or changes with what to fix."
+       "prompt": "Review the work. Report approved, or changes with what to fix.",
+       "anyone": true,
+       "differentFrom": [
+        "implement"
+       ]
       },
       "loops": {
        "changes": {
@@ -4684,7 +4728,11 @@
       "name": "Review 2",
       "performer": {
        "kind": "agent",
-       "prompt": "Review the work. Report approved, or changes with what to fix."
+       "prompt": "Review the work. Report approved, or changes with what to fix.",
+       "anyone": true,
+       "differentFrom": [
+        "implement"
+       ]
       },
       "loops": {
        "changes": {
@@ -4885,7 +4933,11 @@
       "name": "Review",
       "performer": {
        "kind": "agent",
-       "prompt": "Review the work. Report approved, or changes with what to fix."
+       "prompt": "Review the work. Report approved, or changes with what to fix.",
+       "anyone": true,
+       "differentFrom": [
+        "implement"
+       ]
       },
       "loops": {
        "changes": {
@@ -4925,7 +4977,11 @@
       "name": "Review 2",
       "performer": {
        "kind": "agent",
-       "prompt": "Review the work. Report approved, or changes with what to fix."
+       "prompt": "Review the work. Report approved, or changes with what to fix.",
+       "anyone": true,
+       "differentFrom": [
+        "implement"
+       ]
       },
       "loops": {
        "changes": {
@@ -5141,7 +5197,11 @@
       "name": "Review",
       "performer": {
        "kind": "agent",
-       "prompt": "Review the work. Report approved, or changes with what to fix."
+       "prompt": "Review the work. Report approved, or changes with what to fix.",
+       "anyone": true,
+       "differentFrom": [
+        "implement"
+       ]
       },
       "loops": {
        "changes": {
@@ -5169,7 +5229,11 @@
       "name": "Review 2",
       "performer": {
        "kind": "agent",
-       "prompt": "Review the work. Report approved, or changes with what to fix."
+       "prompt": "Review the work. Report approved, or changes with what to fix.",
+       "anyone": true,
+       "differentFrom": [
+        "implement"
+       ]
       }
      },
      "reviews": {
