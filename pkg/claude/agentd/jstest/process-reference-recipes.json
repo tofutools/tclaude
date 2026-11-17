@@ -1,0 +1,557 @@
+{
+ "cases": {
+  "simple": {
+   "template": {
+    "apiVersion": "tclaude.dev/v1alpha1",
+    "kind": "ProcessTemplate",
+    "id": "",
+    "name": "Simple implementation",
+    "params": {
+     "idea": {
+      "type": "string",
+      "required": true,
+      "description": "The idea to build"
+     },
+     "auto_merge": {
+      "type": "boolean",
+      "default": false,
+      "description": "Merge on green CI without asking"
+     }
+    },
+    "start": "start",
+    "nodes": {
+     "start": {
+      "type": "start"
+     },
+     "end": {
+      "type": "end"
+     },
+     "discuss-the-idea": {
+      "type": "task",
+      "name": "Discuss the idea",
+      "performer": {
+       "kind": "agent",
+       "prompt": "Discuss {{params.idea}} with the operator until the high-level idea is clear. Write it down.",
+       "lead": true
+      }
+     },
+     "idea-decided": {
+      "type": "decision",
+      "name": "Idea decided",
+      "performer": {
+       "kind": "human",
+       "ask": "Is the high-level idea decided?",
+       "choices": [
+        "decided",
+        "not-yet"
+       ]
+      },
+      "loops": {
+       "not-yet": {
+        "maxIterations": 3
+       }
+      }
+     },
+     "provision-an-implementor": {
+      "type": "task",
+      "name": "Provision an implementor",
+      "performer": {
+       "kind": "agent",
+       "prompt": "Bring in an implementor for the idea and brief it.",
+       "lead": true
+      }
+     },
+     "build-the-feature": {
+      "type": "task",
+      "name": "Build the feature",
+      "performer": {
+       "kind": "agent",
+       "prompt": "Build the agreed idea on a branch and open a draft PR.",
+       "role": "implementor"
+      }
+     },
+     "cold-review": {
+      "type": "task",
+      "name": "Cold review",
+      "performer": {
+       "kind": "agent",
+       "prompt": "Review the PR cold, as someone who did not build it. List what you find.",
+       "anyone": true,
+       "differentFrom": [
+        "build-the-feature"
+       ]
+      }
+     },
+     "iterate-or-move-on": {
+      "type": "decision",
+      "name": "Iterate or move on",
+      "performer": {
+       "kind": "agent",
+       "prompt": "Does the review warrant another round of changes, or does it move ahead?",
+       "lead": true
+      },
+      "loops": {
+       "iterate": {
+        "maxIterations": 3,
+        "onExhausted": "give-up"
+       }
+      }
+     },
+     "gave-up": {
+      "type": "end",
+      "name": "Gave up",
+      "result": "failed"
+     },
+     "ready-the-pr": {
+      "type": "task",
+      "name": "Ready the PR",
+      "performer": {
+       "kind": "agent",
+       "prompt": "Mark the PR ready for review and notify the operator with a short summary.",
+       "lead": true
+      }
+     },
+     "merge": {
+      "type": "decision",
+      "name": "Merge",
+      "performer": {
+       "kind": "agent",
+       "prompt": "Auto-merge is {{params.auto_merge}}. Answer merge only if it is true and CI on the PR passed; otherwise leave it for the operator.",
+       "lead": true
+      }
+     },
+     "merge-the-pr": {
+      "type": "task",
+      "name": "Merge the PR",
+      "performer": {
+       "kind": "agent",
+       "prompt": "Merge the PR now that CI passed.",
+       "lead": true
+      }
+     }
+    }
+   },
+   "edges": [
+    {
+     "from": "",
+     "outcome": "start",
+     "to": "start"
+    },
+    {
+     "from": "start",
+     "outcome": "next",
+     "to": "discuss-the-idea"
+    },
+    {
+     "from": "discuss-the-idea",
+     "outcome": "next",
+     "to": "idea-decided"
+    },
+    {
+     "from": "idea-decided",
+     "outcome": "decided",
+     "to": "provision-an-implementor"
+    },
+    {
+     "from": "idea-decided",
+     "outcome": "not-yet",
+     "to": "discuss-the-idea"
+    },
+    {
+     "from": "provision-an-implementor",
+     "outcome": "next",
+     "to": "build-the-feature"
+    },
+    {
+     "from": "build-the-feature",
+     "outcome": "next",
+     "to": "cold-review"
+    },
+    {
+     "from": "cold-review",
+     "outcome": "next",
+     "to": "iterate-or-move-on"
+    },
+    {
+     "from": "iterate-or-move-on",
+     "outcome": "move-on",
+     "to": "ready-the-pr"
+    },
+    {
+     "from": "iterate-or-move-on",
+     "outcome": "iterate",
+     "to": "build-the-feature"
+    },
+    {
+     "from": "iterate-or-move-on",
+     "outcome": "give-up",
+     "to": "gave-up"
+    },
+    {
+     "from": "ready-the-pr",
+     "outcome": "next",
+     "to": "merge"
+    },
+    {
+     "from": "merge",
+     "outcome": "merge",
+     "to": "merge-the-pr"
+    },
+    {
+     "from": "merge",
+     "outcome": "leave",
+     "to": "end"
+    },
+    {
+     "from": "merge-the-pr",
+     "outcome": "next",
+     "to": "end"
+    }
+   ],
+   "layout": {
+    "nodes": {}
+   }
+  },
+  "advanced": {
+   "template": {
+    "apiVersion": "tclaude.dev/v1alpha1",
+    "kind": "ProcessTemplate",
+    "id": "",
+    "name": "Advanced implementation",
+    "params": {
+     "idea": {
+      "type": "string",
+      "required": true,
+      "description": "The idea to build"
+     },
+     "allow_amend": {
+      "type": "boolean",
+      "default": false,
+      "description": "The lead may make minor changes to the criteria and design"
+     },
+     "auto_merge": {
+      "type": "boolean",
+      "default": false,
+      "description": "Merge on green CI without asking"
+     }
+    },
+    "start": "start",
+    "nodes": {
+     "start": {
+      "type": "start"
+     },
+     "end": {
+      "type": "end"
+     },
+     "discuss-the-idea": {
+      "type": "task",
+      "name": "Discuss the idea",
+      "performer": {
+       "kind": "agent",
+       "prompt": "Discuss {{params.idea}} with the operator until the high-level idea is clear. Write it down.",
+       "lead": true
+      }
+     },
+     "idea-decided": {
+      "type": "decision",
+      "name": "Idea decided",
+      "performer": {
+       "kind": "human",
+       "ask": "Is the high-level idea decided?",
+       "choices": [
+        "decided",
+        "not-yet"
+       ]
+      },
+      "loops": {
+       "not-yet": {
+        "maxIterations": 3
+       }
+      }
+     },
+     "define-acceptance-criteria": {
+      "type": "task",
+      "name": "Define acceptance criteria",
+      "performer": {
+       "kind": "agent",
+       "prompt": "Write the acceptance criteria for the decided idea.",
+       "lead": true
+      }
+     },
+     "provision-an-implementor": {
+      "type": "task",
+      "name": "Provision an implementor",
+      "performer": {
+       "kind": "agent",
+       "prompt": "Bring in an implementor and brief it with the idea and the criteria.",
+       "lead": true
+      }
+     },
+     "implement": {
+      "type": "task",
+      "name": "Implement",
+      "performer": {
+       "kind": "agent",
+       "prompt": "Implement the idea on a branch to meet the criteria, and open a draft PR.",
+       "role": "implementor"
+      }
+     },
+     "review": {
+      "type": "decision",
+      "name": "Review",
+      "loops": {
+       "changes": {
+        "maxIterations": 3,
+        "onExhausted": "give-up"
+       }
+      },
+      "deciders": [
+       {
+        "kind": "agent",
+        "prompt": "Cold review of the PR, as someone who did not build it. Approve it or ask for changes, with your reasons.",
+        "anyone": true,
+        "differentFrom": [
+         "implement"
+        ]
+       },
+       {
+        "kind": "agent",
+        "prompt": "Security review of the PR: injection, secrets, permissions. Approve it or ask for changes, with your reasons.",
+        "anyone": true,
+        "differentFrom": [
+         "implement"
+        ]
+       },
+       {
+        "kind": "agent",
+        "prompt": "Product review of the PR: is the feature usable as the idea meant it? Approve it or ask for changes, with your reasons.",
+        "anyone": true,
+        "differentFrom": [
+         "implement"
+        ]
+       },
+       {
+        "kind": "agent",
+        "prompt": "Engineering review of the PR: structure, tests, maintainability. Approve it or ask for changes, with your reasons.",
+        "anyone": true,
+        "differentFrom": [
+         "implement"
+        ]
+       }
+      ],
+      "agree": "approved"
+     },
+     "gave-up": {
+      "type": "end",
+      "name": "Gave up",
+      "result": "failed"
+     },
+     "meets-the-criteria": {
+      "type": "decision",
+      "name": "Meets the criteria",
+      "performer": {
+       "kind": "agent",
+       "prompt": "Does the implementation, as reviewed, meet the acceptance criteria?",
+       "lead": true
+      }
+     },
+     "ready-the-pr": {
+      "type": "task",
+      "name": "Ready the PR",
+      "performer": {
+       "kind": "agent",
+       "prompt": "Mark the PR ready for review and notify the operator with a short summary.",
+       "lead": true
+      }
+     },
+     "merge": {
+      "type": "decision",
+      "name": "Merge",
+      "performer": {
+       "kind": "agent",
+       "prompt": "Auto-merge is {{params.auto_merge}}. Answer merge only if it is true and CI on the PR passed; otherwise leave it for the operator.",
+       "lead": true
+      }
+     },
+     "merge-the-pr": {
+      "type": "task",
+      "name": "Merge the PR",
+      "performer": {
+       "kind": "agent",
+       "prompt": "Merge the PR now that CI passed.",
+       "lead": true
+      }
+     },
+     "amend-the-criteria": {
+      "type": "decision",
+      "name": "Amend the criteria",
+      "performer": {
+       "kind": "agent",
+       "prompt": "The operator allowed amending: {{params.allow_amend}}. Only if that is true and the gap is minor, answer amend; otherwise rework.",
+       "lead": true
+      },
+      "loops": {
+       "rework": {
+        "maxIterations": 3,
+        "onExhausted": "give-up"
+       }
+      }
+     },
+     "amend-criteria-and-design": {
+      "type": "task",
+      "name": "Amend criteria and design",
+      "performer": {
+       "kind": "agent",
+       "prompt": "Make the minor changes to the criteria and the design, and note them for the operator.",
+       "lead": true
+      }
+     },
+     "fix-minors-or-proceed": {
+      "type": "decision",
+      "name": "Fix minors or proceed",
+      "performer": {
+       "kind": "agent",
+       "prompt": "The reviewers approved. Are their minor findings worth fixing first?",
+       "lead": true
+      }
+     },
+     "fix-the-minors": {
+      "type": "task",
+      "name": "Fix the minors",
+      "performer": {
+       "kind": "agent",
+       "prompt": "Fix the minor review findings on the same branch.",
+       "role": "implementor",
+       "sameAs": "implement"
+      }
+     }
+    }
+   },
+   "edges": [
+    {
+     "from": "",
+     "outcome": "start",
+     "to": "start"
+    },
+    {
+     "from": "start",
+     "outcome": "next",
+     "to": "discuss-the-idea"
+    },
+    {
+     "from": "discuss-the-idea",
+     "outcome": "next",
+     "to": "idea-decided"
+    },
+    {
+     "from": "idea-decided",
+     "outcome": "decided",
+     "to": "define-acceptance-criteria"
+    },
+    {
+     "from": "idea-decided",
+     "outcome": "not-yet",
+     "to": "discuss-the-idea"
+    },
+    {
+     "from": "define-acceptance-criteria",
+     "outcome": "next",
+     "to": "provision-an-implementor"
+    },
+    {
+     "from": "provision-an-implementor",
+     "outcome": "next",
+     "to": "implement"
+    },
+    {
+     "from": "implement",
+     "outcome": "next",
+     "to": "review"
+    },
+    {
+     "from": "review",
+     "outcome": "approved",
+     "to": "fix-minors-or-proceed"
+    },
+    {
+     "from": "review",
+     "outcome": "changes",
+     "to": "implement"
+    },
+    {
+     "from": "review",
+     "outcome": "give-up",
+     "to": "gave-up"
+    },
+    {
+     "from": "meets-the-criteria",
+     "outcome": "meets",
+     "to": "ready-the-pr"
+    },
+    {
+     "from": "ready-the-pr",
+     "outcome": "next",
+     "to": "merge"
+    },
+    {
+     "from": "merge",
+     "outcome": "merge",
+     "to": "merge-the-pr"
+    },
+    {
+     "from": "merge",
+     "outcome": "leave",
+     "to": "end"
+    },
+    {
+     "from": "merge-the-pr",
+     "outcome": "next",
+     "to": "end"
+    },
+    {
+     "from": "meets-the-criteria",
+     "outcome": "misses",
+     "to": "amend-the-criteria"
+    },
+    {
+     "from": "amend-the-criteria",
+     "outcome": "amend",
+     "to": "amend-criteria-and-design"
+    },
+    {
+     "from": "amend-the-criteria",
+     "outcome": "rework",
+     "to": "implement"
+    },
+    {
+     "from": "amend-the-criteria",
+     "outcome": "give-up",
+     "to": "gave-up"
+    },
+    {
+     "from": "amend-criteria-and-design",
+     "outcome": "next",
+     "to": "ready-the-pr"
+    },
+    {
+     "from": "fix-minors-or-proceed",
+     "outcome": "proceed",
+     "to": "meets-the-criteria"
+    },
+    {
+     "from": "fix-minors-or-proceed",
+     "outcome": "fix-minors",
+     "to": "fix-the-minors"
+    },
+    {
+     "from": "fix-the-minors",
+     "outcome": "next",
+     "to": "meets-the-criteria"
+    }
+   ],
+   "layout": {
+    "nodes": {}
+   }
+  }
+ }
+}

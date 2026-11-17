@@ -18330,6 +18330,7 @@ body.wizard .gq-fallback { background: #1a1430; border-color: rgba(122, 93, 176,
 .gm-row { display: flex; align-items: center; gap: 8px; }
 .gm-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 8px 14px; border-top: 1px solid #21262d; font-size: 12px; }
 .gm-foot .gq-error, .gm-card > .gq-error { margin: 0; }
+.gm-params { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; }
 .gm-card > .gq-error { padding: 0 14px 10px; }
 .gq-saved-editing { font-size: 11px; padding: 1px 8px; border-radius: 999px; background: #1f6feb; color: #fff; }
 body.wizard .gm-head, body.wizard .gm-foot { border-color: rgba(122, 93, 176, 0.3); }

@@ -251,8 +251,22 @@ export function canRunAlongside(view, id) {
   // The fork must close where it opened: one way out of the step, into a
   // node nothing else enters.
   if (outgoing(view, id).length !== 1) return 'its other outcomes would leave the parallel branch';
-  if (incoming(view, main.to).length !== 1) return 'the next step is already where several paths meet';
+  if (incoming(view, main.to).length !== 1 && !widensFork(view, id)) return 'the next step is already where several paths meet';
   return '';
+}
+
+// widensFork is the parallel fork a one-step branch id hangs off, when
+// running another step alongside it adds a branch to that same fork and
+// join (three reviewers side by side, not a fork inside a fork); else ''.
+function widensFork(view, id) {
+  const [from] = before(view, id);
+  if (view.template.nodes[from]?.type !== 'parallel') return '';
+  const main = mainEdge(view, id);
+  if (!main || !view.template.nodes[main.to]?.join) return '';
+  // Every branch of the fork must arrive at that join, or the new one would
+  // close a scope the others leave open.
+  const branches = outgoing(view, from);
+  return branches.every((edge) => incoming(view, main.to).some((into) => into.from === edge.to)) ? from : '';
 }
 
 // syncLoops keeps each decision's loop bounds in step with its edges after
@@ -535,13 +549,20 @@ export function branch(view, id, kind) {
 
 // runAlongside runs a new step in parallel with `id`: the edge into `id`
 // goes to a new parallel node that fans out to both, and both join at what
-// came after `id`.
+// came after `id`. On a one-step branch of a fork already there, the new step
+// is one more branch of that fork, joining where the others do.
 export function runAlongside(view, id, kind) {
   const why = canRunAlongside(view, id);
   if (why) throw new Error(why);
   const next = copyView(view);
   const main = mainEdge(next, id);
   const added = addNode(next, newStepNode(kind));
+  const widened = incoming(next, main.to).length > 1 ? widensFork(next, id) : '';
+  if (widened) {
+    next.edges.push({ from: widened, outcome: added, to: added });
+    linkOn(next, added, kind, main.to);
+    return { view: syncLoops(next), id: added, fork: widened };
+  }
   const fork = addNode(next, { type: 'parallel', name: 'Together' }, 'together');
   // Every edge in comes from the one step before it (a decision's answers
   // may be several): they all lead to the fork now.
@@ -782,6 +803,39 @@ export function renameOutcome(view, id, outcome, name) {
   if (decision.performer?.kind === 'human') decision.performer.choices = (decision.performer.choices || []).map((c) => (c === outcome ? value : c));
   if (decision.agree === outcome) decision.agree = value;
   return { view: syncLoops(next), id };
+}
+
+// PARAM_REF is a {{params.x}} reference, as the server reads one.
+const PARAM_REF = /\{\{\s*params\.([A-Za-z_][A-Za-z0-9_]*)\s*\}\}/g;
+
+// declareParams declares every parameter the steps reference and the process
+// does not declare yet, as a required string: typing {{allow_amend}} in a
+// step's text is how a param is added inline, and its type and default are
+// then set in Params (setParams). Every inline edit lands through it.
+export function declareParams(view) {
+  const found = [];
+  for (const node of Object.values(view.template?.nodes || {})) {
+    for (const performer of [node?.performer, ...(node?.deciders || [])]) {
+      for (const text of [performer?.prompt, performer?.ask, performer?.run, ...(performer?.args || [])]) {
+        if (typeof text !== 'string') continue;
+        for (const match of text.matchAll(PARAM_REF)) if (!found.includes(match[1])) found.push(match[1]);
+      }
+    }
+  }
+  const missing = found.filter((name) => !view.template.params?.[name]);
+  if (!missing.length) return view;
+  const next = copyView(view);
+  next.template.params = { ...(next.template.params || {}) };
+  for (const name of missing) next.template.params[name] = { type: 'string', required: true };
+  return next;
+}
+
+// setParams replaces the process's parameters (the Params dialog's Apply).
+export function setParams(view, params) {
+  const next = copyView(view);
+  next.template.params = clone(params || {});
+  if (!Object.keys(next.template.params).length) delete next.template.params;
+  return { view: next };
 }
 
 // updateStep applies a step-list edit (setStepName, setStepText, setStepWho)

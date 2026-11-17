@@ -359,10 +359,12 @@ test('a loop keeps a way on, and its body only leaves through a decision', () =>
     'the main path is a decision\'s first answer that does not loop');
 });
 
-test('alongside is offered only where the fork can close; joins move with the paths that meet', () => {
+test('alongside is offered only where the fork can close or widen; joins move with the paths that meet', () => {
   assert.match(m.canRunAlongside(ship, 'approve'), /other outcomes/, 'its other answers would leave the branch');
   const fork = fill(m.runAlongside(ship, 'review', 'agent'));
-  assert.match(m.canRunAlongside(fork, 'review'), /several paths meet/, 'a branch of an open fork cannot fork again at its join');
+  assert.equal(m.canRunAlongside(fork, 'review'), '', 'a one-step branch of a fork widens that fork');
+  const longer = m.insertAfter(fork, 'review', 'agent');
+  assert.match(m.canRunAlongside(longer.view, longer.id), /several paths meet/, 'the last step of a longer branch cannot fork again at its join');
   const before = m.insertBefore(fork, 'approve', 'agent');
   assert.equal(before.view.template.nodes[before.id].join, 'all', 'the new step is where the paths meet now');
   assert.equal(before.view.template.nodes.approve.join, undefined);
