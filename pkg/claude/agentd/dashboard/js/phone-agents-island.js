@@ -11,9 +11,9 @@
 // Every group as the desktop's tree nests them (phone-agents-model.js
 // agentsLayout): subgroups indented on a guide line, a worker under the
 // agent that spawned it, a group with nothing online dimmed and folded until
-// unfolded. A tap on a group's caret folds it (remembered, TREE_FOLD) and
-// one on its name opens its page (GroupPage): its group actions, its
-// subgroups and its members. Under a header, folded too, a line counts its
+// unfolded. A tap on a group's header folds it (remembered, TREE_FOLD), as
+// a tap on an agent does its one thing; a touch and hold, or its ⋯, opens
+// its page (GroupPage): its group actions, its subgroups and its members. Under a header, folded too, a line counts its
 // agents by state. The sliders in the top bar open the View sheet
 // (ViewSheet): Tree or List, Show offline / empty / archived, the order of
 // the groups, and Reset; the sliders carry a dot when any is off its
@@ -267,28 +267,34 @@ const Tag = ({ children }) => html`<span class="phone-agents-tag">${children}</s
 const Chevron = () => html`<svg class="phone-agents-chev-icon" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
   <path d="M6 3.5 10.5 8 6 12.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" /></svg>`;
 
-// GroupHead is a group's header: the caret,
-// a 44px zone left of the name, folds it; the name opens its page (the
-// agents in no group have no page: their name folds them too). A group with
-// nothing to fold has no caret. Under it, folded too, its state summary.
+// GroupHead is a group's header (tk_3aa23770). A tap anywhere on it (the
+// caret, the name, the counts, the space after) folds or unfolds it, as a tap
+// on an agent row does its one thing; a touch and hold, or its ⋯, opens the
+// group's page (its menu), through the shared useHold as an agent row's menu.
+// ＋ Agent and Board › stay their own taps. The agents in no group have no
+// page; a group with nothing to fold opens its page on a tap. Under it,
+// folded too, its state summary.
 function GroupHead({ node, folded, onFold, onOpen, onSpawn }) {
   const canFold = node.total > 0 || (node.children || []).length > 0;
+  const openPage = node.group ? () => onOpen() : null;
+  const { holding, handlers } = useHold(openPage);
+  const tap = canFold ? onFold : openPage;
   const words = `${node.name}, ${node.live} of ${node.total} online${node.summary.length ? `: ${summaryText(node)}` : ''}${node.empty ? ', empty' : ''}${node.archived ? ', archived' : ''}`;
   const name = html`<span class="phone-agents-name">${node.name}</span><span class="phone-agents-count">${node.live}/${node.total}</span>
     ${node.empty && html`<${Tag}>empty<//>`}${node.archived && html`<${Tag}>archived<//>`}`;
-  return html`<h2 class="phone-section-head ui-eyebrow phone-agents-head">
+  return html`<h2 class=${`phone-section-head ui-eyebrow phone-agents-head${holding ? ' phone-holding' : ''}`}>
     ${canFold
       ? html`<button data-ui-exempt type="button" class="phone-agents-caret-btn" aria-expanded=${folded ? 'false' : 'true'}
-          aria-label=${`${folded ? 'Unfold' : 'Fold'} ${node.name}`} onClick=${onFold}><${Chevron} /></button>`
+          aria-label=${`${folded ? 'Unfold' : 'Fold'} ${node.name}`} tabindex="-1" ...${handlers} onClick=${onFold}><${Chevron} /></button>`
       : html`<span class="phone-agents-caret-btn" aria-hidden="true"></span>`}
-    ${node.group
-      ? html`<button data-ui-exempt type="button" class="phone-agents-fold" aria-label=${`${words}. Open its page`} onClick=${onOpen}>${name}</button>`
-      : html`<button data-ui-exempt type="button" class="phone-agents-fold" aria-expanded=${folded ? 'false' : 'true'}
-          aria-label=${`${words}. ${folded ? 'Unfold' : 'Fold'}`} onClick=${onFold}>${name}</button>`}
+    <button data-ui-exempt type="button" class="phone-agents-fold phone-holdable" ...${handlers}
+      aria-expanded=${canFold ? (folded ? 'false' : 'true') : undefined}
+      aria-label=${`${words}. ${canFold ? (folded ? 'Unfold' : 'Fold') : 'Open its page'}`} onClick=${tap}>${name}</button>
     ${node.group && !node.archived && onSpawn && html`<button data-ui-exempt type="button" class="phone-link phone-agents-spawn-link" data-agent-add
       aria-label=${`New agent in ${node.name}`} aria-haspopup="dialog" onClick=${() => onSpawn(node.name)}>＋ Agent</button>`}
     ${node.group && !node.archived && html`<button data-ui-exempt type="button" class="phone-link phone-agents-board"
       aria-label=${`${node.name}'s board`} onClick=${() => openBoardGroup(node.name)}>Board ›</button>`}
+    ${openPage && html`<${IconButton} icon="⋯" label=${`${node.name}: more`} class="phone-agents-more" onClick=${openPage} />`}
   </h2>
   <${Summary} g=${node} />`;
 }
