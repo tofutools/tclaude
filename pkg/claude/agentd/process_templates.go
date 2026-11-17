@@ -649,8 +649,10 @@ func handleProcessValidate(w http.ResponseWriter, r *http.Request) {
 			diagnostics = append(diagnostics, templateRefDiagnostics(parsed.Template, processSubprocessResolver(r.Context(), fs))...)
 		}
 		diagnostics = append(diagnostics, spawnProfileDiagnostics(parsed.Template)...)
-		diagnostics = append(diagnostics, waitStepDiagnostics(parsed.Template)...)
 	}
+	// Said even while the draft has other problems: a just-placed wait step
+	// is incomplete, and the operator should hear it can't run before finishing it.
+	diagnostics = append(diagnostics, waitStepDiagnostics(parsed.Template)...)
 	writeProcessJSON(w, http.StatusOK, map[string]any{
 		"sourceHash": parsed.SourceHash, "semanticHash": parsed.SemanticHash,
 		"diagnostics": diagnostics,

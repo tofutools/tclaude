@@ -57,4 +57,6 @@ nodes:
 	without := strings.Replace(strings.Replace(withWait, "next: waiter", "next: done", 1),
 		"  waiter:\n    type: wait\n    wait: { duration: 1h }\n    next: done\n", "", 1)
 	assert.Empty(t, problems(without))
+	// A wait step just placed, with no duration yet, is named too, alongside its other problems.
+	assert.Contains(t, problems(strings.Replace(withWait, "    wait: { duration: 1h }\n", "", 1)), "waiter")
 }
