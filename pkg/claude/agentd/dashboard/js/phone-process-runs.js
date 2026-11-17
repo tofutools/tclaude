@@ -22,7 +22,7 @@ import { gateNodeOf, useRunDetail, verdictPresentation } from './groups-run-focu
 import { openPhoneSheet } from './phone-sheet.js';
 import { DiscardAsk, useDraftGuard } from './phone-draft-guard.js';
 import { Button, Textarea } from './ui-components.js';
-import { Avatar, Card, Empty, ErrorNote, errorText, Section, StatePill } from './phone-ui.js';
+import { Avatar, ButtonRow, Card, Empty, ErrorNote, Section, SheetTitle, StatePill, errorText } from './phone-ui.js';
 import { usePhonePage } from './phone-page.js';
 import { relTime } from './helpers.js';
 import { DesktopOnlyNote } from './phone-desktop-only.js';
@@ -273,7 +273,7 @@ function GateNoteSheet({ label, title, onSend, close }) {
     }
   };
   return html`<div ref=${root} class="phone-gate-sheet">
-    <h2 class="phone-sheet-title">${title}</h2>
+    <${SheetTitle}>${title}<//>
     <${Textarea} class="phone-gate-note" rows="3" maxlength="4096" placeholder="Note for the record (optional)"
       aria-label="Note for the record (optional)" value=${note} disabled=${busy} onInput=${(event) => setNote(event.currentTarget.value)} />
     ${error && html`<${ErrorNote}>${error}<//>`}
@@ -330,14 +330,13 @@ function GateVerdicts({ run, decision, node, onDecide, since = '', tally = '' })
     ${tally && html`<p class="phone-gate-since" data-run-gate=${gateNodeOf(node.id)}>${tally}</p>`}
     ${decided
       ? html`<p class="phone-gate-done" role="status">Recorded: ${label(decided)}</p>`
-      : html`<div class="phone-btns">
-        ${verdicts.map((verdict) => APPROVING.test(verdict)
-          ? html`<${Button} key=${verdict} class="phone-btn phone-btn-ok phone-btn-grow" data-run-verdict=${verdict} disabled=${!!busy}
-              onClick=${() => now(verdict)}>${busy === verdict ? '…' : label(verdict)}<//>`
-          : html`<${Button} key=${verdict} class=${`phone-btn${REQUESTING.test(verdict) ? ' phone-btn-no' : ''} phone-btn-grow`} data-run-verdict=${verdict} disabled=${!!busy} aria-haspopup="dialog"
-              onClick=${() => openPhoneSheet({ label: `${runName(run)}: ${node.label}`, Body: GateNoteSheet,
-                props: { label: label(verdict), title: `${node.label}: ${label(verdict)}`, onSend: send(verdict) } })}>${label(verdict)}…<//>`)}
-      </div>`}
+      : html`<${ButtonRow} buttons=${verdicts.map((verdict) => (APPROVING.test(verdict)
+          ? { key: verdict, label: busy === verdict ? '…' : label(verdict), tone: 'ok', disabled: !!busy,
+              attrs: { 'data-run-verdict': verdict }, onClick: () => now(verdict) }
+          : { key: verdict, label: `${label(verdict)}…`, tone: REQUESTING.test(verdict) ? 'no' : '', disabled: !!busy,
+              attrs: { 'data-run-verdict': verdict, 'aria-haspopup': 'dialog' },
+              onClick: () => openPhoneSheet({ label: `${runName(run)}: ${node.label}`, Body: GateNoteSheet,
+                props: { label: label(verdict), title: `${node.label}: ${label(verdict)}`, onSend: send(verdict) } }) }))} />`}
     ${!verdicts.length && html`<p class="phone-gate-done">This gate offers no verdicts.</p>`}
     ${error && html`<${ErrorNote}>${error}<//>`}
   </div>`;

@@ -89,15 +89,10 @@
 
 /* The short spawn sheet. */
 :root[data-layout="phone"] .phone-agents-spawn { display: flex; flex-direction: column; gap: 10px; }
-:root[data-layout="phone"] .phone-agents-sheet-title { margin: 4px 4px 0; color: var(--ui-text-strong); font-weight: 600; }
 :root[data-layout="phone"] .phone-agents-label { display: flex; flex-direction: column; gap: 4px; color: var(--ui-muted-text); font-size: 13px; }
 :root[data-layout="phone"] .phone-agents-field { width: 100%; box-sizing: border-box; min-height: var(--phone-tap); font-size: 16px; }
 :root[data-layout="phone"] textarea.phone-agents-field { min-height: 96px; resize: vertical; }
 
-:root[data-layout="phone"] .phone-agent-sheet-name {
-  flex: 1; min-width: 0; margin: 0; font-size: 18px; color: var(--ui-text-strong);
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-}
 :root[data-layout="phone"] .phone-agent-sheet-meta { margin: 6px 0 0; color: var(--ui-muted-text); font-size: 13px; overflow-wrap: anywhere; }
 :root[data-layout="phone"] .phone-agent-sheet-meta a { color: var(--ui-focus); }
 :root[data-layout="phone"] .phone-agent-cwd { font-family: ui-monospace, monospace; font-size: 12px; }
@@ -146,7 +141,6 @@
    radios, Reset in its head. */
 :root[data-layout="phone"] .phone-agents-view { display: flex; flex-direction: column; }
 :root[data-layout="phone"] .phone-agents-view-head { display: flex; align-items: center; }
-:root[data-layout="phone"] .phone-agents-view-head .phone-agents-sheet-title { flex: 1; margin: 0; font-size: 17px; }
 :root[data-layout="phone"] .phone-agents-view-reset { min-height: var(--phone-tap); font-size: 14px; }
 :root[data-layout="phone"] .phone-agents-view-reset:disabled { color: var(--ui-muted-text); opacity: .5; cursor: default; }
 :root[data-layout="phone"] .phone-agents-seg {

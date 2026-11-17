@@ -19,13 +19,12 @@ import { signal } from '@preact/signals';
 import htm from 'htm';
 import { companionAgents } from './companion-model.js';
 import { boardGroups } from './phone-shell-model.js';
-import { ButtonRow, Card, ChipRow, Empty, ErrorNote, errorText, Section, SheetHead } from './phone-ui.js';
+import { ButtonRow, Card, ChipRow, Empty, ErrorNote, Section, SheetHead, SheetTitle, errorText } from './phone-ui.js';
 import { usePhoneBar } from './phone-page.js';
 import { openPhoneSheet, requestClosePhoneSheet } from './phone-sheet.js';
 import { DiscardAsk, useDraftGuard } from './phone-draft-guard.js';
 import { createTaskboardApi, localLimitHooks } from './taskboard-actions.js';
 import { newCommentKey } from './groups-taskboard-comments.js';
-import { Button } from './ui-components.js';
 import {
   DONE, boardColumns, cardView, columnMoves, columnSections, defaultColumn, positionMoves, sectionPeers,
 } from './phone-board-model.js';
@@ -103,7 +102,7 @@ export function MoveSheet({ task, entry, peers, api, source, close }) {
     await boardWrite(source, run, failText);
   };
   return html`<div class="phone-board-move">
-    <p class="phone-board-sheet-title">${task.title}</p>
+    <${SheetTitle}>${task.title}<//>
     <${SheetHead}>Move to<//>
     <ul class="phone-menu">
       ${columns.map((column) => html`<li key=${column.key}>
@@ -149,7 +148,7 @@ export function TextSheet({ title, label, placeholder = '', send = 'Send', multi
     if (done) close();
   };
   return html`<form class="phone-board-text" onSubmit=${submit}>
-    <p class="phone-board-sheet-title">${title}</p>
+    <${SheetTitle}>${title}<//>
     ${multiline
       ? html`<textarea name="ui-input" ref=${field} class="ui-input phone-board-field" rows="4" aria-label=${label} placeholder=${placeholder}
           value=${text} onInput=${(event) => setText(event.currentTarget.value)}></textarea>`
@@ -157,10 +156,10 @@ export function TextSheet({ title, label, placeholder = '', send = 'Send', multi
           value=${text} onInput=${(event) => setText(event.currentTarget.value)} />`}
     ${guard.asking
       ? html`<${DiscardAsk} what=${what} guard=${guard} close=${close} />`
-      : html`<div class="phone-btns">
-          <${Button} class="phone-btn phone-btn-grow" onClick=${requestClosePhoneSheet}>Cancel<//>
-          <${Button} type="submit" class="phone-btn phone-btn-grow phone-btn-pri" disabled=${busy || !text.trim()}>${busy ? 'Sending…' : send}<//>
-        </div>`}
+      : html`<${ButtonRow} buttons=${[
+          { key: 'cancel', label: 'Cancel', onClick: requestClosePhoneSheet },
+          { key: 'send', label: busy ? 'Sending…' : send, tone: 'pri', type: 'submit', disabled: busy || !text.trim() },
+        ]} />`}
   </form>`;
 }
 
@@ -193,15 +192,15 @@ export function TaskCard({ task, view, onOpen, onMove, onComment, onAnswer, run 
       ${view.tags.map((tag) => html`<span key=${tag.key} class=${`phone-board-tag${tag.tone ? ` phone-board-tag-${tag.tone}` : ''}`}>${tag.text}</span>`)}
     </div>`}
     ${q?.inline
-      ? html`<div class="phone-btns phone-board-options" role="group" aria-label=${`Answer: ${q.title}`}>
-          ${q.options.map((option) => html`<${Button} key=${option.key} class="phone-btn" title=${option.recommended ? 'Recommended' : undefined}
-            onClick=${() => onAnswer(q, option)}>${option.recommended && html`<span class="phone-board-star" aria-label="recommended">★ </span>`}${option.label}<//>`)}
-        </div>`
-      : !view.done && html`<div class="phone-btns">
-          ${q && html`<${Button} class="phone-btn phone-btn-pri" onClick=${onOpen}>Answer…<//>`}
-          <${Button} class="phone-btn" aria-haspopup="dialog" onClick=${onMove}>Move ▸<//>
-          <${Button} class="phone-btn" aria-haspopup="dialog" onClick=${onComment}>Comment<//>
-        </div>`}
+      ? html`<${ButtonRow} class="phone-board-options" label=${`Answer: ${q.title}`} buttons=${q.options.map((option) => ({
+          key: option.key, grow: false, title: option.recommended ? 'Recommended' : undefined, onClick: () => onAnswer(q, option),
+          label: html`${option.recommended && html`<span class="phone-board-star" aria-label="recommended">★ </span>`}${option.label}`,
+        }))} />`
+      : !view.done && html`<${ButtonRow} buttons=${[
+          ...(q ? [{ key: 'answer', label: 'Answer…', tone: 'pri', grow: false, onClick: onOpen }] : []),
+          { key: 'move', label: 'Move ▸', grow: false, attrs: { 'aria-haspopup': 'dialog' }, onClick: onMove },
+          { key: 'comment', label: 'Comment', grow: false, attrs: { 'aria-haspopup': 'dialog' }, onClick: onComment },
+        ]} />`}
   <//>`;
 }
 

@@ -11,7 +11,7 @@ import { useState } from 'preact/hooks';
 import htm from 'htm';
 import { openPhoneSheet } from './phone-sheet.js';
 import { Button } from './ui-components.js';
-import { ErrorNote } from './phone-ui.js';
+import { ErrorNote, SheetTitle } from './phone-ui.js';
 
 const html = htm.bind(h);
 
@@ -42,7 +42,7 @@ export function TypeSheet({ name = 'the terminal', type, close }) {
     close();
   };
   return html`<div class="phone-compose phone-type">
-    <div class="phone-compose-head"><h2 class="phone-compose-title">Type into ${name}</h2></div>
+    <div class="phone-compose-head"><${SheetTitle} clip>Type into ${name}<//></div>
     <textarea name="terminal-input" data-sheet-focus class="phone-compose-body" rows="3" maxlength=${TYPE_MAX_BYTES}
       aria-label=${`Text to type into ${name}`} placeholder="A command, typed as on a keyboard…" autocapitalize="off"
       autocomplete="off" autocorrect="off" spellcheck=${false} enterkeyhint="enter"

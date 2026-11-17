@@ -142,6 +142,34 @@ test('Empty and ErrorNote are the one quiet state and the one error of every pho
   assert.equal(mod.errorText('the task', '  not found '), 'Could not read the task: not found');
 });
 
+test('SheetTitle is every sheet\'s title; ButtonRow takes a submit, hooks and a group name', async (t) => {
+  const { harness, mod } = await load(t, 'js/phone-ui.js');
+  const { html } = harness;
+  const clicked = [];
+  const { container } = await harness.mount(html`<form>
+    <${mod.SheetTitle}>Move to<//><${mod.SheetTitle} clip>A very long agent name<//>
+    <${mod.ButtonRow} label="Answer: Which carrier?" buttons=${[
+      { key: 'dhl', label: 'DHL', grow: false, attrs: { 'aria-pressed': 'true', 'data-run-verdict': 'dhl' }, onClick: () => clicked.push('dhl') },
+      { key: 'send', label: 'Send', tone: 'pri', type: 'submit' },
+    ]} />
+  </form>`);
+  const titles = [...container.querySelectorAll('h2.phone-sheet-title')];
+  assert.equal(titles.length, 2);
+  assert.ok(titles[1].classList.contains('phone-sheet-title-clip'), 'clip keeps a title to one line');
+  const row = container.querySelector('.phone-btns');
+  assert.equal(row.getAttribute('role'), 'group');
+  assert.equal(row.getAttribute('aria-label'), 'Answer: Which carrier?');
+  const [dhl, send] = row.querySelectorAll('button');
+  assert.equal(dhl.getAttribute('aria-pressed'), 'true');
+  assert.equal(dhl.dataset.runVerdict, 'dhl');
+  assert.ok(!dhl.classList.contains('phone-btn-grow'), 'grow: false');
+  assert.equal(send.getAttribute('type'), 'submit');
+  assert.equal(dhl.getAttribute('type'), 'button');
+  assert.ok(send.classList.contains('phone-btn-pri') && send.classList.contains('phone-btn-grow'));
+  await harness.act(() => dhl.click());
+  assert.deepEqual(clicked, ['dhl']);
+});
+
 test('pillTone maps agent states onto the mock\'s pill colours', async (t) => {
   const { mod } = await load(t, 'js/phone-ui.js');
   assert.deepEqual(['asking', 'working', 'idle', 'offline', 'error', 'approval', 'key', 'mystery'].map(mod.pillTone),

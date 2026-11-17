@@ -37,11 +37,11 @@ import { DiscardAsk, useDraftGuard } from './phone-draft-guard.js';
 import { AgentMenu } from './phone-agent-menu.js';
 import { useHold } from './phone-hold.js';
 import { usePhoneBar, usePhonePage } from './phone-page.js';
-import { Avatar, ButtonRow, Card, ChipRow, Empty, RowMore, Section, SheetHead, StatePill } from './phone-ui.js';
+import { Avatar, ButtonRow, Card, ChipRow, Empty, RowMore, Section, SheetHead, SheetTitle, StatePill } from './phone-ui.js';
 import { ContextMeter } from './context-meter.js';
 import { dashPrefs } from './prefs.js';
 import { openBoardGroup } from './phone-board.js';
-import { Button, Check, Switch } from './ui-components.js';
+import { Check, Switch } from './ui-components.js';
 import { shellToast } from './shell-state.js';
 import { agentFocus, doneAgentFocus } from './agent-route.js';
 import { groupShellOffer, openGroupShell } from './phone-open-shell.js';
@@ -151,7 +151,7 @@ export function SpawnSheet({ state, group: initial, fetchImpl = globalThis.fetch
     }
   };
   return html`<form ref=${form} class="phone-agents-spawn" onSubmit=${submit}>
-    <p class="phone-agents-sheet-title">New agent</p>
+    <${SheetTitle}>New agent<//>
     <label class="phone-agents-label">Group
       <select name="ui-select" class="ui-select phone-agents-field" value=${group} onChange=${(event) => setGroup(event.currentTarget.value)}>
         ${groups.map((g) => html`<option key=${g.name} value=${g.name} selected=${g.name === group}>${g.name}</option>`)}
@@ -173,10 +173,10 @@ export function SpawnSheet({ state, group: initial, fetchImpl = globalThis.fetch
     </label>
     ${guard.asking
       ? html`<${DiscardAsk} what="this prompt" guard=${guard} close=${close} />`
-      : html`<div class="phone-btns">
-          <${Button} class="phone-btn" onClick=${() => { close(); openFull(group, { initialMessage: prompt.trim(), name: name.trim(), profileName: profile }); }}>All options…<//>
-          <${Button} type="submit" class="phone-btn phone-btn-pri phone-btn-grow" disabled=${busy || !prompt.trim()}>${busy ? 'Spawning…' : 'Spawn'}<//>
-        </div>`}
+      : html`<${ButtonRow} buttons=${[
+          { key: 'all', label: 'All options…', grow: false, onClick: () => { close(); openFull(group, { initialMessage: prompt.trim(), name: name.trim(), profileName: profile }); } },
+          { key: 'spawn', label: busy ? 'Spawning…' : 'Spawn', tone: 'pri', type: 'submit', disabled: busy || !prompt.trim() },
+        ]} />`}
   </form>`;
 }
 
@@ -237,7 +237,7 @@ export function ViewSheet({ prefs, onChange }) {
     <${Switch} name=${`agents-view-${key}`} checked=${settings[key]} onChange=${(event) => set({ [key]: event.currentTarget.checked })} />
   </label>`;
   return html`<div class="phone-agents-view" data-agents-view>
-    <div class="phone-agents-view-head"><h2 class="phone-agents-sheet-title">View</h2>
+    <div class="phone-agents-view-head"><${SheetTitle}>View<//>
       <button data-ui-exempt type="button" class="phone-link phone-agents-view-reset" disabled=${atDefaults(settings)}
         onClick=${() => set({ ...VIEW_DEFAULTS })}>Reset</button></div>
     <${SheetHead}>Layout<//>

@@ -30,7 +30,7 @@ import { diagnosticsEnabled, setDiagnosticsEnabled } from './terminal-diagnostic
 import { contextFigure } from './context-meter.js';
 import htm from 'htm';
 import { agentGroups, findRow } from './phone-agents-model.js';
-import { Empty, SheetHead, StatePill } from './phone-ui.js';
+import { Empty, SheetHead, SheetTitle, StatePill } from './phone-ui.js';
 import { harnessCanCompact, harnessCanRemoteControl } from './helpers.js';
 import { claudeAppOffer, pageCanToggleRemote } from './claude-app.js';
 import { agentShellEntries, openAgentShell } from './phone-open-shell.js';
@@ -150,7 +150,7 @@ export function AgentMenu({ state, order, actions, agentKey, groupKey = '', here
         data-act=${entry.key} disabled=${!!entry.disabled} onClick=${run(entry.key)}>
         <span class="phone-agent-menu-text"><span>${entry.label}</span>${entry.sub && html`<small>${entry.sub}</small>`}</span></button>`}</li>`;
   return html`<div class="phone-agent-sheet">
-    <div class="phone-agent-line"><h2 class="phone-agent-sheet-name">${row.name}</h2>
+    <div class="phone-agent-line"><${SheetTitle} clip>${row.name}<//>
       <${StatePill} tone=${row.pill.tone} class="phone-agent-state">${row.pill.text}<//></div>
     <p class="phone-agent-sheet-meta">${[group.group ? group.name : 'No group', row.role, row.harness, contextFigure(row.member?.state)].filter(Boolean).join(' · ')}</p>
     ${row.detail && html`<p class="phone-agent-why">${row.detail}</p>`}

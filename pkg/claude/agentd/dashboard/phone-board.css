@@ -30,7 +30,6 @@
 :root[data-layout="phone"] .phone-board-star { color: var(--phone-warn); }
 
 /* Sheets: Move ▸, Comment, Add a task, the group picker. */
-:root[data-layout="phone"] .phone-board-sheet-title { margin: 4px 4px 8px; color: var(--ui-text-strong); font-weight: 600; overflow-wrap: anywhere; }
 :root[data-layout="phone"] .phone-board-move-label { flex: 1; min-width: 0; }
 :root[data-layout="phone"] .phone-board-move-why { color: var(--ui-muted-text); font-size: 12px; }
 :root[data-layout="phone"] .phone-menu-item[aria-current="true"] { color: var(--phone-accent); }

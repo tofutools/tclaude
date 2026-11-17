@@ -353,7 +353,7 @@ test('Reply opens the message sheet as a reply to the sender', async (t) => {
   const { $, tap, dialog } = await setup(t, { selectedMsgId: 1 });
   await tap($('.phone-mail-send'));
   assert.equal(dialog().getAttribute('aria-label'), 'Reply to Alpha');
-  assert.equal(dialog().querySelector('.phone-compose-title').textContent, 'Reply to Alpha');
+  assert.equal(dialog().querySelector('.phone-sheet-title').textContent, 'Reply to Alpha');
 });
 
 test('a plain access request is its approval card, answered through the controller', async (t) => {

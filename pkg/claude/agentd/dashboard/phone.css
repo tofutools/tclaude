@@ -412,6 +412,13 @@
 }
 
 /* ButtonRow: a card's actions, equal widths in one row. */
+:root[data-layout="phone"] .phone-sheet-title {
+  margin: 0 4px 4px; color: var(--ui-text-strong); font-size: 17px; font-weight: 700; line-height: 1.3; overflow-wrap: anywhere;
+}
+:root[data-layout="phone"] .phone-sheet-title-clip { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* In a head row (✕ or chips beside it), the title takes the room left and
+   the row gives the spacing. */
+:root[data-layout="phone"] :is(.phone-sheet-head, .phone-compose-head, .phone-agents-view-head, .phone-agent-line) > .phone-sheet-title { flex: 1; margin: 0; }
 :root[data-layout="phone"] .phone-btns { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
 :root[data-layout="phone"] .phone-btn {
   padding: 0 14px; border-radius: var(--phone-btn-r);

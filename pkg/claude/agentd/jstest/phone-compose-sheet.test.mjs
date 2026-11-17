@@ -43,7 +43,7 @@ test('the sheet titles its agent, focuses the text, and sends the draft through 
   const { harness, open, dialog, field, button, tap, sent } = await setup(t);
   await open();
   assert.equal(dialog().getAttribute('aria-label'), 'Message checkout-ui');
-  assert.equal(dialog().querySelector('.phone-compose-title').textContent, 'Message checkout-ui');
+  assert.equal(dialog().querySelector('.phone-sheet-title').textContent, 'Message checkout-ui');
   assert.equal(harness.document.activeElement, field(), 'the text field takes focus, not 📎');
   assert.match(dialog().querySelector('.phone-compose-note').textContent, /queued if it's busy/);
 
@@ -230,7 +230,7 @@ test('a reply titles its sheet, sends through its own route, and an offline send
   await harness.act(() => compose.openPhoneCompose({ agent: AGENT, label: 'checkout-ui' }, {
     title: 'Reply to checkout-ui', send: async (draft) => { replies.push(draft.body); },
   }));
-  assert.equal(dialog().querySelector('.phone-compose-title').textContent, 'Reply to checkout-ui');
+  assert.equal(dialog().querySelector('.phone-sheet-title').textContent, 'Reply to checkout-ui');
   await harness.input(field(), 'yes');
   await tap(button('Send ➤'));
   await harness.act(async () => {});

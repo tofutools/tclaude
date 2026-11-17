@@ -51,7 +51,7 @@ import { trustLock } from './lock-reason.js';
 import { usePhoneBar, usePhonePage } from './phone-page.js';
 import { NavToggle, navShown } from './phone-nav-toggle.js';
 import { Button } from './ui-components.js';
-import { Avatar, avatarHue, ChipRow, Empty, ErrorNote, errorText, SheetHead } from './phone-ui.js';
+import { Avatar, ButtonRow, ChipRow, Empty, ErrorNote, SheetHead, SheetTitle, avatarHue, errorText } from './phone-ui.js';
 import { findAgentRoute } from './agent-route.js';
 
 const html = htm.bind(h);
@@ -330,7 +330,7 @@ export function MailboxSheet({ controller, close }) {
       ${unread > 0 && html`<span class="ui-badge ui-badge-accent">${unread}</span>`}
     </button></li>`;
   return html`<div class="phone-mail-boxes">
-    <h2 class="phone-sheet-title">Mailboxes</h2>
+    <${SheetTitle}>Mailboxes<//>
     <ul class="phone-menu">${chips.map((chip) => item(chip.id, chip.label, chip.count,
       html`<span class="phone-menu-icon" aria-hidden="true">${chip.id === HUMAN ? '🔔' : chip.id === ACCESS ? '🔑' : chip.id.startsWith('group:') ? '#' : '✉'}</span>`))}</ul>
     <${SheetHead}>Agents<//>
@@ -681,12 +681,12 @@ function AccessReader({ controller, item, active, back }) {
     <${PhoneApprovalCard} request=${item} from=${who} notify=${shellToast} decide=${decideThrough(controller)} />
     <dl class="phone-mail-facts">${rows.map(([k, v, mono]) => html`<div key=${k}><dt>${k}</dt><dd class=${mono ? 'mono' : undefined}>${v}</dd></div>`)}
       ${item.body && !planned && html`<div><dt>${item.body_label || 'Body'}</dt><dd><pre class="phone-mail-pre">${item.body}</pre></dd></div>`}</dl>
-    ${item.auto_grantable && html`<div class="phone-btns phone-mail-always">
-      ${item.scope_display && html`<${Button} class="phone-btn phone-btn-grow" title=${`Approve now, and from now on for ${item.scope_display} only`}
-        disabled=${always || lapsed} onClick=${() => allow('always_scoped')}>Always allow — ${item.scope_display}<//>`}
-      <${Button} class="phone-btn phone-btn-grow" title="Approve now, and do not ask again for this permission"
-        disabled=${always || lapsed} onClick=${() => allow('always')}>${item.scope_display ? 'Always allow — any scope' : 'Always allow'}<//>
-    </div>`}
+    ${item.auto_grantable && html`<${ButtonRow} class="phone-mail-always" buttons=${[
+      ...(item.scope_display ? [{ key: 'scoped', label: `Always allow — ${item.scope_display}`, title: `Approve now, and from now on for ${item.scope_display} only`,
+        disabled: always || lapsed, onClick: () => allow('always_scoped') }] : []),
+      { key: 'always', label: item.scope_display ? 'Always allow — any scope' : 'Always allow', title: 'Approve now, and do not ask again for this permission',
+        disabled: always || lapsed, onClick: () => allow('always') },
+    ]} />`}
   </div>`;
 }
 

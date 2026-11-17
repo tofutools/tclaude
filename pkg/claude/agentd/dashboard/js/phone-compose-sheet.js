@@ -18,7 +18,8 @@ import { createMessageAccessDialogActions } from './message-access-dialog-action
 import { loadSavedPrompts } from './saved-prompts-actions.js';
 import { openPhoneSheet, requestClosePhoneSheet, useSheetGuard } from './phone-sheet.js';
 import { Button } from './ui-components.js';
-import { ButtonRow, ErrorNote, errorText } from './phone-ui.js';
+import { DiscardAsk } from './phone-draft-guard.js';
+import { ErrorNote, SheetTitle, errorText } from './phone-ui.js';
 
 const html = htm.bind(h);
 
@@ -121,11 +122,8 @@ export function ComposeSheet({ agent = '', label = '', node = '', title = '', hi
     return true;
   });
   const keep = () => { setConfirming(false); setCaret(field.current?.selectionStart ?? body.length); };
-  // The question takes focus: its row replaces the Cancel just pressed.
-  useLayoutEffect(() => {
-    if (confirming) root.current?.querySelector('.phone-compose-foot button')?.focus();
-  }, [confirming]);
-
+  // The question (DiscardAsk) takes focus: its row replaces the Cancel just
+  // pressed.
   useLayoutEffect(() => {
     if (caret === null) return;
     field.current?.focus();
@@ -182,7 +180,7 @@ export function ComposeSheet({ agent = '', label = '', node = '', title = '', hi
       addFiles(pasted);
     }}>
     <div class="phone-compose-head">
-      <h2 class="phone-compose-title">${title || (recipients ? 'New message' : `Message ${name}`)}</h2>
+      <${SheetTitle} clip>${title || (recipients ? 'New message' : `Message ${name}`)}<//>
       ${!textOnly && html`<button data-ui-exempt type="button" class="phone-compose-chip" disabled=${busy || files.length >= MAX_ATTACHMENTS}
         aria-label="Attach files" title="Attach files" onClick=${() => picker.current?.click()}>📎</button>
         <input name="phone-compose-files" ref=${picker} type="file" multiple hidden class="phone-compose-files" disabled=${busy}
@@ -213,13 +211,7 @@ export function ComposeSheet({ agent = '', label = '', node = '', title = '', hi
     </ul>`}
     ${error && html`<${ErrorNote} class="phone-compose-error">${error}<//>`}
     ${confirming
-      ? html`<div class="phone-compose-foot" role="alertdialog" aria-label="Discard this message?">
-          <span class="phone-compose-ask">Discard this message?</span>
-          <${ButtonRow} buttons=${[
-            { key: 'keep', label: 'Keep', onClick: keep },
-            { key: 'discard', label: 'Discard', tone: 'no', onClick: close },
-          ]} />
-        </div>`
+      ? html`<${DiscardAsk} what="this message" guard=${{ keep }} close=${close} />`
       : html`<div class="phone-compose-foot">
           <${Button} class="phone-btn phone-compose-cancel" disabled=${busy} onClick=${requestClosePhoneSheet}>Cancel<//>
           <span class="ui-hint phone-compose-note">${offline || hint || (node ? 'text only on another node' : "queued if it's busy")}</span>
