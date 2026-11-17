@@ -419,8 +419,11 @@ export function createProcessRunApi({ fetchImpl = (...args) => fetch(...args) } 
       return drawingBoard;
     },
     // deleteTemplate removes a template with its history, pins and listing.
-    async deleteTemplate(templateId) {
-      return processRequest(`/v1/process/templates/${encodeURIComponent(templateId)}`, { method: 'DELETE' }, fetchImpl);
+    // keepalive lets it finish as the page goes (a draft dropped on leave);
+    // ifSourceHash deletes only that version, refusing (409) a newer one.
+    async deleteTemplate(templateId, { keepalive = false, ifSourceHash = '' } = {}) {
+      const query = ifSourceHash ? `?ifSourceHash=${encodeURIComponent(ifSourceHash)}` : '';
+      return processRequest(`/v1/process/templates/${encodeURIComponent(templateId)}${query}`, { method: 'DELETE', ...(keepalive ? { keepalive } : {}) }, fetchImpl);
     },
     // spawnProfileNames lists the node's spawn profiles for a fallback picker.
     async spawnProfileNames() {

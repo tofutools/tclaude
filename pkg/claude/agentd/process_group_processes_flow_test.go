@@ -207,6 +207,15 @@ func TestProcessGroupProcesses_SaveToGroupPublishPinAndList(t *testing.T) {
 	require.Len(t, saved("infra"), 1)
 	assert.False(t, library(true)[oneOff], "a save without listed keeps the listing")
 
+	// A conditional delete (a draft the dashboard drops when left) refuses a
+	// version it did not see, and takes the one it did.
+	rec = processTemplateRequest(t, f, http.MethodDelete, "/v1/process/templates/"+oneOff+"?ifSourceHash=sha256-not-the-head", nil)
+	require.Equal(t, http.StatusConflict, rec.Code, rec.Body.String())
+	assert.Len(t, saved("infra"), 1, "nothing deleted")
+	rec = processTemplateRequest(t, f, http.MethodDelete, "/v1/process/templates/"+oneOff+"?ifSourceHash="+current.SourceHash, nil)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.Empty(t, saved("infra"))
+
 	// Deleting a template removes its pins.
 	rec = processTemplateRequest(t, f, http.MethodDelete, "/v1/process/templates/"+ship, nil)
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())

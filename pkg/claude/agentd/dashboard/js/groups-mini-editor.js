@@ -32,6 +32,7 @@ import {
   setStepText, setStepWho, stepConstraint, stepOutputs, stepText, stepWho, viewToStepList,
 } from './process-step-list.js';
 import { openProcessDraft } from './process-draft-handoff.js';
+import { followName } from './process-step-ids.js';
 import {
   AUTOSAVE_DELAY_MS, DRAFT_DESCRIPTION_MAX, FallbackPicker, TypedField, UNTITLED_PROCESS, WhoPicker, defaultNotify, inheritLabel, useSpawnProfiles,
 } from './groups-quickstart.js';
@@ -148,7 +149,7 @@ function ExhaustionPicker({ view, id, outcome, value, onApply }) {
     <//></label>`;
 }
 
-function Inspector({ view, id, roster, roles, fallbackInfo, onApply, onKind, onClose, onFullEditor }) {
+function Inspector({ view, id, roster, roles, fallbackInfo, onApply, onRename, onKind, onClose, onFullEditor }) {
   const node = view.template.nodes[id];
   if (!node) return null;
   const kind = miniKind(node);
@@ -190,7 +191,7 @@ function Inspector({ view, id, roster, roles, fallbackInfo, onApply, onKind, onC
   return html`<div class="gm-inspector" data-mini-inspector=${id} role="dialog" aria-label=${`Step ${node.name || id}`}
     onKeyDown=${(event) => { if (event.key === 'Escape') { event.stopPropagation(); onClose(); } }}>
     <label class="gm-field"><span>Step</span><${TypedField} name="groups-mini-editor-input" type="text" data-mini-name value=${node.name || ''} placeholder=${id}
-      onChange=${(event) => onApply(updateStep(view, id, (s) => setStepName(s, event.currentTarget.value)))} /></label>
+      onChange=${(event) => onRename(event.currentTarget.value)} /></label>
     <label class="gm-field"><span>${label}</span><${TypedField} as="textarea" name="groups-mini-editor-textarea" rows="3" data-mini-text value=${gate ? deciderAsk(deciders[0]) : text}
       title=${gate ? 'Every decider is asked this; ask each their own in the full editor' : undefined}
       onChange=${(event) => onApply(gate ? setGateText(view, id, event.currentTarget.value)
@@ -347,7 +348,7 @@ function StructureMenu({ view, menu, onRun, onWrap, onClose }) {
 // step list handed over unsaved edits).
 export function MiniGraphEditor({
   group, roster, groupInfo = null, process, view, stored = view, changed = false, api, source, wizard = false,
-  notify = defaultNotify, onClose, onSteps, draft: isDraft = false, untouched = false, onRun = null, onDiscard = null,
+  notify = defaultNotify, onClose, onSteps, draft: isDraft = false, untouched = false, onRun = null, onDiscard = null, onAbandon = null, otherNames = [],
   onImport = null, onDescribe = null, scribes = [],
 }) {
   const model = useRef(null);
@@ -370,6 +371,8 @@ export function MiniGraphEditor({
   const [autosave, setAutosave] = useState('');
   // touched: the operator has changed this draft since it was made.
   const touched = useRef(!untouched);
+  // createdHere is a draft New process just made and opened here.
+  const createdHere = useRef(isDraft && untouched);
   const inflight = useRef(null);
   const failedAt = useRef(null);
   // base is the saved version the draft rests on: the merge base when an
@@ -402,6 +405,11 @@ export function MiniGraphEditor({
   const summary = dirty ? changeSummary(stored, draft) : [];
   const name = draft.template.name || process.name;
   const [title, setTitle] = useState(name);
+  // duplicate is another process of the group with the name being typed,
+  // the placeholder name aside: a warning, not a refusal.
+  const typedName = String(title || '').trim().toLowerCase();
+  const duplicate = isDraft && typedName && typedName !== UNTITLED_PROCESS.toLowerCase()
+    ? otherNames.find((other) => String(other || '').trim().toLowerCase() === typedName) || '' : '';
   // A new process opens with its name ready to type over.
   useEffect(() => {
     if (!isDraft || !untouched) return;
@@ -446,6 +454,15 @@ export function MiniGraphEditor({
     model.current.applyDraft(result.view);
     setRev(model.current.rev);
     if (focus !== undefined) setSelected(focus);
+  };
+  // A process that has never run names its steps by their names: a renamed
+  // step's id follows (process-step-ids.js), so runs, decisions and agent
+  // messages read build-it, not new-step-2. Once it has run, ids stay.
+  const idsFollowNames = isDraft && !process.ran;
+  const renameStep = (id, value) => {
+    const named = updateStep(draft, id, (s) => setStepName(s, value));
+    const result = idsFollowNames ? followName(named.view, id) : named;
+    apply(result, result.id);
   };
   const run = (op) => {
     setMenu(null);
@@ -593,6 +610,7 @@ export function MiniGraphEditor({
   };
   const fullEditor = async () => {
     if (dirty && !(await saveFirst(isDraft))) return;
+    leaving.current = true;
     await openProcessDraft({ id: process.templateId, name, group: group.name });
     onClose();
   };
@@ -602,6 +620,16 @@ export function MiniGraphEditor({
     if (next !== draft.template.name) apply({ view: { ...draft, template: { ...draft.template, name: next } } });
   };
   const empty = !Object.values(draft.template.nodes || {}).some(isStep);
+  // droppable is a draft that leaving may delete: one made by New process
+  // in this editor, never run, with nothing but start and end (an advanced
+  // node is content too), that no agent is helping with or scribe drafting.
+  // A draft opened any other way (from the full editor, the step list, the
+  // group's list) is never dropped. The delete names the version this editor
+  // last saw, so steps an agent saved since are not taken with it.
+  const scribing = scribes.some((session) => session.scope?.id === process.templateId);
+  const droppable = isDraft && createdHere.current && !process.ran && !helper && !scribing
+    && Object.values(draft.template.nodes || {}).every((node) => node?.type === 'start' || node?.type === 'end');
+  const dropOptions = (options = {}) => (model.current.sourceHash ? { ...options, ifSourceHash: model.current.sourceHash } : options);
   // startFrom fills an empty draft with a starter's or a library process's
   // graph, under this draft's id, named after it while still untitled.
   const startFrom = (from, label) => {
@@ -611,25 +639,49 @@ export function MiniGraphEditor({
     setTitle(next);
     apply({ view: { template: { ...from.template, id: draft.template.id, name: next }, edges: from.edges || [], layout: from.layout || {} } });
   };
-  // Closing a draft keeps it (saved first); one never touched is deleted.
-  const closeDraft = async () => {
-    if (!touched.current && empty && onDiscard) { onDiscard(process.templateId); return; }
+  // Closing a draft keeps it (saved first). ✕ drops a droppable one, named
+  // or not; Save keeps a named one, as asked.
+  const closeDraft = async ({ keep = false } = {}) => {
+    if (droppable && (!keep || !touched.current) && onDiscard) { leaving.current = true; onDiscard(process.templateId, dropOptions()); return; }
     if (dirty && !(await saveFirst())) return;
+    leaving.current = true;
     onClose();
   };
   const runDraft = async () => {
     if (dirty && !(await saveFirst())) return;
+    leaving.current = true;
     onRun?.(process.templateId, name);
   };
   const describe = async (text) => {
     if (dirty && !(await saveFirst())) return;
+    leaving.current = true;
     onDescribe?.(text, { id: process.templateId, sourceHash: model.current.sourceHash, ref: model.current.currentRef, view: draft });
   };
   const importPwf = () => {
     onImport?.();
-    if (!touched.current && empty && onDiscard) onDiscard(process.templateId);
+    leaving.current = true;
+    if (droppable && onDiscard) onDiscard(process.templateId, dropOptions());
     else onClose();
   };
+  // A draft left with no steps any other way (the page or the tab changes
+  // under it, the browser goes) is dropped as ✕ drops it, so abandoned
+  // "Untitled process · 0 steps" drafts do not pile up. Not one handed on
+  // (to the step list, the full editor, a run, a scribe), nor one an agent
+  // was asked to help with or a scribe is drafting.
+  const leaving = useRef(false);
+  const abandon = useRef(null);
+  abandon.current = (options) => {
+    if (leaving.current || !droppable || !onAbandon) return;
+    leaving.current = true;
+    onAbandon(process.templateId, dropOptions(options));
+  };
+  useEffect(() => {
+    const win = cardRef.current?.ownerDocument?.defaultView || globalThis;
+    // A page going into the back/forward cache may come back: keep it.
+    const gone = (event) => { if (!event?.persisted) abandon.current?.({ keepalive: true }); };
+    win.addEventListener?.('pagehide', gone);
+    return () => { win.removeEventListener?.('pagehide', gone); abandon.current?.(); };
+  }, []);
   // pointAt is a pointer position in the graph's own coordinates, where the
   // handles, the picker and the menu are drawn.
   const pointAt = (event) => {
@@ -718,6 +770,7 @@ export function MiniGraphEditor({
     ? html`<input name="process-name" type="text" class="gm-title" data-mini-title ref=${nameRef} aria-label="Process name" maxlength="120" value=${title}
         onInput=${(event) => setTitle(event.currentTarget.value)} onChange=${(event) => commitTitle(event.currentTarget.value)}
         onKeyDown=${(event) => { if (event.key === 'Enter') { event.preventDefault(); event.currentTarget.blur(); } }} />
+      ${duplicate && html`<span class="ui-tag ui-tag-warn" role="status" data-mini-duplicate title="Two processes with one name are easy to mix up in Resources and when starting a run">Another process in ${group.name} is called ${duplicate}</span>`}
       <span class="ui-tag gm-autosave" data-mini-autosave=${autosave || (dirty ? 'pending' : 'saved')} title=${autosave === 'failed' ? error : ''}>${
         autosave === 'saving' || busy === 'auto' ? 'draft · saving…' : autosave === 'failed' ? 'draft · not saved' : `draft · autosaved to ${group.name}`}</span>`
     : html`<b class="gm-name">${name}</b>
@@ -725,7 +778,7 @@ export function MiniGraphEditor({
       <span class="gm-toggle" role="group" aria-label="View">
         <button data-ui-exempt type="button" aria-pressed="true" class="on">◈ Graph</button>
         <button type="button" data-ui-exempt data-mini-steps disabled=${!stepsList.ok} title=${stepsList.ok ? 'Show the same draft as a step list' : `The step list cannot show it: ${stepsList.reason}`}
-          onClick=${() => onSteps({ list: stepsList.list, changed: dirty, sourceHash: model.current.sourceHash, ref: model.current.currentRef })}>☰ Steps</button>
+          onClick=${() => { leaving.current = true; onSteps({ list: stepsList.list, changed: dirty, sourceHash: model.current.sourceHash, ref: model.current.currentRef }); }}>☰ Steps</button>
       </span>
       ${dirty && !isDraft && html`<span class="gm-changes" data-mini-changes=${summary.length}>● ${summary.length || 1} unsaved change${summary.length === 1 ? '' : 's'}${summary.length ? `: ${summary.slice(0, 3).join(', ')}${summary.length > 3 ? '…' : ''}` : ''}</span>`}
       <span class="gq-spacer"></span>
@@ -738,13 +791,13 @@ export function MiniGraphEditor({
       <${Button} size="sm" data-mini-full disabled=${!!busy && busy !== 'auto'} title=${dirty ? 'Save, then open it in the full editor' : 'Open it in the full editor'} onClick=${fullEditor}>⤢ ${isDraft ? 'Full editor' : 'full editor'}<//>
       ${isDraft
     ? html`<${Button} size="sm" variant="primary" data-mini-save disabled=${!!busy && busy !== 'auto'} title="Save it now and close the editor"
-        onClick=${() => void closeDraft()}>Save<//>
+        onClick=${() => void closeDraft({ keep: true })}>Save<//>
       ${onRun && html`<${Button} size="sm" data-mini-run disabled=${(!!busy && busy !== 'auto') || empty} title=${empty ? 'Add a step first' : `Save it, then pick how to run it in ${group.name}`}
         onClick=${() => void runDraft()}>▶ Run…<//>`}
-      <${Button} size="sm" icon=${true} variant="ghost" data-mini-close aria-label="Close" title=${!touched.current && empty ? 'Close: an untouched new process is not kept' : 'Close: it stays saved in the group'}
+      <${Button} size="sm" icon=${true} variant="ghost" data-mini-close aria-label="Close" title=${droppable ? 'Close: a process with no steps is not kept' : 'Close: it stays saved in the group'}
         onClick=${() => void closeDraft()}>✕<//>
       ${autosave === 'failed' && html`<${Button} size="sm" variant="link" class="gq-link" data-mini-drop title="Close it; the changes since the last save are lost"
-        onClick=${onClose}>close without saving<//>`}`
+        onClick=${() => { leaving.current = true; onClose(); }}>close without saving<//>`}`
     : html`${discarding
     ? html`<span class="gq-confirm">Discard ${summary.length || 'the'} change${summary.length === 1 ? '' : 's'}?
         <${Button} size="sm" variant="danger" data-mini-discard onClick=${onClose}>discard<//>
@@ -785,7 +838,7 @@ export function MiniGraphEditor({
     ${isDraft && empty && html`<${StartFrom} api=${api} wizard=${wizard} busy=${busy && busy !== 'auto' ? busy : ''}
       onView=${startFrom} onDescribe=${onDescribe ? (text) => void describe(text) : null} onImport=${onImport ? importPwf : null} />`}
     ${selected && html`<${Inspector} view=${draft} id=${selected} roster=${roster} roles=${roles} fallbackInfo=${fallbackInfo}
-      onApply=${(result) => apply(result)} onClose=${() => setSelected('')} onFullEditor=${fullEditor}
+      onApply=${(result) => apply(result)} onRename=${(value) => renameStep(selected, value)} onClose=${() => setSelected('')} onFullEditor=${fullEditor}
       onKind=${(kind, who) => run(() => {
         const result = changeKind(draft, selected, kind);
         return who ? updateStep(result.view, selected, (s) => setStepWho(s, who)) : result;

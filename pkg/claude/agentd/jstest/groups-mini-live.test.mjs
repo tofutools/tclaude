@@ -235,7 +235,7 @@ test('a re-render while the operator types in a step field keeps what they typed
   const mod = await harness.importDashboardModule('js/groups-mini-editor.js');
   const stored = view(BASE_NODES);
   const editor = (roster) => harness.html`<${mod.MiniGraphEditor} group=${{ name: 'webshop' }} roster=${roster}
-    process=${{ templateId: 'tpl_1', name: 'Ship it' }} view=${stored} stored=${stored} api=${api} draft=${true}
+    process=${{ templateId: 'tpl_1', name: 'Ship it', ran: true }} view=${stored} stored=${stored} api=${api} draft=${true}
     onClose=${() => {}} onSteps=${() => {}} />`;
   const mounted = await harness.mount(editor([]));
   const root = mounted.container;

@@ -722,3 +722,16 @@ func TestWipeProcessRuntimeDataPreservesTemplateAuthoringAndOtherDBData(t *testi
 	_, err = os.Stat(root)
 	require.NoError(t, err)
 }
+
+func TestProcessTemplatesRunNamesEveryTemplateWithARun(t *testing.T) {
+	setupTestDB(t)
+	ran, err := ProcessTemplatesRun()
+	require.NoError(t, err)
+	assert.Empty(t, ran, "no runs yet")
+	input := processRunFixture(t, "run_once", "completed", json.RawMessage(`{"stateSchemaVersion":1}`))
+	require.NoError(t, CreateProcessRun(input))
+	ran, err = ProcessTemplatesRun()
+	require.NoError(t, err)
+	id, _, _ := strings.Cut(input.TemplateRef, "@")
+	assert.Equal(t, map[string]bool{id: true}, ran)
+}

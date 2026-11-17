@@ -245,6 +245,12 @@ function StartRunForm({ group, api, source, onClose, wizard, initialTemplateId =
 // powered off ('offline'). Process work comes first: it is what this
 // perspective is about. Other states read the same agent status the Agents
 // perspective's state pill shows.
+// processRan says whether a group's process has run: a saved one as the
+// context says, a draft not listed yet (just made) never has.
+function processRan(saved, process) {
+  return !!saved.find((entry) => entry.templateId === process?.templateId)?.ran;
+}
+
 export function memberAvailability(member, busy) {
   if (busy.has(memberKey(member))) return 'process';
   if (!member?.online) return 'offline';
@@ -542,10 +548,12 @@ function GroupRuns({ group, roster, context, filter, wizard, api, runApi = runDe
       say(`Could not open the process here: ${cause.message}`, true);
     }
   }
-  // An untouched new draft that is closed (or set aside for an import) is
-  // deleted, so a stray click leaves nothing behind.
-  const discardDraft = (templateId) => api.deleteTemplate(templateId)
-    .catch(() => api.unpinProcess(group.name, templateId).catch(() => {}))
+  // A draft with no steps that is closed or left (or set aside for an
+  // import) is deleted, so a stray click leaves nothing behind.
+  // A refused delete unpins instead, unless it was refused because the
+  // draft has a newer version (409: an agent saved steps to it): that stays.
+  const discardDraft = (templateId, options = undefined) => api.deleteTemplate(templateId, options)
+    .catch((cause) => (cause?.status === 409 ? undefined : api.unpinProcess(group.name, templateId).catch(() => {})))
     .finally(() => void source?.refresh?.());
   const runSaved = (templateId, name = templateId) => {
     setQuick(null);
@@ -599,11 +607,13 @@ function GroupRuns({ group, roster, context, filter, wizard, api, runApi = runDe
     ? html`<${ScribeDraft} key=${quick.key} group=${group} draft=${quick.draft} api=${api} scribes=${scribes} wizard=${wizard} notify=${notify || defaultNotify}
         onReview=${(view) => reviewDraft(quick, view)} onClose=${() => closeDraft(quick)} />`
     : editing && quick.mode === 'graph'
-    ? html`<${MiniGraphEditor} key=${quick.key} group=${group} roster=${people} groupInfo=${entry} process=${quick.process}
+    ? html`<${MiniGraphEditor} key=${quick.key} group=${group} roster=${people} groupInfo=${entry} process=${{ ...quick.process, ran: processRan(savedProcesses, quick.process) }}
         view=${quick.view} stored=${quick.stored || quick.view} changed=${!!quick.changed} api=${api} source=${source} wizard=${wizard}
         draft=${!!quick.draft} untouched=${!!quick.untouched} scribes=${scribes}
+        otherNames=${savedProcesses.filter((saved) => saved.templateId !== quick.process?.templateId).map((saved) => saved.name)}
         notify=${say} onClose=${() => setQuick(null)} onSteps=${toSteps} onRun=${runSaved}
-        onDiscard=${(templateId) => { setQuick(null); void discardDraft(templateId); }}
+        onDiscard=${(templateId, options) => { setQuick(null); void discardDraft(templateId, options); }}
+        onAbandon=${(templateId, options) => void discardDraft(templateId, options)}
         onImport=${pickPwf}
         onDescribe=${(text, view) => draftWithScribe(api, { group, text, roster: people, confirm, template: view })
           .then((draft) => { if (draft) { setQuick({ mode: 'scribe', key: Date.now(), draft }); void source?.refresh?.(); } })
