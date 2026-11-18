@@ -58,9 +58,10 @@ func TestDashboardTransactionGroupRetireExclusiveOwnership(t *testing.T) {
 		}
 	}
 	for _, required := range []string{
-		"async retireGroupPreview({ group, convs, shutdown, deleteWorktree })",
+		"async retireGroupPreview({ group, convs, shutdown, deleteWorktree, keepDependents })",
 		"`/api/groups/${encodeURIComponent(group)}/retire`",
-		"JSON.stringify({ convs, shutdown: !!shutdown, delete_worktree: !!deleteWorktree })",
+		"convs, shutdown: !!shutdown, delete_worktree: !!deleteWorktree,",
+		"...(keepDependents === true ? { keep_dependents: true } : {}),",
 	} {
 		if !strings.Contains(actions, required) {
 			t.Errorf("transaction actions are missing group-retire wire contract %q", required)

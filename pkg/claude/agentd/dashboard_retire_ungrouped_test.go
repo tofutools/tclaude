@@ -59,7 +59,7 @@ func TestDashboardTransactionUngroupedRetireExclusiveOwnership(t *testing.T) {
 		t.Error("transaction controller is missing the ungrouped-retire launcher")
 	}
 	for _, required := range []string{
-		"async retireAgentsPreview({ agents, shutdown, deleteWorktrees })",
+		"async retireAgentsPreview({ agents, shutdown, deleteWorktrees, keepDependents })",
 		"'/api/cleanup/agents'",
 		"mode: 'retire', include_online: true",
 		"delete_worktrees: !!deleteWorktrees",
