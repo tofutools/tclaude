@@ -34,6 +34,10 @@ const processSpawnedRetireActor = "system:process-runtime"
 // retiring one agent twice.
 var processSpawnedReaperMu sync.Mutex
 
+// processSpawnedTeardowns are the soft pane exits of retired performers
+// still running, which a test waits for.
+var processSpawnedTeardowns sync.WaitGroup
+
 // processSpawnedSettledFn is the settled check, swappable in tests.
 var processSpawnedSettledFn = liveAWBReadyAgentSettled
 
@@ -97,7 +101,9 @@ func reapProcessSpawnedPerformers() {
 	// A pane's soft exit can take seconds: off the runtime tick, and off the
 	// reaper's lock.
 	for _, convID := range retired {
-		go finishRetiredConv(convID, true /* shutdown */, false /* keep the worktree */, agentWorktreeView{}, "")
+		processSpawnedTeardowns.Go(func() {
+			finishRetiredConv(convID, true /* shutdown */, false /* keep the worktree */, agentWorktreeView{}, "")
+		})
 	}
 }
 

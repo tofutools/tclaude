@@ -2,6 +2,7 @@ package agentd_test
 
 import (
 	"net/http"
+	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -106,12 +107,13 @@ func TestProcessSpawnedLifetime_KeepIsNeverRetired(t *testing.T) {
 // Scenario: an agent still busy when its lifetime is up is left alone, and
 // retired by a later sweep once it has settled.
 func TestProcessSpawnedLifetime_ABusyAgentIsRetiredOnceSettled(t *testing.T) {
-	busy := true
-	agentd.SetProcessSpawnedSettledForTest(t, func(string) (bool, error) { return !busy, nil })
+	var busy atomic.Bool
+	busy.Store(true)
+	agentd.SetProcessSpawnedSettledForTest(t, func(string) (bool, error) { return !busy.Load(), nil })
 	_, _, agent := spawnLifetimeRun(t, "run_life_busy", "", false)
 	agentd.ReapProcessSpawnedPerformersForTest()
 	assert.True(t, agent().Active(), "mid-turn: not retired from under itself")
-	busy = false
+	busy.Store(false)
 	agentd.ReapProcessSpawnedPerformersForTest()
 	assert.False(t, agent().Active())
 }
@@ -119,15 +121,19 @@ func TestProcessSpawnedLifetime_ABusyAgentIsRetiredOnceSettled(t *testing.T) {
 // Scenario: an agent spawned before lifetimes existed has no lifetime on
 // record. It was promised to stay, so the run's end does not retire it.
 func TestProcessSpawnedLifetime_ASpawnFromBeforeLifetimesStays(t *testing.T) {
-	busy := true
-	agentd.SetProcessSpawnedSettledForTest(t, func(string) (bool, error) { return !busy, nil })
+	var busy atomic.Bool
+	busy.Store(true)
+	agentd.SetProcessSpawnedSettledForTest(t, func(string) (bool, error) { return !busy.Load(), nil })
 	spawned, _, agent := spawnLifetimeRun(t, "run_life_legacy", "", false)
+	// The run's end reaps on its own goroutine: let it finish (busy, so it
+	// leaves the agent) before the row is changed under it.
+	agentd.ReapProcessSpawnedPerformersForTest()
 	rows, err := db.ListProcessAgentDispatchesForAgent(spawned, false, 10)
 	require.NoError(t, err)
 	require.Len(t, rows, 1)
 	assert.Equal(t, model.LifetimeRun, rows[0].SpawnLifetime, "the default is recorded at the spawn")
 	require.NoError(t, db.SetProcessAgentDispatchSpawnLifetime(rows[0].RunID, rows[0].CommandID, ""))
-	busy = false
+	busy.Store(false)
 	agentd.ReapProcessSpawnedPerformersForTest()
 	assert.True(t, agent().Active(), "no lifetime on record: left as it always was")
 }
@@ -135,14 +141,15 @@ func TestProcessSpawnedLifetime_ASpawnFromBeforeLifetimesStays(t *testing.T) {
 // Scenario: a "step" agent another run has since given a step to stays
 // while that step is open, and is retired once it is done.
 func TestProcessSpawnedLifetime_AnAgentAnotherRunUsesStays(t *testing.T) {
-	busy := true
-	agentd.SetProcessSpawnedSettledForTest(t, func(string) (bool, error) { return !busy, nil })
+	var busy atomic.Bool
+	busy.Store(true)
+	agentd.SetProcessSpawnedSettledForTest(t, func(string) (bool, error) { return !busy.Load(), nil })
 	spawned, conv, agent, fx := spawnLifetimeRunIn(t, "run_life_shared", model.LifetimeStep, true)
 	f := fx.f
 	other := performerTemplate("run_life_other", model.Performer{Kind: model.PerformerAgent, Prompt: "More.", Assignee: conv}, nil)
 	view := startPerformerRun(t, f, fx.root, "run_life_other", other, agentd.ProcessRunScopeForTest{Kind: "group", GroupID: fx.group})
 	require.Equal(t, spawned, view.Commands[0].Performer.AgentID, "%+v", view.Commands[0].Performer)
-	busy = false
+	busy.Store(false)
 	agentd.ReapProcessSpawnedPerformersForTest()
 	assert.True(t, agent().Active(), "on a step of another run")
 	ok := reportAs(t, f, conv, map[string]any{"outcome": "succeeded"})

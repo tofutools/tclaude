@@ -156,6 +156,10 @@ func ResetProcessRunRuntimeForTest() func() {
 		_ = processRuns.shutdown(ctx)
 		cancel()
 		processRuns = newProcessRunManager()
+		// A run's end may have retired a spawned performer: its pane's soft
+		// exit finishes before the test's fakes are restored.
+		executor.WaitTerminalHooks()
+		processSpawnedTeardowns.Wait()
 	}
 }
 

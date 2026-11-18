@@ -53,6 +53,7 @@ func WaitForProcessDispatchForTest() {
 func ReapProcessSpawnedPerformersForTest() {
 	executor.WaitTerminalHooks()
 	reapProcessSpawnedPerformers()
+	processSpawnedTeardowns.Wait()
 }
 
 // SetProcessSpawnedSettledForTest swaps the settled check the reaper uses.
