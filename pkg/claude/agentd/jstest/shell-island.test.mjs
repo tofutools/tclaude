@@ -44,7 +44,7 @@ test('shell island reacts to snapshots while preserving keyed usage and footer n
   await Promise.all([usage.unmount(), meta.unmount(), badge.unmount(), status.unmount()]);
 });
 
-test('Copilot header selector switches percentage, what-if cost, and AIC', async (t) => {
+test('Copilot header selector switches percentage, account dollars, and AIC', async (t) => {
   const harness = await createPreactHarness(t);
   const [{ createDashboardState }, { dashPrefs }, { Usage }] = await Promise.all([
     harness.importDashboardModule('js/snapshot-store.js'),
@@ -77,12 +77,13 @@ test('Copilot header selector switches percentage, what-if cost, and AIC', async
   assert.match(mounted.container.textContent, /38%/);
   assert.equal(mounted.container.querySelector('.uwhatif'), null, 'usage mode is not an estimate');
   await harness.act(() => buttons()[1].click());
-  const marker = mounted.container.querySelector('.usrc .uwhatif');
-  assert.equal(marker?.textContent, '?', 'cost mode marks the row WHAT-IF compactly');
-  assert.match(marker.getAttribute('title'), /WHAT-IF estimate/, 'the tooltip explains the estimate');
-  assert.equal(buttons()[1].textContent, '≈$', 'the selector identifies WHAT-IF dollar mode');
-  assert.equal(mounted.container.querySelector('.ucost-amt').textContent, '$1.75',
-    'the value does not repeat the selector approximation mark');
+  // tk_1d708cf7: dollars are the account's own AIC / 100 (outside usage
+  // included), beside the share of the allowance, and not an estimate.
+  assert.equal(mounted.container.querySelector('.usrc .uwhatif'), null, 'the account figure is not marked WHAT-IF');
+  assert.equal(buttons()[1].textContent, '≈$', 'the selector identifies dollar mode');
+  assert.match(mounted.container.textContent, /38%/, 'the share of the allowance stays');
+  assert.equal(mounted.container.querySelector('.ucost-amt').textContent, '$1.14',
+    '114 AIC is $1.14; the value does not repeat the selector approximation mark');
   assert.equal(dashPrefs.getItem(pref), 'cost');
   await harness.act(() => buttons()[2].click());
   assert.match(mounted.container.textContent, /114\/ 300 AIC/);
