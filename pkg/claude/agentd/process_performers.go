@@ -629,7 +629,13 @@ func resolveProcessPerformer(runID string, scope processRunScope, command engine
 		if spec.Assignee != "" {
 			candidate := processAgentBySelector(spec.Assignee)
 			if candidate == nil {
-				return unavailable(fmt.Sprintf("assignee %q is not an active agent", spec.Assignee))
+				reason := fmt.Sprintf("assignee %q is not an active agent", spec.Assignee)
+				if !processAssigneeGone(spec.Assignee) {
+					// An ambiguous name or a failed lookup is not proof the
+					// assignee is gone: wait for the next sweep.
+					return processPerformerChoice{waitReason: reason}
+				}
+				return unavailable(reason)
 			}
 			if !processOwnerMayTask(scope.Owner, *candidate) {
 				return unavailable(fmt.Sprintf("assignee %q shares no group with the run owner", spec.Assignee))
@@ -943,6 +949,21 @@ func processAgentBySelector(selector string) *processPerformerCandidate {
 	}
 	candidate, _ := processBoundCandidate(resolved.AgentID)
 	return candidate
+}
+
+// processAssigneeGone reports whether an assignee is confirmed not to be an
+// active agent: nothing matches it, it names a plain conversation, or the
+// agent it names is retired.
+func processAssigneeGone(selector string) bool {
+	resolved, _, err := agent.ResolveSelector(selector)
+	if err != nil {
+		return agent.IsNoMatch(err)
+	}
+	if resolved.AgentID == "" {
+		return true
+	}
+	performer, err := db.GetAgent(resolved.AgentID)
+	return err == nil && !performer.Active()
 }
 
 // processOwnerMayTask reports whether an unscoped run's owner may hand a node
