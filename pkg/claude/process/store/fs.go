@@ -116,7 +116,7 @@ func (s *FS) putTemplate(ctx context.Context, tmpl *model.Template, moveHead boo
 // current head under the same cross-process filesystem lock as the write and
 // head-pointer update, so two editors cannot silently lose layout changes.
 func (s *FS) PutTemplateEditorSource(ctx context.Context, tmpl *model.Template, expectedSourceHash string) (TemplateRecord, error) {
-	commit, err := s.putTemplateEditorSource(ctx, tmpl, expectedSourceHash, "")
+	commit, err := s.putTemplateEditorSource(ctx, tmpl, expectedSourceHash, "", "")
 	return commit.TemplateRecord, err
 }
 
@@ -135,7 +135,22 @@ func (s *FS) PutTemplateEditorSourceAttributed(
 	if !ValidateActorRef(actor) {
 		return TemplateAuthoringCommit{}, fmt.Errorf("invalid process template authoring actor %q", actor)
 	}
-	return s.putTemplateEditorSource(ctx, tmpl, expectedSourceHash, actor)
+	return s.putTemplateEditorSource(ctx, tmpl, expectedSourceHash, actor, "")
+}
+
+// PutTemplateEditorSourceNoted is PutTemplateEditorSourceAttributed with a
+// note on the authorship event saying why the save was made.
+func (s *FS) PutTemplateEditorSourceNoted(
+	ctx context.Context,
+	tmpl *model.Template,
+	expectedSourceHash string,
+	actor ActorRef,
+	note string,
+) (TemplateAuthoringCommit, error) {
+	if !ValidateActorRef(actor) {
+		return TemplateAuthoringCommit{}, fmt.Errorf("invalid process template authoring actor %q", actor)
+	}
+	return s.putTemplateEditorSource(ctx, tmpl, expectedSourceHash, actor, strings.TrimSpace(note))
 }
 
 func (s *FS) putTemplateEditorSource(
@@ -143,6 +158,7 @@ func (s *FS) putTemplateEditorSource(
 	tmpl *model.Template,
 	expectedSourceHash string,
 	actor ActorRef,
+	note string,
 ) (TemplateAuthoringCommit, error) {
 	if tmpl == nil {
 		return TemplateAuthoringCommit{}, fmt.Errorf("nil process template")
@@ -211,7 +227,7 @@ func (s *FS) putTemplateEditorSource(
 		SourceHash:     sourceHash(committedSource),
 	}
 	if actor != "" {
-		event := TemplateAuthorship{Ref: record.Ref, SourceHash: commit.SourceHash, Actor: actor, AuthoredAt: s.now().UTC()}
+		event := TemplateAuthorship{Ref: record.Ref, SourceHash: commit.SourceHash, Actor: actor, AuthoredAt: s.now().UTC(), Note: note}
 		if err := s.appendTemplateAuthorship(ctx, record, event); err != nil {
 			return rollback(err)
 		}

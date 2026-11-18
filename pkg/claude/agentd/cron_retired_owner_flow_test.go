@@ -43,7 +43,7 @@ func TestCronRetiredOwner_AllMutationSurfacesRejectWithoutSideEffects(t *testing
 	require.NoError(t, db.UpdateAgentCronJobLastRun(job.ID, stamped, "ok"))
 
 	retire := testharness.Serve(f.Mux, agentd.AsHumanPeer(testharness.JSONRequest(
-		t, http.MethodPost, "/v1/agent/"+owner+"/retire?shutdown=0&delete_worktree=0", nil)))
+		t, http.MethodPost, "/v1/agent/"+owner+"/retire?shutdown=0&delete_worktree=0&keep_dependents=1", nil)))
 	require.Equal(t, http.StatusOK, retire.Code, retire.Body.String())
 	before, err := db.GetAgentCronJob(job.ID)
 	require.NoError(t, err)

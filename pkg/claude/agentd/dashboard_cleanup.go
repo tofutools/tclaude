@@ -59,6 +59,9 @@ type cleanupOutcome struct {
 	Result  string   `json:"result"`           // removed | retired | deleted | reinstated | skipped | failed
 	Detail  string   `json:"detail,omitempty"` // human-readable reason
 	Groups  []string `json:"groups,omitempty"` // groups touched (agents mode)
+	// Dependents is what a retire or delete did to what refers to the agent
+	// (agent_dependents.go).
+	Dependents *agentCascade `json:"dependents,omitempty"`
 }
 
 // cleanupResponse is the wire shape returned by both cleanup
@@ -293,6 +296,9 @@ func dashboardCleanupAgents(w http.ResponseWriter, r *http.Request) {
 		IncludeOnline   bool     `json:"include_online"`
 		DeleteWorktrees bool     `json:"delete_worktrees"`
 		Shutdown        *bool    `json:"shutdown"` // (retire) nil → default ON
+		// KeepDependents keeps what refers to each agent instead of removing
+		// or repairing it (retire and delete); false, the default, cascades.
+		KeepDependents bool `json:"keep_dependents"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, "decode body: "+err.Error(), http.StatusBadRequest)
@@ -433,7 +439,7 @@ func dashboardCleanupAgents(w http.ResponseWriter, r *http.Request) {
 				slog.Warn("cleanup retire: could not snapshot group memberships for rhythm cleanup",
 					"conv", tg.convID, "err", groupsErr)
 			}
-			outcome, ownerGroups, rerr := retireAgentConv(tg.convID, "human", "")
+			outcome, ownerGroups, rerr := retireAgentConvCascading(tg.convID, "human", "", false, nil, body.KeepDependents)
 			switch {
 			case rerr != nil:
 				out.Result, out.Detail = "failed", "retire: "+rerr.Error()
@@ -444,6 +450,10 @@ func dashboardCleanupAgents(w http.ResponseWriter, r *http.Request) {
 				out.Groups = outcome.GroupsLeft
 				out.Detail = fmt.Sprintf("demoted to a plain conversation · left %d group(s), revoked %d perm + %d sudo grant(s)",
 					len(outcome.GroupsLeft), outcome.PermsRevoked, outcome.SudoRevoked)
+				out.Dependents = outcome.Dependents
+				if summary := outcome.Dependents.summary(); summary != "" {
+					out.Detail += " · " + summary
+				}
 				leftGroups = groupsBefore
 				ownerGroupIDs = ownerGroups
 				// The shared post-demotion teardown: stop the pane and wait
@@ -482,6 +492,12 @@ func dashboardCleanupAgents(w http.ResponseWriter, r *http.Request) {
 				out.Result, out.Detail = "failed", stopErr.Error()
 				break
 			}
+			dependents, cascadeErr := cascadeAgentDelete(tg.convID, "human", body.KeepDependents)
+			if cascadeErr != nil {
+				out.Result, out.Detail = "failed", "retire before delete: "+cascadeErr.Error()
+				break
+			}
+			out.Dependents = dependents
 			// Pages close, and saved ones go, while the agent ID still
 			// resolves (before the purge).
 			deletePagesForConv(tg.convID)
@@ -498,6 +514,9 @@ func dashboardCleanupAgents(w http.ResponseWriter, r *http.Request) {
 				out.Result = "deleted"
 				out.Detail = fmt.Sprintf("purged · dropped %d group + %d owner row(s)",
 					counts.GroupMembers, counts.GroupOwners)
+				if summary := dependents.summary(); summary != "" {
+					out.Detail += " · " + summary
+				}
 				if note := applyWorktreeCleanup(wt, body.DeleteWorktrees); note != "" {
 					out.Detail += " · " + note
 				}

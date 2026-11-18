@@ -392,6 +392,7 @@ var dashboardAgentVerbs = map[string]dashboardAgentVerb{
 	"prs":                 {[]string{http.MethodGet, http.MethodPost}, dashboardAgentTwin(dashboardAgentPRs)},
 	"rename":              {postOnly, dashboardAgentTwin(dashboardRenameAgent)},
 	"worktree":            {getOnly, bySelector(dashboardAgentWorktree)},
+	"dependents":          {getOnly, bySelector(dashboardAgentDependents)},
 	"promote":             {nil, dashboardEnrollmentVerb},
 	"retire":              {nil, dashboardEnrollmentVerb},
 	"reinstate":           {nil, dashboardEnrollmentVerb},
@@ -555,6 +556,11 @@ func handleDashboardAgentsAPI(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, stopErr.Error(), http.StatusConflict)
 		return
 	}
+	dependents, err := cascadeAgentDelete(convID, "human", agentDependentsKeep(r))
+	if err != nil {
+		http.Error(w, "retire before delete: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
 
 	// Single source of truth for the comprehensive cleanup: filesystem
 	// + DB union purge across every conv-id-referencing table +
@@ -579,10 +585,14 @@ func handleDashboardAgentsAPI(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
+	resp := map[string]any{
 		"conv_id":  convID,
 		"worktree": applyWorktreeCleanup(wt, true),
-	})
+	}
+	if dependents != nil {
+		resp["dependents"] = dependents
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // handleDashboardAgentGenerationDelete deletes ONE replaced (predecessor)
@@ -1027,6 +1037,10 @@ func dashboardGroupRetire(w http.ResponseWriter, r *http.Request, g *db.AgentGro
 		// (the preview modal's checkbox). A POINTER so an absent key keeps
 		// the query fallback / the OFF failsafe; present wins.
 		DeleteWorktree *bool `json:"delete_worktree"`
+		// KeepDependents keeps what refers to each retired member (its cron
+		// jobs, standing orders, trigger rules, runs and pinned template
+		// steps) instead of removing or repairing it, the default.
+		KeepDependents *bool `json:"keep_dependents"`
 	}
 	// The body is optional — the legacy status-filter callers send none.
 	// A present-but-malformed body is a 400, not a silent fallthrough, so
@@ -1090,7 +1104,11 @@ func dashboardGroupRetire(w http.ResponseWriter, r *http.Request, g *db.AgentGro
 		}
 	}
 
-	out, err := bulkRetireGroupMembers(g, "", reason, shutdown, deleteWorktree, filter, selected, auditRequestEventID(r))
+	keep := agentDependentsKeep(r)
+	if body.KeepDependents != nil {
+		keep = *body.KeepDependents
+	}
+	out, err := bulkRetireGroupMembers(g, "", reason, shutdown, deleteWorktree, keep, filter, selected, auditRequestEventID(r))
 	if err != nil {
 		http.Error(w, "retire: "+err.Error(), http.StatusInternalServerError)
 		return

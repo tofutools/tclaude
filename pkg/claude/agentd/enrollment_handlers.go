@@ -1,6 +1,7 @@
 package agentd
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -37,6 +38,11 @@ type retireConvOutcome struct {
 	// high-authority text into other agents' context.
 	StandingOrdersDisabled int64 `json:"standing_orders_disabled"`
 	Retired                bool  `json:"retired"`
+	// Dependents is what the retire did to what refers to the agent: removed,
+	// cancelled, cleared, or kept (agent_dependents.go). Nil on the internal
+	// retirements that hand the identity on (a federation move, a Steward
+	// handover, an export clone).
+	Dependents *agentCascade `json:"dependents,omitempty"`
 }
 
 // retireAgentConv demotes convID from an agent to a plain
@@ -55,6 +61,36 @@ type retireConvOutcome struct {
 // warning; the /v1 handler ignores them.
 func retireAgentConv(convID, by, reason string) (retireConvOutcome, []int64, error) {
 	return retireAgentConvWithPrecondition(convID, by, reason, false)
+}
+
+// retireAgentConvCascading is the operator-facing retirement: the demotion,
+// with what refers to the agent removed or repaired in the same step unless
+// keep is set (agent_dependents.go). guard is retireAgentConvGuarded's.
+func retireAgentConvCascading(convID, by, reason string, requireOffline bool, guard func() error, keep bool) (retireConvOutcome, []int64, error) {
+	return retireAgentConvCascadingAs(convID, by, reason, requireOffline, guard, keep, "retired")
+}
+
+// retireAgentConvCascadingAs is retireAgentConvCascading with the word the
+// cascade's notes use for what happened to the agent ("retired", "deleted").
+func retireAgentConvCascadingAs(convID, by, reason string, requireOffline bool, guard func() error, keep bool, verb string) (retireConvOutcome, []int64, error) {
+	agentID, _ := db.AgentIDForConv(convID)
+	var matches func(string) bool
+	if !keep && agentID != "" {
+		matches = agentAssigneeMatcher(agentID)
+	}
+	var removed []db.AgentDependent
+	transition := func(conv, by, reason string) (db.RetireAgentAuthorizationOutcome, error) {
+		retired, err := db.RetireAgentAuthorizationWithOptions(conv, by, reason, false, db.RetireOptions{Cascade: !keep})
+		removed = retired.Removed
+		return retired, err
+	}
+	out, owners, err := retireAgentConvWithTransition(convID, by, reason, requireOffline, guard, false, transition)
+	if err != nil {
+		return out, owners, err
+	}
+	cascade := finishAgentCascade(context.Background(), agentID, by, verb, keep, removed, matches)
+	out.Dependents = &cascade
+	return out, owners, nil
 }
 
 var errRetireRequiresOffline = errors.New("agent is online")
@@ -327,11 +363,13 @@ func handleAgentRetire(w http.ResponseWriter, r *http.Request, convID string) {
 	}
 
 	reason := strings.TrimSpace(query.Get("reason"))
-	outcome, _, err := retireAgentConvWithPrecondition(
+	outcome, _, err := retireAgentConvCascading(
 		convID,
 		enrollmentActor(caller),
 		reason,
 		query.Get("require_offline") == "1",
+		nil,
+		agentDependentsKeep(r),
 	)
 	if err != nil {
 		if errors.Is(err, errRetireRequiresOffline) {

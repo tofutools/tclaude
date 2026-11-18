@@ -231,6 +231,8 @@ type deleteParams struct {
 	Selector string `pos:"true" help:"Target conv: title, full conv-id, or 8+-char prefix"`
 	Force    bool   `long:"force" short:"f" help:"Kill the tmux session before deleting (otherwise refuses when target is alive)"`
 	Yes      bool   `long:"yes" short:"y" help:"Skip the confirmation prompt"`
+	// KeepDependents opts out of the delete's cascade.
+	KeepDependents bool `long:"keep-dependents" help:"Keep what refers to the agent. By default delete also removes its own standing orders and automations and the standing orders addressed to it, cancels the process runs scoped to it, and clears template steps pinned to it (they go back to their role, or to nobody yet). Its cron jobs go with it either way."`
 }
 
 func deleteCmd() *cobra.Command {
@@ -240,6 +242,10 @@ func deleteCmd() *cobra.Command {
 		Long: "Wipes every row that references the conv-id across the agent / " +
 			"conv / cron / succession / sessions tables, plus the .jsonl file " +
 			"and the ~/.claude/session-env/<conv-id> token. " +
+			"\n\n" +
+			"By default delete also takes the agent's standing orders and " +
+			"automations, cancels the process runs scoped to it and clears " +
+			"template steps pinned to it; pass --keep-dependents to leave them. " +
 			"\n\n" +
 			"Refuses when the target's tmux session is alive — pass --force " +
 			"to kill the session inline. " +
@@ -310,7 +316,7 @@ func runDelete(p *deleteParams, stdout, stderr io.Writer, stdin io.Reader) int {
 	//    can't re-ambiguate.
 	failed := 0
 	for _, t := range targets {
-		if rc := deleteOne(t.ConvID, p.Force, stdout, stderr); rc != rcOK {
+		if rc := deleteOne(t.ConvID, p.Force, p.KeepDependents, stdout, stderr); rc != rcOK {
 			failed++
 		}
 	}
@@ -359,20 +365,26 @@ func describeTarget(t *peerEntry) string {
 
 // deleteOne fires DELETE /v1/agent/{conv}/delete for a single conv-id
 // and prints the per-conv outcome. Returns the CLI rc for that delete.
-func deleteOne(convID string, force bool, stdout, stderr io.Writer) int {
-	path := "/v1/agent/" + url.PathEscape(convID) + "/delete"
+func deleteOne(convID string, force, keepDependents bool, stdout, stderr io.Writer) int {
+	q := url.Values{}
 	if force {
-		path += "?force=1"
+		q.Set("force", "1")
+	}
+	setKeepDependents(q, keepDependents)
+	path := "/v1/agent/" + url.PathEscape(convID) + "/delete"
+	if len(q) > 0 {
+		path += "?" + q.Encode()
 	}
 	var resp struct {
-		ConvID            string         `json:"conv_id"`
-		CallerConv        string         `json:"caller_conv,omitempty"`
-		CallerAgentID     string         `json:"caller_agent_id,omitempty"`
-		Action            string         `json:"action"`
-		PreStop           string         `json:"pre_stop,omitempty"`
-		JsonlRemoved      bool           `json:"jsonl_removed"`
-		SessionEnvRemoved bool           `json:"session_env_removed"`
-		DBCounts          map[string]int `json:"db_counts"`
+		ConvID            string           `json:"conv_id"`
+		CallerConv        string           `json:"caller_conv,omitempty"`
+		CallerAgentID     string           `json:"caller_agent_id,omitempty"`
+		Action            string           `json:"action"`
+		PreStop           string           `json:"pre_stop,omitempty"`
+		JsonlRemoved      bool             `json:"jsonl_removed"`
+		SessionEnvRemoved bool             `json:"session_env_removed"`
+		DBCounts          map[string]int   `json:"db_counts"`
+		Dependents        *dependentsReply `json:"dependents"`
 	}
 	if err := DaemonRequest(http.MethodDelete, path, nil, &resp, DaemonOpts{}); err != nil {
 		fmt.Fprintf(stderr, "Error deleting %s: %v\n", short(convID), err)
@@ -399,6 +411,7 @@ func deleteOne(convID string, force bool, stdout, stderr io.Writer) int {
 			fmt.Fprintf(stdout, "  db rows removed: %s\n", strings.Join(nonZero, ", "))
 		}
 	}
+	resp.Dependents.print(stdout)
 	if resp.CallerConv != "" {
 		fmt.Fprintf(stdout, "  called by: %s\n", shortAgentID(resp.CallerAgentID, resp.CallerConv))
 	}

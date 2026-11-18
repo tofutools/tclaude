@@ -21,7 +21,19 @@ type RetireAgentAuthorizationOutcome struct {
 	// while a paused standing order stops injecting high-authority text into
 	// other agents' context.
 	StandingOrdersDisabled int64
-	Retired                bool
+	// Removed lists the rows that went with the agent (RetireOptions.Cascade):
+	// its own cron jobs, standing orders and trigger rules, and the cron jobs
+	// and standing orders addressed to it. Empty when the caller kept them.
+	Removed []AgentDependent
+	Retired bool
+}
+
+// RetireOptions are the choices a retirement takes beyond who and why.
+type RetireOptions struct {
+	// Cascade removes the agent's dependents (ListAgentDependents) in the
+	// same transaction, instead of disabling the cron jobs and standing orders
+	// it owns and leaving the rest.
+	Cascade bool
 }
 
 // RetireAgentAuthorizationByConv atomically removes every permanent
@@ -43,15 +55,21 @@ func RetireAgentAuthorizationAtGeneration(convID, by, reason string) (RetireAgen
 	return retireAgentAuthorizationByConv(convID, by, reason, true)
 }
 func retireAgentAuthorizationByConv(convID, by, reason string, requireCurrent bool) (RetireAgentAuthorizationOutcome, error) {
-	return retireAgentAuthorizationWithDeparture(convID, by, reason, requireCurrent, nil)
+	return retireAgentAuthorization(convID, by, reason, requireCurrent, RetireOptions{}, nil)
+}
+
+// RetireAgentAuthorizationWithOptions is RetireAgentAuthorizationByConv with
+// the operator's choices, at the generation given when requireCurrent is set.
+func RetireAgentAuthorizationWithOptions(convID, by, reason string, requireCurrent bool, opts RetireOptions) (RetireAgentAuthorizationOutcome, error) {
+	return retireAgentAuthorization(convID, by, reason, requireCurrent, opts, nil)
 }
 
 // RetireFederationVisitor couples local grant revocation and the continuation
 // checkpoint in one commit, so recovery cannot observe half a departure.
 func RetireFederationVisitor(conv, local, peer, offer string, identity FederationIdentity) (RetireAgentAuthorizationOutcome, error) {
-	return retireAgentAuthorizationWithDeparture(conv, "system:federation-move", "moved to "+peer, true, func(tx *sql.Tx) error { return departFederationIdentityTx(tx, conv, local, peer, offer, identity) })
+	return retireAgentAuthorization(conv, "system:federation-move", "moved to "+peer, true, RetireOptions{}, func(tx *sql.Tx) error { return departFederationIdentityTx(tx, conv, local, peer, offer, identity) })
 }
-func retireAgentAuthorizationWithDeparture(convID, by, reason string, requireCurrent bool, departure func(*sql.Tx) error) (RetireAgentAuthorizationOutcome, error) {
+func retireAgentAuthorization(convID, by, reason string, requireCurrent bool, opts RetireOptions, departure func(*sql.Tx) error) (RetireAgentAuthorizationOutcome, error) {
 	var out RetireAgentAuthorizationOutcome
 	convID = strings.TrimSpace(convID)
 	if convID == "" {
@@ -153,6 +171,13 @@ func retireAgentAuthorizationWithDeparture(convID, by, reason string, requireCur
 	}
 	if err := syncGroupSourcedSettings(tx, agentID, 0); err != nil {
 		return out, fmt.Errorf("unjoin groups: rebind sandbox group: %w", err)
+	}
+	if opts.Cascade {
+		// Before the disables below, which then find nothing of the agent's
+		// left to pause.
+		if out.Removed, err = deleteAgentDependentsTx(tx, agentID); err != nil {
+			return RetireAgentAuthorizationOutcome{}, err
+		}
 	}
 	res, err := tx.Exec(`UPDATE agent_cron_jobs
 		SET enabled = 0, disabled_reason = ?

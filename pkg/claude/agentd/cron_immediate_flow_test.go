@@ -265,7 +265,7 @@ func TestCronRunNow_RevalidatesRetirementUnderAuthorityLock(t *testing.T) {
 			return
 		}
 		rec := testharness.Serve(f.Mux, agentd.AsHumanPeer(testharness.JSONRequest(
-			t, http.MethodPost, "/v1/agent/"+owner+"/retire?shutdown=0&delete_worktree=0", nil)))
+			t, http.MethodPost, "/v1/agent/"+owner+"/retire?shutdown=0&delete_worktree=0&keep_dependents=1", nil)))
 		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	})
 	t.Cleanup(restore)
@@ -295,7 +295,7 @@ func TestCronCreateImmediate_RetirementWinsBeforeAuthorityLock(t *testing.T) {
 			return
 		}
 		rec := testharness.Serve(f.Mux, agentd.AsHumanPeer(testharness.JSONRequest(
-			t, http.MethodPost, "/v1/agent/"+owner+"/retire?shutdown=0&delete_worktree=0", nil)))
+			t, http.MethodPost, "/v1/agent/"+owner+"/retire?shutdown=0&delete_worktree=0&keep_dependents=1", nil)))
 		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	})
 	t.Cleanup(restore)

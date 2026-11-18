@@ -171,7 +171,7 @@ func handleGroupRetire(w http.ResponseWriter, r *http.Request, g *db.AgentGroup)
 	}
 	out, err := bulkRetireGroupMembers(g, caller,
 		strings.TrimSpace(r.URL.Query().Get("reason")),
-		retireShouldShutdown(r), retireShouldDeleteWorktree(r), nil, selected,
+		retireShouldShutdown(r), retireShouldDeleteWorktree(r), agentDependentsKeep(r), nil, selected,
 		auditRequestEventID(r))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "io", err.Error())
@@ -250,7 +250,7 @@ const bulkRetireGroupConcurrency = 8
 // every worker has settled — checked once at the end so a bulk retire
 // that demotes a member-owner warns about the now-ownerless group,
 // matching the single-agent cleanup path.
-func bulkRetireGroupMembers(g *db.AgentGroup, caller, reason string, shutdown, deleteWorktree bool, filter retireStatusFilter, selected map[string]struct{}, relatedEventID string) (groupRetireResp, error) {
+func bulkRetireGroupMembers(g *db.AgentGroup, caller, reason string, shutdown, deleteWorktree, keepDependents bool, filter retireStatusFilter, selected map[string]struct{}, relatedEventID string) (groupRetireResp, error) {
 	members, err := db.ListAgentGroupMembers(g.ID)
 	if err != nil {
 		return groupRetireResp{}, err
@@ -333,7 +333,7 @@ func bulkRetireGroupMembers(g *db.AgentGroup, caller, reason string, shutdown, d
 				}
 			}
 			res, ownerGroupsPer[i] = retireGroupMember(
-				m.ConvID, by, reason, shutdown, deleteWorktree, retireWorktrees[m.ConvID], res, relatedEventID)
+				m.ConvID, by, reason, shutdown, deleteWorktree, keepDependents, retireWorktrees[m.ConvID], res, relatedEventID)
 		}
 		results[i] = &res
 	})
@@ -371,7 +371,7 @@ func bulkRetireGroupMembers(g *db.AgentGroup, caller, reason string, shutdown, d
 // kept when no shutdown was asked for. The per-member plan rides back on
 // res.Worktree, and its one-line note is folded into Detail so the CLI/table
 // row says what happened.
-func retireGroupMember(convID, by, reason string, shutdown, deleteWorktree bool, wt agentWorktreeView, res memberOpResult, relatedEventID string) (memberOpResult, []int64) {
+func retireGroupMember(convID, by, reason string, shutdown, deleteWorktree, keepDependents bool, wt agentWorktreeView, res memberOpResult, relatedEventID string) (memberOpResult, []int64) {
 	// Gate on the LIVE generation (current conv of an active actor), not just
 	// "active": retire acts on the actor, so a superseded predecessor handle
 	// would demote the live agent. Members always come through as the current
@@ -388,7 +388,7 @@ func retireGroupMember(convID, by, reason string, shutdown, deleteWorktree bool,
 		res.Detail = "state: " + state
 		return res, nil
 	}
-	outcome, ownerGroups, rerr := retireAgentConv(convID, by, reason)
+	outcome, ownerGroups, rerr := retireAgentConvCascading(convID, by, reason, false, nil, keepDependents)
 	if rerr != nil {
 		res.Action = "error"
 		res.Detail = rerr.Error()
@@ -396,6 +396,10 @@ func retireGroupMember(convID, by, reason string, shutdown, deleteWorktree bool,
 	}
 	res.Action = "retired"
 	res.Detail = summarizeRetireOutcome(outcome)
+	res.Dependents = outcome.Dependents
+	if outcome.Dependents != nil {
+		res.Warnings = append(res.Warnings, outcome.Dependents.Warnings...)
+	}
 
 	td := finishRetiredConv(convID, shutdown, deleteWorktree, wt, relatedEventID)
 	res.TmuxSes = td.Stop.TmuxSes
@@ -609,6 +613,9 @@ func summarizeRetireOutcome(o retireConvOutcome) string {
 	}
 	if revoked := o.PermsRevoked + o.SudoRevoked; revoked > 0 {
 		parts = append(parts, fmt.Sprintf("revoked %d grant(s)", revoked))
+	}
+	if summary := o.Dependents.summary(); summary != "" {
+		parts = append(parts, summary)
 	}
 	return strings.Join(parts, ", ")
 }

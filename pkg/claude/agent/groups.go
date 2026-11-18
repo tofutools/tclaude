@@ -935,7 +935,9 @@ type groupsRetireParams struct {
 	Status     string `long:"status" optional:"true" help:"Only retire members of this live status (comma-separated). One or more of: idle, offline, working, awaiting, error. Default (or 'all') = every member." alts:"all,idle,offline,working,awaiting,error"`
 	NoShutdown bool   `long:"no-shutdown" help:"Leave each retired member's running session alive. By default retire also soft-exits the running tmux pane (sends /exit); pass this to keep the processes running."`
 	Reason     string `long:"reason" short:"r" optional:"true" help:"Why the members are being retired (recorded in the audit trail)"`
-	AskHuman   string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s' or '60'). Capped at 300s. Timeout = deny."`
+	// KeepDependents opts out of each member's cascade.
+	KeepDependents bool   `long:"keep-dependents" help:"Keep what refers to each retired member. By default retire also removes its own cron jobs, standing orders and automations and those addressed to it, cancels the process runs scoped to it, and clears template steps pinned to it. Kept, the cron jobs and standing orders it owns are disabled instead."`
+	AskHuman       string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s' or '60'). Capped at 300s. Timeout = deny."`
 }
 
 func groupsRetireCmd() *cobra.Command {
@@ -990,6 +992,7 @@ func runGroupsRetire(p *groupsRetireParams, stdout, stderr io.Writer) int {
 	if status := strings.TrimSpace(p.Status); status != "" {
 		q.Set("status", status)
 	}
+	setKeepDependents(q, p.KeepDependents)
 	path := "/v1/groups/" + url.PathEscape(p.Name) + "/retire?" + q.Encode()
 
 	var resp struct {
