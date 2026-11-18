@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
@@ -84,6 +85,27 @@ func cascadeActor(by string) (store.ActorRef, bool) {
 	return "", false
 }
 
+// cascadeCallerIsAgent reports whether a retirement was asked for by an
+// agent rather than the operator or the daemon. An agent's cascade reaches
+// only what the target owns: it leaves other people's schedules addressed to
+// the target, cancels runs only with process.runs.manage, and clears template
+// steps only with process.templates.manage.
+func cascadeCallerIsAgent(by string) bool {
+	return by != "" && by != "human" && !strings.HasPrefix(by, "system:")
+}
+
+// cascadeAgentMay reports whether an agent caller holds slug for the cascade.
+func cascadeAgentMay(conv, slug string) bool {
+	allowed, err := durableOwnerAllows("retire", conv, slug, ActionContext{})
+	return err == nil && allowed
+}
+
+// agentCascadeTemplateMu serializes clearing pinned template steps. A bulk
+// retire runs its members concurrently, and a template that pins several of
+// them would otherwise be read by each and saved by only the first; the
+// rest would lose the compare-and-swap.
+var agentCascadeTemplateMu sync.Mutex
+
 // agentAssigneeMatcher returns a test for whether an assignee names agentID:
 // its stable id, any of its conversations, or its name when that name no
 // longer reaches any other active agent. Taken before the agent goes, so the
@@ -109,9 +131,11 @@ func agentAssigneeMatcher(agentID string) func(string) bool {
 		if name == "" || !strings.EqualFold(assignee, name) {
 			return false
 		}
-		// A name another active agent also answers to is that agent's too.
-		other := processAgentBySelector(assignee)
-		return other == nil || other.AgentID == agentID
+		// The name is this agent's only while it still resolves to it alone:
+		// a name another agent also answers to (ambiguous), or one that cannot
+		// be looked up right now, is left as written.
+		resolved, _, err := agent.ResolveSelector(assignee)
+		return err == nil && resolved.AgentID == agentID
 	}
 }
 
@@ -249,6 +273,12 @@ func finishAgentCascade(ctx context.Context, agentID, by, verb string, keep bool
 	if err != nil {
 		out.Warnings = append(out.Warnings, "list the agent's runs: "+err.Error())
 	}
+	if cascadeCallerIsAgent(by) && !cascadeAgentMay(by, PermProcessRunsManage) {
+		for _, run := range runs {
+			out.Warnings = append(out.Warnings, "run "+run.ID+" is left parked: cancelling it needs "+PermProcessRunsManage)
+		}
+		runs = nil
+	}
 	for _, run := range runs {
 		if _, err := processRuns.submit(run.ID, cancelActor, processRunInput{cancel: &processRunCancelInput{note: note}}); err != nil {
 			out.Warnings = append(out.Warnings, fmt.Sprintf("cancel run %s: %v", run.ID, err))
@@ -260,9 +290,11 @@ func finishAgentCascade(ctx context.Context, agentID, by, verb string, keep bool
 	if !canAct || matches == nil {
 		return out
 	}
-	if actor != "human:operator" && !cascadeAgentMayEditTemplates(by) {
+	if cascadeCallerIsAgent(by) && !cascadeAgentMay(by, PermProcessTemplatesManage) {
 		return out
 	}
+	agentCascadeTemplateMu.Lock()
+	defer agentCascadeTemplateMu.Unlock()
 	fs, err := store.NewFS(processStoreRoot())
 	if err != nil {
 		out.Warnings = append(out.Warnings, "process templates: "+err.Error())
@@ -281,6 +313,13 @@ func finishAgentCascade(ctx context.Context, agentID, by, verb string, keep bool
 			out.Warnings = append(out.Warnings, "template "+id+" is locked by the operator; its steps still name the agent")
 			return
 		}
+		// The editor's own save checks: never rewrite a template whose source
+		// the model cannot hold, or one past its graph budgets.
+		if parsed.Diagnostics.HasSourceFidelityError() || parsed.Diagnostics.HasNormalizedGraphBudgetError() ||
+			model.PreflightNormalizedGraphCardinality(parsed.Template).HasErrors() {
+			out.Warnings = append(out.Warnings, "template "+id+" needs fixing in the editor first; its steps still name the agent")
+			return
+		}
 		_, err := fs.PutTemplateEditorSourceNoted(ctx, parsed.Template, parsed.SourceHash, actor, saveNote)
 		var conflict *store.TemplateSourceConflictError
 		switch {
@@ -296,13 +335,6 @@ func finishAgentCascade(ctx context.Context, agentID, by, verb string, keep bool
 		out.Warnings = append(out.Warnings, "process templates: "+err.Error())
 	}
 	return out
-}
-
-// cascadeAgentMayEditTemplates reports whether an agent that retires another
-// may also save the templates that named it: only with process.templates.manage.
-func cascadeAgentMayEditTemplates(conv string) bool {
-	allowed, err := durableOwnerAllows("retire", conv, PermProcessTemplatesManage, ActionContext{})
-	return err == nil && allowed
 }
 
 // kickAgentProcessDispatches has every step the agent holds re-resolve now:

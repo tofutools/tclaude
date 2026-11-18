@@ -80,7 +80,8 @@ func retireAgentConvCascadingAs(convID, by, reason string, requireOffline bool, 
 	}
 	var removed []db.AgentDependent
 	transition := func(conv, by, reason string) (db.RetireAgentAuthorizationOutcome, error) {
-		retired, err := db.RetireAgentAuthorizationWithOptions(conv, by, reason, false, db.RetireOptions{Cascade: !keep})
+		retired, err := db.RetireAgentAuthorizationWithOptions(conv, by, reason, false,
+			db.RetireOptions{Cascade: !keep, OwnedOnly: cascadeCallerIsAgent(by)})
 		removed = retired.Removed
 		return retired, err
 	}

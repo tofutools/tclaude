@@ -34,6 +34,10 @@ type RetireOptions struct {
 	// same transaction, instead of disabling the cron jobs and standing orders
 	// it owns and leaving the rest.
 	Cascade bool
+	// OwnedOnly limits the cascade to the rows the agent owns, leaving the
+	// cron jobs and standing orders others address to it. It is for an agent
+	// that retires another: its reach is the target, not everyone's schedules.
+	OwnedOnly bool
 }
 
 // RetireAgentAuthorizationByConv atomically removes every permanent
@@ -175,7 +179,7 @@ func retireAgentAuthorization(convID, by, reason string, requireCurrent bool, op
 	if opts.Cascade {
 		// Before the disables below, which then find nothing of the agent's
 		// left to pause.
-		if out.Removed, err = deleteAgentDependentsTx(tx, agentID); err != nil {
+		if out.Removed, err = deleteAgentDependentsTx(tx, agentID, opts.OwnedOnly); err != nil {
 			return RetireAgentAuthorizationOutcome{}, err
 		}
 	}

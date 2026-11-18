@@ -54,6 +54,16 @@ func ListAgentDependents(agentID string) ([]AgentDependent, error) {
 }
 
 func listAgentDependents(q dependentQuerier, agentID string) ([]AgentDependent, error) {
+	return listAgentDependentsVia(q, agentID, false)
+}
+
+// listAgentDependentsVia is listAgentDependents, limited to the rows the
+// agent owns when ownedOnly is set.
+func listAgentDependentsVia(q dependentQuerier, agentID string, ownedOnly bool) ([]AgentDependent, error) {
+	addressed := "OR target_agent = ?"
+	if ownedOnly {
+		addressed = "AND ? <> ''"
+	}
 	var out []AgentDependent
 	read := func(kind, query string, args ...any) error {
 		rows, err := q.Query(query, args...)
@@ -81,13 +91,13 @@ func listAgentDependents(q dependentQuerier, agentID string) ([]AgentDependent, 
 		return rows.Err()
 	}
 	if err := read(AgentDependentCron, `SELECT id, name, owner_agent, ''
-		FROM agent_cron_jobs WHERE owner_agent = ? OR target_agent = ? ORDER BY id`, agentID, agentID); err != nil {
+		FROM agent_cron_jobs WHERE owner_agent = ? `+addressed+` ORDER BY id`, agentID, agentID); err != nil {
 		return nil, err
 	}
 	if err := read(AgentDependentStandingOrder, `SELECT o.id, o.name, o.owner_agent, COALESCE((
 			SELECT GROUP_CONCAT(DISTINCT s.harness) FROM agent_standing_order_hook_selectors s WHERE s.order_id = o.id
 		), '')
-		FROM agent_standing_orders o WHERE o.owner_agent = ? OR o.target_agent = ? ORDER BY o.id`, agentID, agentID); err != nil {
+		FROM agent_standing_orders o WHERE o.owner_agent = ? `+strings.ReplaceAll(addressed, "target_agent", "o.target_agent")+` ORDER BY o.id`, agentID, agentID); err != nil {
 		return nil, err
 	}
 	if err := read(AgentDependentTriggerRule, `SELECT id, name, owner_agent, ''
@@ -99,8 +109,8 @@ func listAgentDependents(q dependentQuerier, agentID string) ([]AgentDependent, 
 
 // deleteAgentDependentsTx removes every row ListAgentDependents names, with
 // the ledgers that only mean something for them, and returns what it removed.
-func deleteAgentDependentsTx(tx *sql.Tx, agentID string) ([]AgentDependent, error) {
-	deps, err := listAgentDependents(tx, agentID)
+func deleteAgentDependentsTx(tx *sql.Tx, agentID string, ownedOnly bool) ([]AgentDependent, error) {
+	deps, err := listAgentDependentsVia(tx, agentID, ownedOnly)
 	if err != nil {
 		return nil, err
 	}

@@ -10,6 +10,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/process/engine"
+	"github.com/tofutools/tclaude/pkg/claude/process/model"
 	"github.com/tofutools/tclaude/pkg/claude/process/store"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
@@ -111,4 +112,38 @@ func TestAgentCascade_RetireCancelsScopedRunAndClearsPinnedStep(t *testing.T) {
 			assert.False(t, ok)
 		})
 	}
+}
+
+// Scenario: a group retire takes its members concurrently. A template that
+// pins two of them gets both steps cleared, not just whichever member's save
+// came first.
+func TestAgentCascade_GroupRetireClearsEveryPinnedMember(t *testing.T) {
+	f, root := processRuntimeFlow(t)
+	f.HaveGroup("pinned-crew")
+	havePerformerAgent(t, f, "pinned-crew", "cpa0-1111-2222-3333-4444", "pinned-a", "dev", "offline")
+	havePerformerAgent(t, f, "pinned-crew", "cpb0-1111-2222-3333-4444", "pinned-b", "dev", "offline")
+	first, second := devPerformer(), devPerformer()
+	first.Assignee, second.Assignee = "pinned-a", "pinned-b"
+	putProcessRuntimeTemplate(t, root, &model.Template{
+		APIVersion: model.APIVersion, Kind: model.Kind, ID: "two-pins", Start: "start",
+		Nodes: map[string]model.Node{
+			"start":  {Type: model.NodeTypeStart, Next: model.Next{"next": "first"}},
+			"first":  {Type: model.NodeTypeTask, Performer: &first, Next: model.Next{"next": "second"}},
+			"second": {Type: model.NodeTypeTask, Performer: &second, Next: model.Next{"next": "end"}},
+			"end":    {Type: model.NodeTypeEnd, Result: "success"},
+		},
+	})
+
+	rec := testharness.Serve(f.Mux, agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodPost,
+		"/v1/groups/pinned-crew/retire?shutdown=0", nil)))
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+	fs, err := store.NewFS(root)
+	require.NoError(t, err)
+	head, err := fs.GetTemplateHeadGeneration(t.Context(), "two-pins")
+	require.NoError(t, err)
+	current, err := fs.GetTemplate(t.Context(), head.Ref)
+	require.NoError(t, err)
+	assert.Empty(t, current.Nodes["first"].Performer.Assignee, rec.Body.String())
+	assert.Empty(t, current.Nodes["second"].Performer.Assignee, rec.Body.String())
 }
