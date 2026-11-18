@@ -666,12 +666,33 @@ only when it is merged: a branch with commits that main or master (locally
 or on origin) does not reach is kept, and the outcome says how many. `--reason` is
 recorded.
 
+Retire also takes what exists only for the agent and repairs what it
+shares:
+
+- It removes the agent's own cron jobs, standing orders and automations
+  (trigger rules), plus the cron jobs and standing orders addressed to it.
+- It cancels the process runs scoped to it.
+- It clears template steps pinned to it. Those steps go back to their role,
+  or to nobody yet, saved as a new template version with the note
+  "cleared <agent> after it was retired". A step pinned to an agent is
+  cleared only when the operator retires it, or an agent with
+  `process.templates.manage` does.
+
+`--keep-dependents` keeps all of that instead. The cron jobs and standing
+orders the agent owns are then disabled, and a reinstate does not turn them
+back on.
+
+Either way, a running step the agent held falls back to its If-nobody rule
+right away. The outcome lists what went.
+
 `reinstate <selector>` returns a retired agent to active status — old
 memberships and grants do **not** come back. Authorization is
 `agent.promote` or ownership.
 
 `delete <selector>` is the permanent wipe: all database rows, the
-transcript, the session token. It refuses while the tmux session is alive
+transcript, the session token. It first retires the agent, with the same
+cascade (`--keep-dependents` applies here too, though its cron jobs go with
+its rows either way). It refuses while the tmux session is alive
 unless `--force`, requires `agent.delete` (not granted by default) or
 group ownership, and refuses self-deletion (use `tclaude conv rm`).
 
