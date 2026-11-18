@@ -412,3 +412,32 @@ func TestDownsampleUsageResetsBoundsMarkers(t *testing.T) {
 	assert.Equal(t, resets[0].At, downsampled[0].At)
 	assert.Equal(t, resets[len(resets)-1].At, downsampled[len(downsampled)-1].At)
 }
+
+// tk_1d708cf7: Copilot's monthly allowance, read from the account every 15
+// minutes whether or not an agent runs, shows its month by default: usage
+// made outside tclaude early in the month stays on the graph.
+func TestCollectUsageHistoryShowsAMonthlyAllowanceOverItsMonth(t *testing.T) {
+	setupTestDB(t)
+	now := time.Now().UTC().Truncate(time.Second)
+	for _, sample := range []struct {
+		ago  time.Duration
+		used float64
+	}{{20 * 24 * time.Hour, 120}, {10 * 24 * time.Hour, 400}, {time.Hour, 610}} {
+		_, err := db.SaveSubscriptionUsageSample(db.SubscriptionUsageSample{
+			Provider: db.SubscriptionProviderGitHub, ObservedAt: now.Add(-sample.ago), Source: "account.getQuota",
+			Windows: []db.SubscriptionUsageWindow{{Name: "monthly", UsedPercent: sample.used / 15, UsedUnits: sample.used, LimitUnits: 1500}},
+		})
+		require.NoError(t, err)
+	}
+	monthly := usageSeriesKey{provider: db.SubscriptionProviderGitHub, window: "monthly"}
+
+	out, err := collectUsageHistory(now.Add(-7*24*time.Hour), nil, now)
+	require.NoError(t, err)
+	require.Len(t, out.Series, 1)
+	assert.Len(t, out.Series[0].Points, 3, "the default view of a monthly allowance is its month, not the week")
+	assert.Equal(t, now.Add(-usageMonthlyDefaultSpan).Format(time.RFC3339Nano), out.Series[0].From)
+
+	narrowed, err := collectUsageHistory(now.Add(-7*24*time.Hour), map[usageSeriesKey]time.Time{monthly: now.Add(-7 * 24 * time.Hour)}, now)
+	require.NoError(t, err)
+	assert.Len(t, narrowed.Series[0].Points, 1, "a span the operator picks for it still holds")
+}

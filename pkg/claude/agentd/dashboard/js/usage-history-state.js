@@ -16,6 +16,14 @@ const DEFAULT_HISTORY_HOURS = 168;
 const DEFAULT_LOOKAHEAD_HOURS = 168;
 const FORECAST_ALGOS = USAGE_FORECAST_ALGOS.map((algo) => algo.id);
 
+// A monthly allowance (Copilot's) defaults to 30 days, as the server does
+// for a series the request names no span for (usageMonthlyDefaultSpan in
+// usage_history.go): a week of a month hides how the month went.
+const MONTHLY_DEFAULT_HOURS = 720;
+export function seriesDefaultHours(key, fallbackHours) {
+  return String(key).endsWith(':monthly') ? Math.max(fallbackHours, MONTHLY_DEFAULT_HOURS) : fallbackHours;
+}
+
 function errorMessage(error) { return String(error?.message || error); }
 
 // A key must match the server's spans grammar (provider:window, both
@@ -38,7 +46,7 @@ function parseStoredSpans(raw) {
       if (HISTORY_HOURS.includes(Number(value?.hours))) entry.hours = Number(value.hours);
       if (LOOKAHEAD_HOURS.includes(Number(value?.lookaheadHours))) entry.lookaheadHours = Number(value.lookaheadHours);
       if (FORECAST_ALGOS.includes(value?.algo)) entry.algo = value.algo;
-      if (['percent', 'units'].includes(value?.unit)) entry.unit = value.unit;
+      if (['percent', 'units', 'usd'].includes(value?.unit)) entry.unit = value.unit;
       if (Object.keys(entry).length) out[key] = entry;
     }
     return out;
@@ -62,7 +70,7 @@ export function createUsageHistoryState({
   const request = signal({ phase: 'idle', requestId: 0, hasLoaded: false, error: null });
   let initialized = false;
   const spanFor = (spans, fallback, key) => ({
-    hours: spans[key]?.hours ?? fallback.hours,
+    hours: spans[key]?.hours ?? seriesDefaultHours(key, fallback.hours),
     lookaheadHours: spans[key]?.lookaheadHours ?? fallback.lookaheadHours,
     algo: spans[key]?.algo ?? fallback.algo,
     unit: spans[key]?.unit ?? 'percent',
@@ -77,7 +85,7 @@ export function createUsageHistoryState({
       series: [...(payload.value?.series || [])].sort(usageSeriesSort),
       spanFor: (key) => spanFor(spans, fallback, key),
       spanOverrides: Object.fromEntries(Object.entries(spans)
-        .filter(([, entry]) => entry.hours !== undefined && entry.hours !== fallback.hours)
+        .filter(([key, entry]) => entry.hours !== undefined && entry.hours !== seriesDefaultHours(key, fallback.hours))
         .map(([key, entry]) => [key, entry.hours])),
       request: request.value,
       // active: the Quota view is on screen. polling: its payload must stay
@@ -130,7 +138,7 @@ export function createUsageHistoryState({
     return true;
   }
   function setSeriesUnit(key, value) {
-    if (typeof key !== 'string' || !SERIES_KEY_PATTERN.test(key) || !['percent', 'units'].includes(value)) return false;
+    if (typeof key !== 'string' || !SERIES_KEY_PATTERN.test(key) || !['percent', 'units', 'usd'].includes(value)) return false;
     persistSpan(key, { unit: value });
     return true;
   }

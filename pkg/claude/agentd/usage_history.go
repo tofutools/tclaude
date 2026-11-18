@@ -16,6 +16,9 @@ import (
 
 const (
 	defaultUsageHistoryHours = 7 * 24
+	// usageMonthlyDefaultSpan is a monthly window's default view (the
+	// dashboard's 30d span), when the request names none for it.
+	usageMonthlyDefaultSpan  = 30 * 24 * time.Hour
 	maxUsageHistoryHours     = 90 * 24
 	usageResetDropPercent    = 2.0
 	usageForecastMinSamples  = 3
@@ -122,9 +125,23 @@ type usageCoverageWarning struct {
 
 type usageSeriesKey struct{ provider, window string }
 
+// usageSeriesViewFrom is where one series' view starts: the span the request
+// names for it, else the shared one. A monthly allowance reads as a month, so
+// without a span of its own it shows at least 30 days: a week of it hides how
+// the month went.
+func usageSeriesViewFrom(key usageSeriesKey, since time.Time, seriesSince map[usageSeriesKey]time.Time, now time.Time) time.Time {
+	if override, ok := seriesSince[key]; ok {
+		return override
+	}
+	if monthly := now.Add(-usageMonthlyDefaultSpan); key.window == "monthly" && monthly.Before(since) {
+		return monthly
+	}
+	return since
+}
+
 // collectUsageHistory builds one series per provider × quota window. Each
 // series is clipped to its own view start: the per-series override when the
-// request carried one, the shared default otherwise. Series with retained
+// request carried one, the shared default otherwise (a month at least for a monthly window). Series with retained
 // rows but none inside their view are kept with empty points so a card whose
 // span the operator narrowed past its data never loses its span controls.
 func collectUsageHistory(since time.Time, seriesSince map[usageSeriesKey]time.Time, now time.Time) (usageHistoryResponse, error) {
@@ -165,10 +182,7 @@ func collectUsageHistory(since time.Time, seriesSince map[usageSeriesKey]time.Ti
 				rows[i].ResetsAt = copilotMonthlyResetAt(rows[i].ObservedAt)
 			}
 		}
-		seriesFrom := since
-		if override, ok := seriesSince[key]; ok {
-			seriesFrom = override
-		}
+		seriesFrom := usageSeriesViewFrom(key, since, seriesSince, now)
 		series := usageHistorySeries{
 			Provider: key.provider, WindowName: key.window,
 			From:   seriesFrom.UTC().Format(time.RFC3339Nano),
@@ -212,10 +226,7 @@ func collectUsageHistory(since time.Time, seriesSince map[usageSeriesKey]time.Ti
 	}
 	coverageFrom := make(map[string]time.Time)
 	for key := range bySeries {
-		effective := since
-		if override, ok := seriesSince[key]; ok {
-			effective = override
-		}
+		effective := usageSeriesViewFrom(key, since, seriesSince, now)
 		if prior, ok := coverageFrom[key.provider]; !ok || effective.Before(prior) {
 			// A provider-level warning qualifies every visible card for that
 			// provider, so its range is the union of those cards' spans.

@@ -53,6 +53,8 @@ test('usage spans are stored per series with legacy globals as the default', asy
   assert.deepEqual(state.view.value.spanFor('openai:five_hour'), { hours: 2160, lookaheadHours: 5, algo: 'recent', unit: 'percent' });
 	assert.equal(state.setSeriesUnit('github:monthly', 'units'), true);
 	assert.equal(state.view.value.spanFor('github:monthly').unit, 'units');
+	assert.equal(state.setSeriesUnit('github:monthly', 'usd'), true);
+	assert.equal(state.view.value.spanFor('github:monthly').unit, 'usd');
 	assert.equal(state.setSeriesUnit('github:monthly', 'dollars'), false);
   assert.deepEqual(state.view.value.spanOverrides, { 'anthropic:seven_day': 24, 'openai:five_hour': 2160 },
     'the prediction algorithm is read from the payload the server already sent, never requested');
@@ -108,4 +110,12 @@ test('usage span store tolerates corrupt persisted JSON', async (t) => {
   assert.deepEqual(state.view.value.spanFor('anthropic:seven_day'),
     { hours: 168, lookaheadHours: 168, algo: 'span', unit: 'percent' });
   assert.deepEqual(state.view.value.spanOverrides, {});
+});
+
+test('a monthly allowance defaults to 30 days; a span picked for it is still sent', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { seriesDefaultHours } = await harness.importDashboardModule('js/usage-history-state.js');
+  assert.equal(seriesDefaultHours('github:monthly', 168), 720);
+  assert.equal(seriesDefaultHours('github:monthly', 2160), 2160, 'a longer default stays');
+  assert.equal(seriesDefaultHours('anthropic:seven_day', 168), 168);
 });

@@ -3,6 +3,7 @@ import { useEffect, useState } from 'preact/hooks';
 import htm from 'htm';
 import { Button } from './ui-components.js';
 import { AsyncLoadState } from './async-load-state.js';
+import { fmtAicUSD } from './copilot-credits.js';
 import { UsageHistoryChart } from './usage-history-chart.js';
 import { isWizardActive } from './slop.js';
 import {
@@ -91,7 +92,7 @@ function UsageEmptyRangeControls({ hours, onSetHours, wizard }) {
 // N recitals of "Observed Forecast Reset Now" before each chart.
 function UsageChartLegend({ wizard, unit = 'percent' }) {
   return html`<div class="usage-chart-legend" aria-hidden="true">
-    <span><i class="usage-legend-swatch observed"></i>${unit === 'units' ? 'Observed AIC' : wizard ? 'Channeled' : 'Observed'}</span>
+    <span><i class="usage-legend-swatch observed"></i>${unit === 'units' ? 'Observed AIC' : unit === 'usd' ? 'Observed, in dollars' : wizard ? 'Channeled' : 'Observed'}</span>
     <span><i class="usage-legend-swatch forecast"></i>${wizard ? 'Prophecy' : 'Forecast'}</span>
     <span><i class="usage-legend-swatch reset"></i>${wizard ? 'Replenishment' : 'Reset'}</span>
     <span><i class="usage-legend-swatch now"></i>${wizard ? 'This moment' : 'Now'}</span>
@@ -109,8 +110,9 @@ function UsageSeriesCard({
   const selectedForecast = usageForecastOf(series, span.algo);
   const canShowUnits = series.provider === 'github' && series.window_name === 'monthly'
     && Number(latest?.limit_units || 0) > 0;
-  const unitLimit = canShowUnits && span.unit === 'units' ? Number(latest?.limit_units || 0) : 0;
-  const forecast = usageForecastView(selectedForecast, now, latest?.at, wizard, unitLimit);
+  const unitLimit = canShowUnits && ['units', 'usd'].includes(span.unit) ? Number(latest?.limit_units || 0) : 0;
+  const usd = unitLimit > 0 && span.unit === 'usd';
+  const forecast = usageForecastView(selectedForecast, now, latest?.at, wizard, unitLimit, usd);
   const resetCount = series.reset_count ?? series.resets?.length ?? 0;
   const windowLabel = usageWindowScopeLabel(series, wizard);
   const scope = usageScopeLabel(series, wizard);
@@ -121,9 +123,12 @@ function UsageSeriesCard({
       <div><span class="ui-eyebrow usage-provider">${usageProviderLabel(series.provider)}</span>
         <h3>${windowLabel}</h3></div>
       <div class="usage-current">${canShowUnits && html`<span class="ui-seg usage-unit-toggle" role="group" aria-label="Copilot usage units">
-        <${Button} size="sm" pressed=${span.unit !== "units"} onClick=${() => onSetUnit('percent')}>%<//>
+        <${Button} size="sm" pressed=${!['units', 'usd'].includes(span.unit)} onClick=${() => onSetUnit('percent')}>%<//>
         <${Button} size="sm" pressed=${span.unit === "units"} onClick=${() => onSetUnit('units')}>AIC<//>
-      </span>`}<strong>${latest ? unitLimit > 0
+        <${Button} size="sm" pressed=${span.unit === "usd"} title="AIC in dollars: one AIC is $0.01" onClick=${() => onSetUnit('usd')}>$<//>
+      </span>`}<strong>${latest ? usd
+        ? `${fmtAicUSD(latest.used_units)} / ${fmtAicUSD(unitLimit)}`
+        : unitLimit > 0
         ? `${formatUsageUnits(latest.used_units).replace(' AIC', '')} / ${formatUsageUnits(unitLimit)}`
         : `${latest.pct.toFixed(1)}%` : '—'}</strong>
         <span>${sampled}${reset ? ` · ${reset}` : ''}</span></div>
@@ -131,9 +136,9 @@ function UsageSeriesCard({
     <${UsageSpanControls} scope=${scope} span=${span} onSetHours=${onSetHours} onSetLookahead=${onSetLookahead}
       onSetForecastAlgo=${onSetForecastAlgo} wizard=${wizard} />
     <${UsageHistoryChart} series=${series} from=${series.from ?? payload.from} generatedAt=${payload.generated_at}
-      forecast=${selectedForecast} lookaheadHours=${span.lookaheadHours} unit=${unitLimit > 0 ? 'units' : 'percent'}
+      forecast=${selectedForecast} lookaheadHours=${span.lookaheadHours} unit=${usd ? 'usd' : unitLimit > 0 ? 'units' : 'percent'}
       wizard=${wizard} onTogglePoint=${onTogglePoint} />
-    <${UsageChartLegend} wizard=${wizard} unit=${unitLimit > 0 ? 'units' : 'percent'} />
+    <${UsageChartLegend} wizard=${wizard} unit=${usd ? 'usd' : unitLimit > 0 ? 'units' : 'percent'} />
     <div class=${`usage-card-footer usage-forecast ${forecast.tone}`}>
       <strong>${forecast.headline}</strong>
       ${(forecast.lines || []).map((line) => html`<span class="usage-forecast-line-copy" key=${line}>${line}</span>`)}

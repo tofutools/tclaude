@@ -42,7 +42,8 @@ type accountUsageResponse struct {
 
 // collectAccountUsage preserves observed values, including expired readings.
 // Unlike dashboard bars, missing windows are never synthesized as zero usage.
-// Forecasts use the same seven-day view and estimators as the Usage tab.
+// Forecasts use the same default views (seven days; a month for a monthly
+// window) and estimators as the Usage tab.
 func collectAccountUsage(now time.Time, idleTimeout time.Duration) (accountUsageResponse, error) {
 	history, err := collectUsageHistory(now.Add(-7*24*time.Hour), nil, now)
 	if err != nil {
