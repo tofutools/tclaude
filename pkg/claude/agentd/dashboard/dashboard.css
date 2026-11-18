@@ -18343,6 +18343,8 @@ body.wizard .process-node-rule input { background: #1a1430; border-color: rgba(1
 .gm-decider.is-open .gm-decider-row { border: 1px solid #388bfd; border-radius: 6px; padding: 1px 2px; }
 .gm-decider-summary { flex: 0 1 auto; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 55%; }
 .gm-decider-panel { display: grid; gap: 6px; margin: 4px 0 0 18px; padding: 8px; border-left: 2px solid #30363d; background: #161b22; border-radius: 0 6px 6px 0; }
+.gm-decider-life { display: flex; align-items: center; gap: 6px; margin: 4px 0 0 26px; min-width: 0; }
+.gm-decider-life > .gq-lifetime-select { flex: 1 1 0; min-width: 0; }
 .gm-decider-panel .gm-field { grid-template-columns: 80px minmax(0, 1fr); }
 .gm-stuck { margin: 2px 0 0; padding: 6px 8px; border: 1px solid #9e6a03; border-radius: 6px; background: rgba(187, 128, 9, 0.12); color: #e3b341; font-size: 12px; }
 .ui-tag.gm-loop { display: inline-flex; align-items: center; gap: 3px; }

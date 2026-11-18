@@ -211,13 +211,13 @@ function DeciderRow({ view, id, index, decider, shared, open, onToggle, roster, 
     const changed = setDecider(view, id, index, who);
     onApply(decider.kind === 'agent' ? changed : withReviewerDefault(changed.view, id, index));
   }} />
-      ${agent && decider.fallback?.action === 'spawn' && html`<${LifetimePicker} fallback=${decider.fallback} decider=${true}
-        label=${`Afterwards, vote ${index + 1}'s agent`}
-        onChange=${(lifetime) => onApply(setDeciderFallback(view, id, index, withLifetime(decider.fallback, lifetime, { decider: true })))} />`}
       ${!open && summary && html`<span class="gq-dim gm-decider-summary" data-mini-decider-summary=${index}>${summary}</span>`}
       <${Button} size="sm" icon=${true} variant="ghost danger" aria-label=${`Remove decider ${index + 1}`}
         onClick=${() => onApply(removeDecider(view, id, index))}>✕<//>
     </div>
+    ${agent && decider.fallback?.action === 'spawn' && html`<div class="gm-decider-life" data-mini-decider-lifetime=${index}><span class="gq-dim">afterwards</span>
+      <${LifetimePicker} fallback=${decider.fallback} decider=${true} label=${`Afterwards, vote ${index + 1}'s agent`}
+        onChange=${(lifetime) => onApply(setDeciderFallback(view, id, index, withLifetime(decider.fallback, lifetime, { decider: true })))} /></div>`}
     ${open && html`<div class="gm-decider-panel" id=${panel} data-mini-decider-panel=${index}>
       <label class="gm-field"><span>Its own ask</span><${TypedField} as="textarea" name="gm-decider-ask" rows="2" data-mini-decider-ask=${index}
         value=${collapseParamShorthand(deciderOwnAsk(node, index, shared))} placeholder="the same as Asks"
