@@ -182,6 +182,21 @@ func ListOpenProcessAgentDispatches(afterRunID, afterCommandID string, limit int
 		afterRunID, afterRunID, afterCommandID, limit)
 }
 
+// ListLiveSpawnedProcessDispatches returns one page of the dispatches whose
+// performer a run spawned (resolution "spawned") and which is still active,
+// in (run, command) order after the cursor: the agents a run may yet retire
+// per its step's lifetime. The resolution value is the daemon's
+// processResolutionSpawned.
+func ListLiveSpawnedProcessDispatches(afterRunID, afterCommandID string, limit int) ([]ProcessAgentDispatch, error) {
+	if limit <= 0 || limit > MaxProcessDispatchReadPage {
+		return nil, fmt.Errorf("%w: dispatch page size must be 1..%d", ErrProcessRunInvalid, MaxProcessDispatchReadPage)
+	}
+	return queryProcessAgentDispatches(`WHERE resolution = 'spawned' AND agent_id != ''
+		AND agent_id IN (SELECT agent_id FROM agents WHERE retired_at IS NULL)
+		AND (run_id > ? OR (run_id = ? AND command_id > ?))
+		ORDER BY run_id, command_id LIMIT ?`, afterRunID, afterRunID, afterCommandID, limit)
+}
+
 // ListProcessAgentDispatchesForAgent returns the dispatches one agent has been
 // given, newest first. With openOnly it is the agent's current process work.
 func ListProcessAgentDispatchesForAgent(agentID string, openOnly bool, limit int) ([]ProcessAgentDispatch, error) {

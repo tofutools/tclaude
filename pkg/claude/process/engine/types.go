@@ -306,6 +306,11 @@ type AgentCommand struct {
 	// before fallbacks existed; Fallback() derives it from Spawn then.
 	FallbackAction  string `json:"fallbackAction,omitempty"`
 	FallbackProfile string `json:"fallbackProfile,omitempty"`
+	// FallbackLifetime is the authored lifetime of an agent the fallback
+	// spawns (model.PerformerFallback.Lifetime), empty when none is authored:
+	// the default is resolved where it is used (Definition.SpawnLifetime), so
+	// commands prepared before lifetimes existed compare equal.
+	FallbackLifetime string `json:"fallbackLifetime,omitempty"`
 	// RetryMode is the authored on-fail mode for the node's next attempt:
 	// model.RetryModeFreshAttempt or model.RetryModeFeedbackSameSession.
 	RetryMode string `json:"retryMode,omitempty"`

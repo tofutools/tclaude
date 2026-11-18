@@ -40,6 +40,9 @@ func init() {
 		if status == engine.RunFailed {
 			notifyProcessRunFailed(runID)
 		}
+		// Its spawned performers whose lifetime was the run go now; one still
+		// busy goes on a later tick.
+		reapProcessSpawnedPerformers()
 	})
 }
 

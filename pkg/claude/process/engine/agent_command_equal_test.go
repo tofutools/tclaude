@@ -10,7 +10,7 @@ import (
 // re-prepare to a different command unnoticed: this fails until the new
 // field is compared there, and the count bumped here.
 func TestAgentCommandsEqualCoversEveryField(t *testing.T) {
-	if got := reflect.TypeFor[AgentCommand]().NumField(); got != 15 {
+	if got := reflect.TypeFor[AgentCommand]().NumField(); got != 16 {
 		t.Fatalf("AgentCommand has %d fields: compare the new one in agentCommandsEqual, then update this count", got)
 	}
 	base := AgentCommand{DifferentFrom: []string{"a"}, Captures: []string{"plan"}}
