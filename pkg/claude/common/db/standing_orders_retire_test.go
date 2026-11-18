@@ -5,6 +5,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/tofutools/tclaude/pkg/claude/hookevents"
 )
 
 // Retiring an agent must take its standing orders with it, in the same
@@ -284,4 +286,47 @@ func TestStandingOrder_RetiringPrimaryGroupLeavesReusableOrderEnabled(t *testing
 	assert.True(t, got.Enabled)
 	assert.Equal(t, current.RowVersion, got.RowVersion,
 		"a skipped retirement does not create a spurious write conflict")
+}
+
+// Deleting an agent removes its agents row rather than marking it retired, so
+// the owner join reads no retired_at at all. That must not pass for a live
+// owner: an order whose owner is gone stays silent on the hook path, in
+// explain, and in the hook declarations.
+func TestStandingOrder_DeletedOwnerDoesNotFire(t *testing.T) {
+	setupTestDB(t)
+	const owner = "standing-deleted-owner"
+	agentID, _, err := EnsureAgentForConv(owner, "test")
+	require.NoError(t, err)
+
+	o := sampleOrder("owned-by-deleted")
+	o.OwnerAgent = agentID
+	o.OwnerConv = owner
+	o.TriggerEvent = StandingTriggerHookEvent
+	o.TriggerSources = nil
+	o.HookSelectors = []hookevents.Selector{{Harness: hookevents.HarnessClaude, Event: "PostCompact"}}
+	id, err := InsertStandingOrder(o)
+	require.NoError(t, err)
+
+	live, err := ListEnabledStandingOrdersForEvent(StandingTriggerHookEvent, hookevents.HarnessClaude, "PostCompact")
+	require.NoError(t, err)
+	require.Len(t, live, 1, "a live owner's order fires")
+
+	_, err = DeleteAgentByConvID(owner)
+	require.NoError(t, err)
+	gone, err := GetAgent(agentID)
+	require.NoError(t, err)
+	require.Nil(t, gone, "the delete removed the agents row")
+	still, err := GetStandingOrder(id)
+	require.NoError(t, err)
+	require.NotNil(t, still, "the order row is still there")
+
+	fires, err := ListEnabledStandingOrdersForEvent(StandingTriggerHookEvent, hookevents.HarnessClaude, "PostCompact")
+	require.NoError(t, err)
+	assert.Empty(t, fires, "an order whose owner was deleted must not fire")
+	explain, err := ListStandingOrdersForExplain()
+	require.NoError(t, err)
+	assert.Empty(t, explain, "explain must not predict a delivery the hot path will never make")
+	events, err := EnabledStandingOrderHookEvents(hookevents.HarnessClaude)
+	require.NoError(t, err)
+	assert.Empty(t, events, "a dead order must not add hook declarations")
 }

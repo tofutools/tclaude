@@ -728,7 +728,7 @@ func ListStandingOrdersForExplain() ([]*StandingOrder, error) {
 		return nil, err
 	}
 	return listStandingOrders(d,
-		standingSelect+` WHERE (o.owner_agent = '' OR ow.retired_at IS NULL) ORDER BY o.id`)
+		standingSelect+` WHERE (o.owner_agent = '' OR (ow.agent_id IS NOT NULL AND ow.retired_at IS NULL)) ORDER BY o.id`)
 }
 
 // ListStandingOrders returns every order, ordered by id asc.
@@ -880,6 +880,10 @@ func SetStandingOrderGroupScope(
 // event matches. This is the hot read on the hook path, so it is a single
 // indexed query rather than a full list plus a filter — and callers are
 // expected to hold the result rather than re-issue it per event.
+//
+// An order whose owner is retired does not fire, and neither does one whose
+// owner is gone: deleting an agent removes its agents row, and the LEFT JOIN
+// then reads retired_at as NULL, which must not pass for a live owner.
 func ListEnabledStandingOrdersForEvent(
 	event string,
 	hookIdentity ...string,
@@ -908,7 +912,7 @@ func ListEnabledStandingOrdersForEvent(
 				   AND native.event = ?
 			)
 		)
-		AND (o.owner_agent = '' OR ow.retired_at IS NULL)
+		AND (o.owner_agent = '' OR (ow.agent_id IS NOT NULL AND ow.retired_at IS NULL))
 		ORDER BY o.id`, event, harnessName, nativeEvent)
 }
 
@@ -928,7 +932,7 @@ func EnabledStandingOrderHookEvents(harnessName string) ([]string, error) {
 		  LEFT JOIN agents owner ON owner.agent_id = o.owner_agent
 		 WHERE selector.harness = ?
 		   AND o.enabled = 1
-		   AND (o.owner_agent = '' OR owner.retired_at IS NULL)
+		   AND (o.owner_agent = '' OR (owner.agent_id IS NOT NULL AND owner.retired_at IS NULL))
 		 ORDER BY selector.event`,
 		strings.ToLower(strings.TrimSpace(harnessName)))
 	if err != nil {
