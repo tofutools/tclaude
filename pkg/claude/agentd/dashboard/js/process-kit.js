@@ -716,7 +716,9 @@ const ARROW_IDS = { done: 'done', running: 'running', planned: 'planned', skippe
 
 // ProcessMiniGraph renders a projected run read-only. `performerId` marks the
 // "you are here" node(s); `onNodeClick` turns nodes into buttons and
-// `selectedId` marks the one an inspector beside the graph describes. An
+// `selectedId` marks the one an inspector beside the graph describes, and
+// `selectedIds` (a Set) the several an editor has selected; onNodeClick
+// gets the click too, for its shift/ctrl. An
 // editing surface (the inline mini editor) adds `onNodeContextMenu`,
 // `onNodeHover` (a node id, never cleared here) and `overlay`, a render prop
 // given the laid-out graph that draws extra positioned elements on top.
@@ -726,7 +728,7 @@ const ARROW_IDS = { done: 'done', running: 'running', planned: 'planned', skippe
 // its diamond.
 export function ProcessMiniGraph({
   run, compact = false, performerId = '', onNodeClick = null, selectedId = '', wizard = false,
-  onNodeContextMenu = null, onNodeHover = null, overlay = null, problemIds = null, freshIds = null,
+  onNodeContextMenu = null, onNodeHover = null, overlay = null, problemIds = null, freshIds = null, selectedIds = null,
 }) {
   // Marker ids are per instance: the same run can be drawn on two surfaces
   // in one document, and a hidden copy must not own the visible arrowheads.
@@ -736,7 +738,7 @@ export function ProcessMiniGraph({
   const waiting = joinWaiting(run);
   const nodes = layout.nodes.map((node) => {
     const here = performerId && performs(node, performerId);
-    const selected = selectedId !== '' && node.id === String(selectedId);
+    const selected = (selectedId !== '' && node.id === String(selectedId)) || !!selectedIds?.has?.(node.id);
     const problem = !!problemIds?.has?.(node.id);
     const fresh = !!freshIds?.has?.(node.id);
     const cls = `pk-gnode pk-state-${node.state} pk-kind-${node.kind}${isTerminalKind(node.kind) ? ' terminal' : ''}${here ? ' here' : ''}${selected ? ' selected' : ''}${problem ? ' problem' : ''}${fresh ? ' fresh' : ''}`;
@@ -771,7 +773,7 @@ export function ProcessMiniGraph({
       ...(typeof onNodeHover === 'function' ? { onMouseEnter: () => onNodeHover(node.id), onFocus: () => onNodeHover(node.id) } : {}),
     };
     if (typeof onNodeClick === 'function') {
-      return html`<button data-ui-exempt type="button" key=${node.id} class=${cls} style=${style} title=${title} aria-label=${title} data-process-node=${node.id} data-performers=${performerIds} aria-pressed=${selected ? 'true' : 'false'} onClick=${() => onNodeClick(node)} ...${extra}>${inner}</button>`;
+      return html`<button data-ui-exempt type="button" key=${node.id} class=${cls} style=${style} title=${title} aria-label=${title} data-process-node=${node.id} data-performers=${performerIds} aria-pressed=${selected ? 'true' : 'false'} onClick=${(event) => onNodeClick(node, event)} ...${extra}>${inner}</button>`;
     }
     return html`<div key=${node.id} class=${cls} style=${style} title=${title} data-process-node=${node.id} data-performers=${performerIds}>${inner}</div>`;
   });

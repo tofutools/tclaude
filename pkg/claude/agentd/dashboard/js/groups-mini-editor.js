@@ -15,14 +15,14 @@
 
 import { h } from 'preact';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
-import { shellConfirmDiscard } from './shell-state.js';
+import { shellConfirm, shellConfirmDiscard } from './shell-state.js';
 import { useDismissablePopover } from './hover-popover.js';
 import htm from 'htm';
 import { ProcessMiniGraph } from './process-kit.js';
 import { ProcessEditModel } from './process-edit-model.js';
 import {
   addOutcome, branch, branchKinds, canBranch, canDelete, canInsertAfter, canInsertBefore, canRunAlongside, changeKind, changeSummary,
-  deleteOrphans, deleteStep, draftProjection, duplicate, insertAfter, insertBefore, isStep, miniKind, outcomesOf,
+  deleteOrphans, deleteStep, deleteSteps, draftProjection, duplicate, insertAfter, insertBefore, isStep, miniKind, outcomesOf,
   canRemoveOutcome, removeOutcome, renameOutcome, runAlongside, REVIEWER_TRACK, canAddReviewerTrack, reviewerRoleOf, reviewLoop, setLoopRounds, setOutcomeTarget, targetsFor, updateStep,
   addDecider, canAddDecider, gateDeciders, removeDecider, setAgree, setDecider,
   exhaustionOptions, setDecisionWho, setExhaustion, declareParams, setParams, insertOnAnswer, ruleOperands, setRule,
@@ -45,6 +45,7 @@ import {
 } from './groups-quickstart.js';
 import { fallbackNote, groupRoles, setStepFallback, stepFallbackValue } from './process-quickstart.js';
 import { withShortcut } from './keybindings.js';
+import { nodesInMarquee } from './process-selection.js';
 import { Button, Select } from './ui-components.js';
 import { GetHelpMenu } from './get-help-menu.js';
 import { openHelperWindow } from './get-help.js';
@@ -499,7 +500,7 @@ function StructureMenu({ view, menu, onRun, onWrap, onClose }) {
 export function MiniGraphEditor({
   group, roster, groupInfo = null, process, view, stored = view, changed = false, api, source, wizard = false,
   notify = defaultNotify, onClose, onSteps, draft: isDraft = false, untouched = false, onRun = null, onDiscard = null, onAbandon = null, otherNames = [],
-  onImport = null, onDescribe = null, scribes = [], onGone = null,
+  onImport = null, onDescribe = null, scribes = [], onGone = null, confirm = shellConfirm,
 }) {
   const model = useRef(null);
   if (!model.current) {
@@ -508,7 +509,17 @@ export function MiniGraphEditor({
   }
   const [rev, setRev] = useState(0);
   const [hover, setHover] = useState('');
-  const [selected, setSelected] = useState('');
+  // picked is the selection: one step (its inspector opens) or several
+  // (shift/ctrl-click, or a box dragged on the empty canvas), for Delete.
+  const [picked, setPicked] = useState([]);
+  const setSelected = (id) => setPicked(id ? [id] : []);
+  // marquee is a selection box being dragged, in the graph's coordinates.
+  const [marquee, setMarquee] = useState(null);
+  // boxed swallows the click that ends a selection box.
+  const boxed = useRef(false);
+  // removing: a Delete confirmation is up; another Delete waits for it.
+  const removing = useRef(false);
+  const laidOut = useRef(null);
   const [menu, setMenu] = useState(null);
   const [picker, setPicker] = useState(null);
   const [drag, setDrag] = useState(null);
@@ -569,6 +580,10 @@ export function MiniGraphEditor({
   const dragged = useRef(false);
   const draft = useMemo(() => viewOf(model.current), [rev]);
   const draftKey = JSON.stringify(draft);
+  // An undo or a merged version may take a selected step away.
+  const chosen = picked.filter((id) => draft.template.nodes[id]);
+  const selected = chosen.length === 1 ? chosen[0] : '';
+  const chosenSet = chosen.length > 1 ? new Set(chosen) : null;
   const dirty = model.current.dirty;
   const summary = dirty ? changeSummary(stored, draft) : [];
   const name = draft.template.name || process.name;
@@ -926,9 +941,45 @@ export function MiniGraphEditor({
   const trackOptions = { reviewerRole: reviewerRoleOf(roles?.length ? roles : groupRoles(roster)) };
   const OPS = { after: (v, id, kind) => insertAfter(v, id, kind, trackOptions), branch, alongside: (v, id, kind) => runAlongside(v, id, kind, trackOptions), before: insertBefore, answer: (v, id, kind) => insertOnAnswer(v, id, picker.outcome, kind) };
   const dropOp = (id) => (draft.template.nodes[id]?.type === 'decision' && !canBranch(draft, id) ? 'branch' : 'after');
+  // removeChosen asks first, then deletes the selected steps as one edit:
+  // each the way the menu's Delete step does, the start and ends still in
+  // use skipped with why.
+  const removeChosen = async () => {
+    const ids = chosen;
+    if (!ids.length || busy === 'save' || removing.current) return;
+    let plan;
+    try {
+      plan = deleteSteps(draft, ids);
+    } catch (cause) {
+      setError(cause.message);
+      return;
+    }
+    const count = plan.removed.length;
+    const body = [
+      'What led to them goes where they continued, so the process stays connected.',
+      plan.orphans.length ? `Also removes ${plan.orphans.join(', ')}: only reached through them.` : '',
+      plan.skipped.length ? `Kept: ${plan.skipped.map((skip) => `${skip.name} (${skip.why})`).join('; ')}.` : '',
+      'Undo brings them back.',
+    ].filter(Boolean).join(' ');
+    removing.current = true;
+    let ok = false;
+    try {
+      ok = await confirm({
+        title: `Remove ${count} step${count === 1 ? '' : 's'}: ${plan.removed.join(', ')}?`, body, okLabel: 'Remove',
+      });
+    } finally {
+      removing.current = false;
+    }
+    if (!ok || !mounted.current) return;
+    // The draft may have moved on (an agent's save) while the dialog was up.
+    run(() => deleteSteps(viewOf(model.current), ids));
+    setPicked([]);
+  };
+  const inField = (target) => /INPUT|TEXTAREA|SELECT/.test(target?.tagName || '') || !!target?.isContentEditable;
   // overlay draws, over the laid-out graph: the hovered (or selected) step's
   // handles, a drag's ghost, the kind picker and the structure menu.
   const overlay = (layout) => {
+    laidOut.current = layout;
     const id = hover || selected;
     const node = layout.nodes.find((n) => n.id === id);
     const data = draft.template.nodes[id];
@@ -940,6 +991,8 @@ export function MiniGraphEditor({
     draft.template.nodes[id]?.type === 'task' ? 'branch: a decision after this step, or its agent decides' : '')}
       ${isStep(data) && handle('alongside', id, node.x - 9, node.y - node.height / 2 - 20, '⫴', 'alongside', canRunAlongside(draft, id))}
     </span>`}
+      ${marquee?.moved && html`<span class="gm-marquee" data-mini-marquee aria-hidden="true"
+        style=${`left:${Math.min(marquee.x0, marquee.x)}px;top:${Math.min(marquee.y0, marquee.y)}px;width:${Math.abs(marquee.x - marquee.x0)}px;height:${Math.abs(marquee.y - marquee.y0)}px`}></span>`}
       ${drag?.moved && html`<span class="gm-ghost" style=${`left:${drag.x}px;top:${drag.y}px`}>+ new step</span>`}
       ${picker && html`<div class="gm-picker" data-mini-picker=${picker.op} style=${floating(picker, 300, 40)}>
         <${KindChips} label=${`${{ after: 'Add after', branch: 'Branch to', alongside: 'Run alongside', before: 'Insert before', answer: `On ${picker.outcome}` }[picker.op]}`}
@@ -1009,6 +1062,12 @@ export function MiniGraphEditor({
     }}
     onKeyDown=${(event) => {
       if ((event.ctrlKey || event.metaKey) && event.key === 'z' && !/INPUT|TEXTAREA|SELECT/.test(event.target?.tagName || '')) { event.preventDefault(); undo(); }
+      // Delete/Backspace removes the selection, after asking; not while
+      // typing, nor from inside the step's inspector (as in the full editor),
+      // nor while a step's menu or the kind picker is open.
+      if ((event.key === 'Delete' || event.key === 'Backspace') && chosen.length && !event.repeat && !menu && !picker && !inField(event.target)
+        && !event.target?.closest?.('[data-mini-inspector]')) { event.preventDefault(); void removeChosen(); }
+      if (event.key === 'Escape' && chosen.length && !inField(event.target)) setPicked([]);
     }}>
     <div class="gm-head">
       ${isDraft
@@ -1068,10 +1127,36 @@ export function MiniGraphEditor({
       <${Button} size="sm" variant="link" class="gq-link" data-mini-notice-undo title=${notice.note ? 'Undo this edit, clearing included' : 'Take their change back out; it saves again'} onClick=${undo}>undo<//>
       <${Button} size="sm" variant="link" class="gq-link" aria-label="Dismiss" onClick=${() => setNotice(null)}>✕<//>
     </div>`}
-    <div class="gm-canvas" ref=${canvas} data-mini-canvas
+    <div class="gm-canvas" ref=${canvas} data-mini-canvas tabIndex="-1"
       onMouseLeave=${() => { if (!drag) setHover(''); }}
-      onPointerMove=${(event) => { if (drag) { const at = pointAt(event); setDrag({ ...drag, ...at, moved: drag.moved || Math.hypot(at.x - drag.x0, at.y - drag.y0) > DRAG_SLOP }); } }}
+      onPointerDown=${(event) => {
+        // A box dragged on the empty canvas selects what it touches; shift
+        // or ctrl adds to the selection. Not on touch, where a drag scrolls.
+        if (event.pointerType === 'touch' || event.button !== 0) return;
+        if (event.target !== canvas.current && !event.target?.classList?.contains?.('pk-mini-graph')) return;
+        event.preventDefault();
+        canvas.current?.focus?.({ preventScroll: true });
+        event.currentTarget?.setPointerCapture?.(event.pointerId);
+        const at = pointAt(event);
+        setMarquee({ x0: at.x, y0: at.y, ...at, moved: false, add: event.shiftKey || event.ctrlKey || event.metaKey });
+      }}
+      onPointerMove=${(event) => {
+        if (marquee) { const at = pointAt(event); setMarquee({ ...marquee, ...at, moved: marquee.moved || Math.hypot(at.x - marquee.x0, at.y - marquee.y0) > DRAG_SLOP }); return; }
+        if (drag) { const at = pointAt(event); setDrag({ ...drag, ...at, moved: drag.moved || Math.hypot(at.x - drag.x0, at.y - drag.y0) > DRAG_SLOP }); } }}
+      onPointerCancel=${() => { setMarquee(null); boxed.current = false; }}
       onPointerUp=${(event) => {
+        if (marquee) {
+          if (marquee.moved) {
+            const hits = nodesInMarquee(laidOut.current?.nodes || [], { x: marquee.x0, y: marquee.y0 }, marquee)
+              .map((node) => node.id).filter((id) => id !== FIRST_STEP && draft.template.nodes[id]);
+            setMenu(null);
+            setPicker(null);
+            setPicked(marquee.add ? [...new Set([...chosen, ...hits])] : hits);
+            boxed.current = true;
+          }
+          setMarquee(null);
+          return;
+        }
         if (!drag) return;
         const onNode = event.target?.closest?.('[data-process-node]');
         if (drag.moved && !onNode) setPicker({ op: dropOp(drag.id), id: drag.id, cx: event.clientX || 0, cy: event.clientY || 0 });
@@ -1079,10 +1164,24 @@ export function MiniGraphEditor({
         setDrag(null);
       }}
       onClick=${(event) => {
+        if (boxed.current) { boxed.current = false; return; }
         if (event.target === canvas.current || event.target?.classList?.contains?.('pk-mini-graph')) { setSelected(''); setMenu(null); setPicker(null); }
       }}>
-      <${ProcessMiniGraph} run=${projection} wizard=${wizard} selectedId=${selected} problemIds=${problemIds} freshIds=${lit?.ids || null}
-        onNodeClick=${(node) => { if (node.id === FIRST_STEP) { addFirst(); return; } setMenu(null); setPicker(null); setSelected(node.id === selected ? '' : node.id); }}
+      <${ProcessMiniGraph} run=${projection} wizard=${wizard} selectedId=${selected} selectedIds=${chosenSet} problemIds=${problemIds} freshIds=${lit?.ids || null}
+        onNodeClick=${(node, event) => {
+          if (node.id === FIRST_STEP) { addFirst(); return; }
+          setMenu(null);
+          setPicker(null);
+          // The clicked step keeps focus, so Delete reaches the editor in
+          // browsers that do not focus a clicked button (Safari, macOS Firefox).
+          event?.currentTarget?.focus?.({ preventScroll: true });
+          // Shift/ctrl-click adds a step to the selection, or takes it out.
+          if (event?.shiftKey || event?.ctrlKey || event?.metaKey) {
+            setPicked(chosen.includes(node.id) ? chosen.filter((id) => id !== node.id) : [...chosen, node.id]);
+            return;
+          }
+          setSelected(node.id === selected ? '' : node.id);
+        }}
         onNodeContextMenu=${(node, event) => (node.id === FIRST_STEP ? event.preventDefault() : openMenu(node, event))}
         onNodeHover=${(id) => setHover(id === FIRST_STEP ? '' : id)} overlay=${overlay} />
     </div>

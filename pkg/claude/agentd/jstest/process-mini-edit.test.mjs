@@ -276,6 +276,32 @@ test('delete rewires to the main path and removes the steps only it led to', () 
   assert.throws(() => m.deleteStep(ship, 'start'), /start cannot be deleted/);
 });
 
+test('deleteSteps removes several as one edit, each the way one delete does', () => {
+  const both = m.deleteSteps(ship, ['review', 'merge']);
+  assert.equal(edge(both.view, 'implement', 'next'), 'approve');
+  assert.equal(edge(both.view, 'approve', 'ship'), 'end');
+  assert.deepEqual(both.removed, ['Review', 'Merge'].map((n) => ship.template.nodes[n.toLowerCase()].name || n.toLowerCase()));
+  assert.deepEqual(both.view, m.deleteStep(m.deleteStep(ship, 'review').view, 'merge').view, 'the same as deleting one by one');
+  // The start, and an end still led to, are kept with why; the rest goes.
+  const skipping = m.deleteSteps(ship, ['start', 'review', 'end']);
+  assert.ok(skipping.view.template.nodes.start && skipping.view.template.nodes.end);
+  assert.deepEqual(skipping.skipped.map((skip) => skip.id), ['start', 'end']);
+  assert.match(skipping.skipped[0].why, /start cannot be deleted/);
+  // An end its steps were the last to reach goes once they have.
+  const tail = m.deleteSteps(ship, ['stopped', 'approve']);
+  assert.ok(!tail.view.template.nodes.stopped && !tail.view.template.nodes.approve);
+  assert.deepEqual(tail.skipped, []);
+  // A step only a deleted one reached is named as an orphan.
+  const branched = m.branch(ship, 'approve', 'agent').view;
+  assert.deepEqual(m.deleteSteps(branched, ['approve']).orphans, ['New step']);
+  assert.throws(() => m.deleteSteps(ship, ['start']), /start cannot be deleted/);
+  // A reference cleared on a step that goes too is not noted.
+  const named = structuredClone(ship);
+  named.template.nodes.review.performer.differentFrom = ['implement'];
+  assert.match(m.deleteSteps(named, ['implement']).note, /not Implement/i);
+  assert.equal(m.deleteSteps(named, ['implement', 'review']).note, undefined);
+});
+
 test('change kind: a "you" step is a decision, a task keeps one route', () => {
   const you = m.changeKind(ship, 'implement', 'you').view;
   assert.equal(you.template.nodes.implement.type, 'decision');
