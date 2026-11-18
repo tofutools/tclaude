@@ -517,6 +517,8 @@ export function MiniGraphEditor({
   const [marquee, setMarquee] = useState(null);
   // boxed swallows the click that ends a selection box.
   const boxed = useRef(false);
+  // removing: a Delete confirmation is up; another Delete waits for it.
+  const removing = useRef(false);
   const laidOut = useRef(null);
   const [menu, setMenu] = useState(null);
   const [picker, setPicker] = useState(null);
@@ -944,7 +946,7 @@ export function MiniGraphEditor({
   // use skipped with why.
   const removeChosen = async () => {
     const ids = chosen;
-    if (!ids.length || busy === 'save') return;
+    if (!ids.length || busy === 'save' || removing.current) return;
     let plan;
     try {
       plan = deleteSteps(draft, ids);
@@ -959,9 +961,15 @@ export function MiniGraphEditor({
       plan.skipped.length ? `Kept: ${plan.skipped.map((skip) => `${skip.name} (${skip.why})`).join('; ')}.` : '',
       'Undo brings them back.',
     ].filter(Boolean).join(' ');
-    const ok = await confirm({
-      title: `Remove ${count} step${count === 1 ? '' : 's'}: ${plan.removed.join(', ')}?`, body, okLabel: 'Remove',
-    });
+    removing.current = true;
+    let ok = false;
+    try {
+      ok = await confirm({
+        title: `Remove ${count} step${count === 1 ? '' : 's'}: ${plan.removed.join(', ')}?`, body, okLabel: 'Remove',
+      });
+    } finally {
+      removing.current = false;
+    }
     if (!ok || !mounted.current) return;
     // The draft may have moved on (an agent's save) while the dialog was up.
     run(() => deleteSteps(viewOf(model.current), ids));
@@ -1055,8 +1063,9 @@ export function MiniGraphEditor({
     onKeyDown=${(event) => {
       if ((event.ctrlKey || event.metaKey) && event.key === 'z' && !/INPUT|TEXTAREA|SELECT/.test(event.target?.tagName || '')) { event.preventDefault(); undo(); }
       // Delete/Backspace removes the selection, after asking; not while
-      // typing, nor from inside the step's inspector (as in the full editor).
-      if ((event.key === 'Delete' || event.key === 'Backspace') && chosen.length && !inField(event.target)
+      // typing, nor from inside the step's inspector (as in the full editor),
+      // nor while a step's menu or the kind picker is open.
+      if ((event.key === 'Delete' || event.key === 'Backspace') && chosen.length && !event.repeat && !menu && !picker && !inField(event.target)
         && !event.target?.closest?.('[data-mini-inspector]')) { event.preventDefault(); void removeChosen(); }
       if (event.key === 'Escape' && chosen.length && !inField(event.target)) setPicked([]);
     }}>
@@ -1134,6 +1143,7 @@ export function MiniGraphEditor({
       onPointerMove=${(event) => {
         if (marquee) { const at = pointAt(event); setMarquee({ ...marquee, ...at, moved: marquee.moved || Math.hypot(at.x - marquee.x0, at.y - marquee.y0) > DRAG_SLOP }); return; }
         if (drag) { const at = pointAt(event); setDrag({ ...drag, ...at, moved: drag.moved || Math.hypot(at.x - drag.x0, at.y - drag.y0) > DRAG_SLOP }); } }}
+      onPointerCancel=${() => { setMarquee(null); boxed.current = false; }}
       onPointerUp=${(event) => {
         if (marquee) {
           if (marquee.moved) {
@@ -1162,6 +1172,9 @@ export function MiniGraphEditor({
           if (node.id === FIRST_STEP) { addFirst(); return; }
           setMenu(null);
           setPicker(null);
+          // The clicked step keeps focus, so Delete reaches the editor in
+          // browsers that do not focus a clicked button (Safari, macOS Firefox).
+          event?.currentTarget?.focus?.({ preventScroll: true });
           // Shift/ctrl-click adds a step to the selection, or takes it out.
           if (event?.shiftKey || event?.ctrlKey || event?.metaKey) {
             setPicked(chosen.includes(node.id) ? chosen.filter((id) => id !== node.id) : [...chosen, node.id]);

@@ -295,6 +295,11 @@ test('deleteSteps removes several as one edit, each the way one delete does', ()
   const branched = m.branch(ship, 'approve', 'agent').view;
   assert.deepEqual(m.deleteSteps(branched, ['approve']).orphans, ['New step']);
   assert.throws(() => m.deleteSteps(ship, ['start']), /start cannot be deleted/);
+  // A reference cleared on a step that goes too is not noted.
+  const named = structuredClone(ship);
+  named.template.nodes.review.performer.differentFrom = ['implement'];
+  assert.match(m.deleteSteps(named, ['implement']).note, /not Implement/i);
+  assert.equal(m.deleteSteps(named, ['implement', 'review']).note, undefined);
 });
 
 test('change kind: a "you" step is a decision, a task keeps one route', () => {

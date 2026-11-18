@@ -934,7 +934,8 @@ function performersOf(node) {
 
 // dropDanglingRefs drops the sameAs and differentFrom that name one of ids
 // once it is gone or no agent performs it (the engine refuses those), and
-// says what went: "Review's “not Implement”" and the like, for the note.
+// says what went: {id, text} of the step it went from, the text
+// "Review's “not Implement”" and the like, for the note.
 // names gives a gone step's name, as it read before.
 function dropDanglingRefs(view, ids, names) {
   const dropped = [];
@@ -945,13 +946,13 @@ function dropDanglingRefs(view, ids, names) {
     for (const performer of performersOf(node)) {
       const who = node.name || id;
       if (performer.sameAs && stale(performer.sameAs)) {
-        dropped.push(`${who}'s “same agent as ${name(performer.sameAs)}”`);
+        dropped.push({ id, text: `${who}'s “same agent as ${name(performer.sameAs)}”` });
         delete performer.sameAs;
       }
       if (Array.isArray(performer.differentFrom)) {
         const gone = performer.differentFrom.filter(stale);
         if (!gone.length) continue;
-        dropped.push(`${who}'s “not ${gone.map(name).join(', ')}”`);
+        dropped.push({ id, text: `${who}'s “not ${gone.map(name).join(', ')}”` });
         const kept = performer.differentFrom.filter((ref) => !stale(ref));
         if (kept.length) performer.differentFrom = kept;
         else delete performer.differentFrom;
@@ -963,7 +964,7 @@ function dropDanglingRefs(view, ids, names) {
 
 // danglingNote is the change note for what dropDanglingRefs dropped.
 function danglingNote(dropped) {
-  return dropped.length ? `Also cleared ${dropped.join(', ')}: that step no longer has an agent to match.` : '';
+  return dropped.length ? `Also cleared ${dropped.map((d) => d.text).join(', ')}: that step no longer has an agent to match.` : '';
 }
 
 // canDelete says why a node cannot be deleted ('' when it can): the start,
@@ -1017,8 +1018,9 @@ export function deleteStep(view, id) {
   for (const orphan of orphans) removeNode(next, orphan);
   dropStaleJoins(next);
   const names = Object.fromEntries(Object.entries(view.template.nodes).map(([nodeID, n]) => [nodeID, n.name || nodeID]));
-  const note = danglingNote(dropDanglingRefs(next, [id, ...orphans], names));
-  return { view: syncLoops(next), id: target, orphans, ...(note ? { note } : {}) };
+  const cleared = dropDanglingRefs(next, [id, ...orphans], names);
+  const note = danglingNote(cleared);
+  return { view: syncLoops(next), id: target, orphans, cleared, ...(note ? { note } : {}) };
 }
 
 // deleteOrphans names the steps deleting `id` would also remove.
@@ -1044,7 +1046,7 @@ export function deleteSteps(view, ids) {
   let next = view;
   const orphans = [];
   const skipped = [];
-  const notes = [];
+  const cleared = [];
   for (const id of order) {
     if (!next.template.nodes[id]) continue;
     const why = canDelete(next, id);
@@ -1052,13 +1054,14 @@ export function deleteSteps(view, ids) {
     const result = deleteStep(next, id);
     next = result.view;
     orphans.push(...result.orphans);
-    if (result.note) notes.push(result.note);
+    cleared.push(...result.cleared);
   }
   // A wanted node an earlier delete took as an orphan went too.
   const removed = wanted.filter((id) => !next.template.nodes[id]);
   if (!removed.length) throw new Error(skipped.length === 1 ? `${skipped[0].name}: ${skipped[0].why}` : 'none of these can be deleted');
   const extra = [...new Set(orphans)].filter((id) => !wanted.includes(id) && isStep(view.template.nodes[id]));
-  const note = notes.join(' ');
+  // What was cleared on a step that went too is not worth a note.
+  const note = danglingNote(cleared.filter((d) => next.template.nodes[d.id]));
   return {
     view: next, id: '', removed: removed.map(nameOf), orphans: extra.map(nameOf), skipped,
     ...(note ? { note } : {}),
