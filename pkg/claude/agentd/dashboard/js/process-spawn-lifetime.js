@@ -34,6 +34,14 @@ export function keepLifetime(before, after) {
   return { ...after, lifetime: before.lifetime };
 }
 
+// pinLifetime writes a spawn fallback's effective lifetime out explicitly, for
+// a performer moving between a decision's one performer and a gate's
+// deciders, whose defaults differ: what it meant there it keeps meaning.
+export function pinLifetime(performer, { decider = false } = {}) {
+  if (performer?.fallback?.action !== 'spawn' || performer.fallback.lifetime) return performer;
+  return { ...performer, fallback: { ...performer.fallback, lifetime: effectiveLifetime(performer.fallback, { decider }) } };
+}
+
 // withLifetime sets a spawn fallback's lifetime; the default is left unset.
 export function withLifetime(fallback, lifetime, { decider = false } = {}) {
   if (fallback?.action !== 'spawn') return fallback;

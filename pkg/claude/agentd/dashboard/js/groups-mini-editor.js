@@ -37,14 +37,13 @@ import {
 import { openProcessDraft } from './process-draft-handoff.js';
 import { followName } from './process-step-ids.js';
 import {
-  deciderOwnAsk, deciderSummary, gateAsk, setDeciderAsk, setDeciderFallback, setDeciderNot, setGateAsk, spawnIfNobody,
+  deciderOwnAsk, deciderSummary, gateAsk, setDeciderAsk, setDeciderFallback, setDeciderLifetime, setDeciderNot, setGateAsk, spawnIfNobody,
   addReviewer, stuckGate, withReviewerDefault,
 } from './process-gate-deciders.js';
 import {
   AUTOSAVE_DELAY_MS, DRAFT_DESCRIPTION_MAX, FallbackPicker, LifetimePicker, TypedField, UNTITLED_PROCESS, WhoPicker, defaultNotify, inheritLabel, useSpawnProfiles,
 } from './groups-quickstart.js';
-import { fallbackNote, groupRoles, setStepFallback, stepFallbackValue } from './process-quickstart.js';
-import { withLifetime } from './process-spawn-lifetime.js';
+import { fallbackNote, groupRoles, setStepFallback, setStepLifetime, stepFallbackValue } from './process-quickstart.js';
 import { withShortcut } from './keybindings.js';
 import { nodesInMarquee } from './process-selection.js';
 import { Button, Select } from './ui-components.js';
@@ -217,7 +216,7 @@ function DeciderRow({ view, id, index, decider, shared, open, onToggle, roster, 
     </div>
     ${agent && decider.fallback?.action === 'spawn' && html`<div class="gm-decider-life" data-mini-decider-lifetime=${index}><span class="gq-dim">afterwards</span>
       <${LifetimePicker} fallback=${decider.fallback} decider=${true} label=${`Afterwards, vote ${index + 1}'s agent`}
-        onChange=${(lifetime) => onApply(setDeciderFallback(view, id, index, withLifetime(decider.fallback, lifetime, { decider: true })))} /></div>`}
+        onChange=${(lifetime) => onApply(setDeciderLifetime(view, id, index, lifetime))} /></div>`}
     ${open && html`<div class="gm-decider-panel" id=${panel} data-mini-decider-panel=${index}>
       <label class="gm-field"><span>Its own ask</span><${TypedField} as="textarea" name="gm-decider-ask" rows="2" data-mini-decider-ask=${index}
         value=${collapseParamShorthand(deciderOwnAsk(node, index, shared))} placeholder="the same as Asks"
@@ -382,7 +381,7 @@ function Inspector({ view, id, roster, roles, fallbackInfo, onApply, onRename, o
       onChange=${(next) => onApply(updateStep(view, id, (s) => setStepFallback(s, next)))} /></div>`}
     ${kind === 'agent' && !gate && node.performer?.fallback?.action === 'spawn' && html`<div class="gm-field" data-mini-lifetime=${id}><span>Afterwards</span>
       <${LifetimePicker} fallback=${node.performer.fallback} label=${`Afterwards, ${spawns ? 'the new agent' : 'an agent spawned for this step'}`}
-        onChange=${(lifetime) => onApply(updateStep(view, id, (s) => setStepFallback(s, withLifetime(s.node.performer.fallback, lifetime))))} /></div>`}
+        onChange=${(lifetime) => onApply(updateStep(view, id, (s) => setStepLifetime(s, lifetime)))} /></div>`}
     ${(kind === 'agent' || kind === 'command') && node.type === 'task' && html`<${FailureRow} id=${id} failure=${stepFailure(step)} staged=${!!(node.plan || node.checks?.length || node.review)}
       onChange=${(next) => onApply(updateStep(view, id, (s) => setStepFailure(s, next)))} />`}
     ${kind === 'agent' && node.type === 'task' && html`<label class="gm-field" data-mini-outputs=${id}><span>Outputs</span><${TypedField} name="none-e-g-pr" type="text"

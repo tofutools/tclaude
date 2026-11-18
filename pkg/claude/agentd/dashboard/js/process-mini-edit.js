@@ -12,7 +12,7 @@
 // editor.
 
 import { setStepWho } from './process-step-list.js';
-import { keepLifetime } from './process-spawn-lifetime.js';
+import { keepLifetime, pinLifetime } from './process-spawn-lifetime.js';
 import { ruleOperands, seedRule } from './process-rules.js';
 
 export { ruleOperands };
@@ -1402,7 +1402,8 @@ export function addDecider(view, id, who) {
   const next = copyView(view);
   const node = next.template.nodes[id];
   if (!node.deciders?.length) {
-    const first = { ...node.performer };
+    // It was a step's performer; as a vote it keeps the lifetime it had.
+    const first = pinLifetime({ ...node.performer });
     delete first.choices;
     delete first.choiceOutcomes;
     node.deciders = [first];
@@ -1427,7 +1428,8 @@ export function removeDecider(view, id, index) {
   if (!node.deciders?.[index]) return { view, id };
   node.deciders.splice(index, 1);
   if (node.deciders.length === 1) {
-    node.performer = node.deciders[0];
+    // It was a vote; as the decision's one performer it keeps its lifetime.
+    node.performer = pinLifetime(node.deciders[0], { decider: true });
     delete node.deciders;
     delete node.agree;
     if (node.performer.kind === 'human') node.performer.choices = outcomesOf(next, id).map((o) => o.outcome);
@@ -1444,8 +1446,10 @@ export function setDecider(view, id, index, who) {
   const decider = deciderOf(who, deciderText(old));
   if (decider.kind === 'agent' && old.kind === 'agent') {
     for (const key of ['sameAs', 'differentFrom', 'fallback', 'model', 'effort', 'profile']) {
-      // A new agent's fallback is its Who; the old one only lends its lifetime.
-      if (key === 'fallback' && who.mode === 'spawn') continue;
+      // A new agent's fallback is its Who, and it is nobody's same agent and
+      // no legacy profile's role (as setStepWho): the old one only lends its
+      // lifetime.
+      if (who.mode === 'spawn' && ['fallback', 'sameAs', 'differentFrom', 'profile'].includes(key)) continue;
       if (old[key] !== undefined && who.mode !== 'agent') decider[key] = old[key];
     }
     if (decider.fallback) decider.fallback = keepLifetime(old.fallback, decider.fallback);

@@ -8,7 +8,7 @@
 import { firstSpawn } from './process-quickstart.js';
 import { expandParamShorthand } from './process-step-list.js';
 import { addDecider, deciderWho, gateDeciders } from './process-mini-edit.js';
-import { keepLifetime } from './process-spawn-lifetime.js';
+import { keepLifetime, withLifetime } from './process-spawn-lifetime.js';
 
 function clone(value) {
   return JSON.parse(JSON.stringify(value));
@@ -84,6 +84,16 @@ export function setDeciderFallback(view, id, index, fallback) {
     delete decider.fallback;
     if (fallback || decider.spawn === 'allowed') delete decider.spawn;
     if (fallback) decider.fallback = keepLifetime(before, fallback);
+  });
+}
+
+// setDeciderLifetime sets the lifetime of decider index's spawn fallback, as
+// picked (the decider default clears it).
+export function setDeciderLifetime(view, id, index, lifetime) {
+  return edit(view, id, (node) => {
+    const decider = node.deciders[index];
+    if (decider?.fallback?.action !== 'spawn') return;
+    decider.fallback = withLifetime(decider.fallback, lifetime, { decider: true });
   });
 }
 
