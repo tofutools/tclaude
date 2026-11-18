@@ -70,3 +70,37 @@ func TestStepFinishedWaitsForItsLoop(t *testing.T) {
 		t.Fatal("merge has not run yet")
 	}
 }
+
+// A compound's do stage is not finished while its check or review can still
+// send it back: only once the compound itself is.
+func TestStepFinishedWaitsForItsCompound(t *testing.T) {
+	definition := mustPrepare(t, compoundStageTemplate(nil), nil)
+	checkpoint, err := Initialize("run-life-compound", definition)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sawDoDone := false
+	for {
+		var command *Command
+		checkpoint, command = advanceAndPlan(t, checkpoint, definition)
+		if command == nil {
+			break
+		}
+		if checkpoint.Nodes["build.do"] == NodeDone && checkpoint.Nodes["build"] != NodeDone {
+			sawDoDone = true
+			if definition.StepFinished(checkpoint, "build.do") {
+				t.Fatalf("build.do finished while %s may still send it back", command.NodeID)
+			}
+		}
+		checkpoint, err = Apply(checkpoint, definition, observed(command, ProgramSucceeded, 0))
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if !sawDoDone {
+		t.Fatal("never saw the do stage done before its compound")
+	}
+	if !definition.StepFinished(checkpoint, "build.do") || !definition.StepFinished(checkpoint, "build") {
+		t.Fatalf("the compound is done: build = %q, build.do = %q", checkpoint.Nodes["build"], checkpoint.Nodes["build.do"])
+	}
+}

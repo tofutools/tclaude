@@ -1948,7 +1948,7 @@ CREATE TABLE process_agent_dispatches (
 	delivered_at   INTEGER,
 	reported_at    INTEGER, report_verdict TEXT NOT NULL DEFAULT ''
 			CHECK(length(CAST(report_verdict AS BLOB)) <= 256), report_outputs TEXT NOT NULL DEFAULT ''
-			CHECK(length(CAST(report_outputs AS BLOB)) <= 65536),
+			CHECK(length(CAST(report_outputs AS BLOB)) <= 65536), spawn_lifetime TEXT NOT NULL DEFAULT '',
 	PRIMARY KEY (run_id, command_id)
 ) STRICT;
 

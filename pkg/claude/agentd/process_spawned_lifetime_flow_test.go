@@ -11,6 +11,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/process/engine"
 	"github.com/tofutools/tclaude/pkg/claude/process/model"
+	"github.com/tofutools/tclaude/pkg/testharness"
 )
 
 // spawnLifetimeRun starts a run on group crew whose first step always spawns
@@ -18,6 +19,20 @@ import (
 // follows that nobody can take, so the run stays running after the first.
 // It returns the spawned agent and its conversation.
 func spawnLifetimeRun(t *testing.T, runID, lifetime string, then bool) (string, string, func() *db.Agent) {
+	t.Helper()
+	spawned, conv, agent, _ := spawnLifetimeRunIn(t, runID, lifetime, then)
+	return spawned, conv, agent
+}
+
+// spawnLifetimeFixture is the flow a spawnLifetimeRun ran in, for a test
+// that starts more runs on the same group.
+type spawnLifetimeFixture struct {
+	f     *testharness.Flow
+	root  string
+	group int64
+}
+
+func spawnLifetimeRunIn(t *testing.T, runID, lifetime string, then bool) (string, string, func() *db.Agent, spawnLifetimeFixture) {
 	t.Helper()
 	f, root := processRuntimeFlow(t)
 	g := f.HaveGroup("crew")
@@ -54,7 +69,7 @@ func spawnLifetimeRun(t *testing.T, runID, lifetime string, then bool) (string, 
 		require.NotNil(t, a)
 		return a
 	}
-	return spawned, conv, agent
+	return spawned, conv, agent, spawnLifetimeFixture{f: f, root: root, group: g.ID}
 }
 
 // Scenario: a step's new agent with no lifetime set is kept for the run and
@@ -99,4 +114,39 @@ func TestProcessSpawnedLifetime_ABusyAgentIsRetiredOnceSettled(t *testing.T) {
 	busy = false
 	agentd.ReapProcessSpawnedPerformersForTest()
 	assert.False(t, agent().Active())
+}
+
+// Scenario: an agent spawned before lifetimes existed has no lifetime on
+// record. It was promised to stay, so the run's end does not retire it.
+func TestProcessSpawnedLifetime_ASpawnFromBeforeLifetimesStays(t *testing.T) {
+	busy := true
+	agentd.SetProcessSpawnedSettledForTest(t, func(string) (bool, error) { return !busy, nil })
+	spawned, _, agent := spawnLifetimeRun(t, "run_life_legacy", "", false)
+	rows, err := db.ListProcessAgentDispatchesForAgent(spawned, false, 10)
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	assert.Equal(t, model.LifetimeRun, rows[0].SpawnLifetime, "the default is recorded at the spawn")
+	require.NoError(t, db.SetProcessAgentDispatchSpawnLifetime(rows[0].RunID, rows[0].CommandID, ""))
+	busy = false
+	agentd.ReapProcessSpawnedPerformersForTest()
+	assert.True(t, agent().Active(), "no lifetime on record: left as it always was")
+}
+
+// Scenario: a "step" agent another run has since given a step to stays
+// while that step is open, and is retired once it is done.
+func TestProcessSpawnedLifetime_AnAgentAnotherRunUsesStays(t *testing.T) {
+	busy := true
+	agentd.SetProcessSpawnedSettledForTest(t, func(string) (bool, error) { return !busy, nil })
+	spawned, conv, agent, fx := spawnLifetimeRunIn(t, "run_life_shared", model.LifetimeStep, true)
+	f := fx.f
+	other := performerTemplate("run_life_other", model.Performer{Kind: model.PerformerAgent, Prompt: "More.", Assignee: conv}, nil)
+	view := startPerformerRun(t, f, fx.root, "run_life_other", other, agentd.ProcessRunScopeForTest{Kind: "group", GroupID: fx.group})
+	require.Equal(t, spawned, view.Commands[0].Performer.AgentID, "%+v", view.Commands[0].Performer)
+	busy = false
+	agentd.ReapProcessSpawnedPerformersForTest()
+	assert.True(t, agent().Active(), "on a step of another run")
+	ok := reportAs(t, f, conv, map[string]any{"outcome": "succeeded"})
+	require.Equal(t, http.StatusOK, ok.Code, ok.Body.String())
+	agentd.ReapProcessSpawnedPerformersForTest()
+	assert.False(t, agent().Active(), "that step is done too")
 }

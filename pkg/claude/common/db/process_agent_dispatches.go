@@ -62,6 +62,10 @@ type ProcessAgentDispatch struct {
 	// ReportOutputs are the step outputs the performer reported, by name;
 	// nil when its node declares none.
 	ReportOutputs map[string]string
+	// SpawnLifetime is how long the agent this dispatch spawned stays
+	// ("step", "run" or "keep"), written when it is spawned; empty for a
+	// performer the run did not spawn, and for spawns before lifetimes.
+	SpawnLifetime string
 	CreatedAt     time.Time
 	UpdatedAt     time.Time
 	DeliveredAt   time.Time
@@ -75,7 +79,7 @@ func (d *ProcessAgentDispatch) Open() bool {
 
 const processAgentDispatchColumns = `run_id, command_id, node_id, attempt, state, agent_id, resolution,
 	wait_reason, message_id, deliveries, report_outcome, report_note, created_at, updated_at,
-	delivered_at, reported_at, report_verdict, report_outputs`
+	delivered_at, reported_at, report_verdict, report_outputs, spawn_lifetime`
 
 func scanProcessAgentDispatch(scanner processRunScanner) (*ProcessAgentDispatch, error) {
 	var row ProcessAgentDispatch
@@ -83,7 +87,7 @@ func scanProcessAgentDispatch(scanner processRunScanner) (*ProcessAgentDispatch,
 	var outputs string
 	if err := scanner.Scan(&row.RunID, &row.CommandID, &row.NodeID, &row.Attempt, &row.State,
 		&row.AgentID, &row.Resolution, &row.WaitReason, &row.MessageID, &row.Deliveries,
-		&row.ReportOutcome, &row.ReportNote, &created, &updated, &delivered, &reported, &row.ReportVerdict, &outputs); err != nil {
+		&row.ReportOutcome, &row.ReportNote, &created, &updated, &delivered, &reported, &row.ReportVerdict, &outputs, &row.SpawnLifetime); err != nil {
 		return nil, err
 	}
 	if outputs != "" {
@@ -183,18 +187,29 @@ func ListOpenProcessAgentDispatches(afterRunID, afterCommandID string, limit int
 }
 
 // ListLiveSpawnedProcessDispatches returns one page of the dispatches whose
-// performer a run spawned (resolution "spawned") and which is still active,
-// in (run, command) order after the cursor: the agents a run may yet retire
-// per its step's lifetime. The resolution value is the daemon's
-// processResolutionSpawned.
+// performer a run spawned with a lifetime that retires it ("step" or "run")
+// and which is still active, in (run, command) order after the cursor: the
+// agents a run may yet retire.
 func ListLiveSpawnedProcessDispatches(afterRunID, afterCommandID string, limit int) ([]ProcessAgentDispatch, error) {
 	if limit <= 0 || limit > MaxProcessDispatchReadPage {
 		return nil, fmt.Errorf("%w: dispatch page size must be 1..%d", ErrProcessRunInvalid, MaxProcessDispatchReadPage)
 	}
-	return queryProcessAgentDispatches(`WHERE resolution = 'spawned' AND agent_id != ''
+	return queryProcessAgentDispatches(`WHERE spawn_lifetime IN ('step', 'run') AND agent_id != ''
 		AND agent_id IN (SELECT agent_id FROM agents WHERE retired_at IS NULL)
 		AND (run_id > ? OR (run_id = ? AND command_id > ?))
 		ORDER BY run_id, command_id LIMIT ?`, afterRunID, afterRunID, afterCommandID, limit)
+}
+
+// SetProcessAgentDispatchSpawnLifetime records the lifetime of the agent a
+// dispatch spawned.
+func SetProcessAgentDispatchSpawnLifetime(runID, commandID, lifetime string) error {
+	d, err := Open()
+	if err != nil {
+		return err
+	}
+	_, err = d.Exec(`UPDATE process_agent_dispatches SET spawn_lifetime = ? WHERE run_id = ? AND command_id = ?`,
+		lifetime, runID, commandID)
+	return err
 }
 
 // ListProcessAgentDispatchesForAgent returns the dispatches one agent has been
@@ -237,7 +252,7 @@ func execProcessDispatchCAS(query string, args ...any) error {
 // human-facing reason. It never moves a dispatch that already has a report.
 func MarkProcessAgentDispatchNeedsPerformer(runID, commandID, reason string) error {
 	return execProcessDispatchCAS(`UPDATE process_agent_dispatches
-		SET state = ?, agent_id = '', resolution = '', wait_reason = ?, updated_at = ?
+		SET state = ?, agent_id = '', resolution = '', spawn_lifetime = '', wait_reason = ?, updated_at = ?
 		WHERE run_id = ? AND command_id = ? AND state IN (?, ?, ?)`,
 		ProcessDispatchNeedsPerformer, boundedDispatchText(reason, MaxProcessDispatchWaitReasonBytes),
 		dbTime(time.Now().UTC()), runID, commandID,
@@ -253,7 +268,7 @@ func MarkProcessAgentDispatchDelivered(runID, commandID, expectedState, agentID,
 	}
 	now := time.Now().UTC()
 	return execProcessDispatchCAS(`UPDATE process_agent_dispatches
-		SET state = ?, agent_id = ?, resolution = ?, wait_reason = '', message_id = ?,
+		SET state = ?, agent_id = ?, resolution = ?, spawn_lifetime = '', wait_reason = '', message_id = ?,
 			deliveries = deliveries + 1, delivered_at = ?, updated_at = ?
 		WHERE run_id = ? AND command_id = ? AND state = ?`,
 		ProcessDispatchDelivered, agentID, resolution, messageID, dbTime(now), dbTime(now),
@@ -265,7 +280,7 @@ func MarkProcessAgentDispatchDelivered(runID, commandID, expectedState, agentID,
 // again. It is bound to the performer being released.
 func ReleaseProcessAgentDispatch(runID, commandID, agentID, reason string) error {
 	return execProcessDispatchCAS(`UPDATE process_agent_dispatches
-		SET state = ?, agent_id = '', resolution = '', wait_reason = ?, updated_at = ?
+		SET state = ?, agent_id = '', resolution = '', spawn_lifetime = '', wait_reason = ?, updated_at = ?
 		WHERE run_id = ? AND command_id = ? AND state = ? AND agent_id = ?`,
 		ProcessDispatchPending, boundedDispatchText(reason, MaxProcessDispatchWaitReasonBytes),
 		dbTime(time.Now().UTC()), runID, commandID, ProcessDispatchDelivered, agentID)
@@ -301,7 +316,7 @@ func RecordProcessAgentDispatchReport(runID, commandID, agentID, outcome, note, 
 func FailProcessAgentDispatch(runID, commandID, expectedState, resolution, outcome, note string) error {
 	now := time.Now().UTC()
 	return execProcessDispatchCAS(`UPDATE process_agent_dispatches
-		SET state = ?, agent_id = '', resolution = ?, wait_reason = ?, report_outcome = ?, report_note = ?,
+		SET state = ?, agent_id = '', resolution = ?, spawn_lifetime = '', wait_reason = ?, report_outcome = ?, report_note = ?,
 			reported_at = ?, updated_at = ?
 		WHERE run_id = ? AND command_id = ? AND state = ?`,
 		ProcessDispatchReported, resolution, boundedDispatchText(note, MaxProcessDispatchWaitReasonBytes),

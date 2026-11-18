@@ -37,21 +37,31 @@ func (d *Definition) isGateVote(nodeID string) bool {
 
 // StepFinished reports whether nodeID is done for good in checkpoint: settled
 // (done, failed, skipped or canceled, so past every retry), and every loop
-// around it has exited, so no round will run it again. An agent with
-// lifetime "step" is retired then.
+// around it has exited, so no round will run it again. A compound's stage
+// is finished only once its compound is: a failed check or review, or a
+// plan sent back, reopens a stage that was done. An agent with lifetime
+// "step" is retired then.
 func (d *Definition) StepFinished(checkpoint Checkpoint, nodeID string) bool {
 	node, ok := definitionNodeByID(d, nodeID)
-	if !ok || !settledStatus(checkpoint.Nodes[nodeID]) {
+	if !ok {
 		return false
 	}
-	// A loop's body runs again while its decision can still send it back: it
-	// has exited once its decision has settled and the body is not reset.
-	for _, loop := range node.loops {
-		if !settledStatus(checkpoint.Nodes[d.nodes[d.loops[loop].from].id]) {
+	for {
+		if !settledStatus(checkpoint.Nodes[node.id]) {
 			return false
 		}
+		// A loop's body runs again while its decision can still send it back:
+		// it has exited once its decision has settled and the body is not reset.
+		for _, loop := range node.loops {
+			if !settledStatus(checkpoint.Nodes[d.nodes[d.loops[loop].from].id]) {
+				return false
+			}
+		}
+		if node.parent < 0 {
+			return true
+		}
+		node = d.nodes[node.parent]
 	}
-	return true
 }
 
 func settledStatus(status NodeStatus) bool {
