@@ -167,6 +167,18 @@ export function createTransactionDialogActions({
       return result;
     },
 
+    // What retiring or deleting the agent would remove or repair
+    // (agent-dependents-choice.js).
+    async loadAgentDependents(conv, { signal, node = '' } = {}) {
+      const response = await fetchOn(node)(
+        `/api/agents/${encodeURIComponent(conv)}/dependents`,
+        { credentials: 'same-origin', signal },
+      );
+      const payload = await responsePayload(response);
+      if (!response.ok) throw responseError(response, payload);
+      return payload;
+    },
+
     async loadAgentWorktree(conv, { signal, retire = false, node = '' } = {}) {
       const response = await fetchOn(node)(
         `/api/agents/${encodeURIComponent(conv)}/worktree${retire ? '?retire=1' : ''}`,
@@ -210,7 +222,7 @@ export function createTransactionDialogActions({
       );
     },
 
-    async deleteAgent({ agent, node = '', label, deleteWorktree, expectedWorktree }) {
+    async deleteAgent({ agent, node = '', label, deleteWorktree, expectedWorktree, keepDependents }) {
       // Only the exact frozen opt-in boolean adds the destructive worktree
       // query. Freeze the exact probed path into a server-authoritative
       // precondition so a moved agent cannot redirect deletion to another
@@ -228,6 +240,7 @@ export function createTransactionDialogActions({
         params.set('delete_worktree', '1');
         params.set('expected_worktree', choice.expectedWorktree);
       }
+      if (keepDependents === true) params.set('keep_dependents', '1');
       const query = params.size ? `?${params}` : '';
       const response = await fetchOn(node)(
         `/api/agents/${encodeURIComponent(agent)}${query}`,
@@ -244,14 +257,17 @@ export function createTransactionDialogActions({
       return finishSuccess(result, notice);
     },
 
-    async retireGroupPreview({ group, convs, shutdown, deleteWorktree }) {
+    async retireGroupPreview({ group, convs, shutdown, deleteWorktree, keepDependents }) {
       const response = await fetchImpl(
         `/api/groups/${encodeURIComponent(group)}/retire`,
         {
           method: 'POST',
           credentials: 'same-origin',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ convs, shutdown: !!shutdown, delete_worktree: !!deleteWorktree }),
+          body: JSON.stringify({
+            convs, shutdown: !!shutdown, delete_worktree: !!deleteWorktree,
+            ...(keepDependents === true ? { keep_dependents: true } : {}),
+          }),
         },
       );
       const payload = await responsePayload(response);
@@ -259,7 +275,7 @@ export function createTransactionDialogActions({
       return payload;
     },
 
-    async retireAgentsPreview({ agents, shutdown, deleteWorktrees }) {
+    async retireAgentsPreview({ agents, shutdown, deleteWorktrees, keepDependents }) {
       const response = await fetchImpl(
         '/api/cleanup/agents',
         {
@@ -269,6 +285,7 @@ export function createTransactionDialogActions({
           body: JSON.stringify({
             agents, mode: 'retire', include_online: true,
             shutdown: !!shutdown, delete_worktrees: !!deleteWorktrees,
+            ...(keepDependents === true ? { keep_dependents: true } : {}),
           }),
         },
       );
@@ -277,7 +294,7 @@ export function createTransactionDialogActions({
       return payload;
     },
 
-    async deleteRetiredPreview({ agents, deleteWorktrees }) {
+    async deleteRetiredPreview({ agents, deleteWorktrees, keepDependents }) {
       const response = await fetchImpl(
         '/api/cleanup/agents',
         {
@@ -286,6 +303,7 @@ export function createTransactionDialogActions({
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             agents, mode: 'delete', delete_worktrees: !!deleteWorktrees,
+            ...(keepDependents === true ? { keep_dependents: true } : {}),
           }),
         },
       );
@@ -308,6 +326,7 @@ export function createTransactionDialogActions({
         include_online: !!request.includeOnline,
         delete_worktrees: !!request.deleteWorktrees,
         shutdown: !!request.shutdown,
+        ...(request.keepDependents === true ? { keep_dependents: true } : {}),
       };
       let response;
       try {
@@ -504,7 +523,7 @@ export function createTransactionDialogActions({
     },
 
     async retireAgent({
-      conv, node = '', label, shutdown, deleteWorktree, expectedWorktree, expectedBranch,
+      conv, node = '', label, shutdown, deleteWorktree, expectedWorktree, expectedBranch, keepDependents,
     }) {
       // Keep the daemon's deliberately asymmetric defaults explicit at this
       // destructive boundary: shutdown is always named; worktree deletion is
@@ -535,6 +554,7 @@ export function createTransactionDialogActions({
         params.set('expected_worktree', choice.expectedWorktree);
         params.set('expected_branch', choice.expectedBranch);
       }
+      if (keepDependents === true) params.set('keep_dependents', '1');
       const response = await fetchOn(node)(
         `/api/agents/${encodeURIComponent(conv)}/retire?${params}`,
         { method: 'POST', credentials: 'same-origin' },

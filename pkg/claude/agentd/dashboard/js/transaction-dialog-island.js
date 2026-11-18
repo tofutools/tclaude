@@ -7,6 +7,7 @@ import { Dialog } from './ui-dialog.js';
 import { relTime } from './helpers.js';
 import { LockReason, trustLock } from './lock-reason.js';
 import { registerTransactionDialogController } from './transaction-dialog-controller.js';
+import { DependentsChoice, useAgentDependents } from './agent-dependents-choice.js';
 
 const html = htm.bind(h);
 
@@ -384,6 +385,7 @@ function CleanupDialog({ descriptor, actions, confirmDiscard }) {
   const [includeOwners, setIncludeOwners] = useState(false);
   const [deleteWorktrees, setDeleteWorktrees] = useState(true);
   const [shutdown, setShutdown] = useState(true);
+  const [alsoDependents, setAlsoDependents] = useState(true);
   const [query, setQuery] = useState('');
   const [age, setAge] = useState('0');
   const [selected, setSelected] = useState(() => new Set(
@@ -480,6 +482,8 @@ function CleanupDialog({ descriptor, actions, confirmDiscard }) {
       includeOnline: !groupMode && effectiveTier !== 'reinstate' && includeOnline,
       deleteWorktrees: !groupMode && effectiveTier === 'delete' && deleteWorktrees,
       shutdown: !groupMode && effectiveTier === 'retire' && shutdown,
+      ...(!groupMode && (effectiveTier === 'retire' || effectiveTier === 'delete') && !alsoDependents
+        ? { keepDependents: true } : {}),
     });
     if (!submittedRequest) setSubmittedRequest(request);
     setError('');
@@ -691,6 +695,11 @@ function CleanupDialog({ descriptor, actions, confirmDiscard }) {
           disabled=${controlsDisabled || effectiveTier !== 'delete'}
           onChange=${(event) => setDeleteWorktrees(event.currentTarget.checked)}
         /> Delete associated git worktrees <span class="opt-note">— removes the worktree directory; the branch and its commits are kept. The main repo and worktrees shared with another agent are always skipped.</span></label>
+        <label id="cleanup-opt-dependents-row" class=${effectiveTier === 'retire' || effectiveTier === 'delete' ? '' : 'disabled'}><input
+          type="checkbox" id="cleanup-opt-dependents" checked=${alsoDependents}
+          disabled=${controlsDisabled || (effectiveTier !== 'retire' && effectiveTier !== 'delete')}
+          onChange=${(event) => setAlsoDependents(event.currentTarget.checked)}
+        /> Also remove what refers to each agent <span class="opt-note">— retire and delete; removes its own cron jobs, standing orders and automations and those addressed to it, cancels the runs scoped to it, and clears template steps pinned to it. Unchecked, they are kept; its own cron jobs and standing orders are disabled.</span></label>
         <div class="cleanup-related"><${Button} size="sm" id="cleanup-worktrees-all" disabled=${controlsDisabled}
           onClick=${() => actions.handoffCleanupWorktrees({ group: '' })}
         ><${Words}
@@ -929,12 +938,15 @@ function BulkRetireDialog({ descriptor, actions, confirmDiscard }) {
   );
   const [shutdown, setShutdown] = useState(true);
   const [deleteWorktrees, setDeleteWorktrees] = useState(true);
+  const [alsoDependents, setAlsoDependents] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [submittedRequest, setSubmittedRequest] = useState(null);
   const [result, setResult] = useState(null);
   const activeRef = useRef(true);
   useEffect(() => () => { activeRef.current = false; }, []);
+  const dependents = useAgentDependents(actions,
+    candidates.filter((candidate) => selected.has(candidate.conv_id)).map((candidate) => candidate.conv_id));
 
   const normalizedQuery = query.trim().toLowerCase();
   const matchesFilter = (candidate) => !normalizedQuery
@@ -1020,11 +1032,13 @@ function BulkRetireDialog({ descriptor, actions, confirmDiscard }) {
         convs: Object.freeze(selectedCandidates.map((candidate) => candidate.conv_id)),
         shutdown,
         deleteWorktree: shutdown && deleteWorktrees,
+        ...(alsoDependents ? {} : { keepDependents: true }),
       })
       : Object.freeze({
         agents: Object.freeze(selectedCandidates.map((candidate) => candidate.agent_id || candidate.conv_id)),
         shutdown,
         deleteWorktrees: shutdown && deleteWorktrees,
+        ...(alsoDependents ? {} : { keepDependents: true }),
       }));
     if (!submittedRequest) setSubmittedRequest(request);
     setError('');
@@ -1160,6 +1174,14 @@ function BulkRetireDialog({ descriptor, actions, confirmDiscard }) {
           <span class="wt-note">The main worktree is never removed; a worktree shared with a surviving agent is kept. Removal happens only after its agent exits and requires shutdown; a branch is deleted with its worktree only if it is merged, so unmerged commits are kept.</span>
         </span>
       </label>
+      <${DependentsChoice}
+        id="retire-preview-dependents"
+        loading=${dependents.loading}
+        summary=${dependents.summary}
+        checked=${alsoDependents}
+        disabled=${busy || locked}
+        onChange=${(event) => { if (!busy && !locked) setAlsoDependents(event.currentTarget.checked); }}
+      />
     `}
   </${TransactionDialogFrame}>`;
 }
@@ -1201,6 +1223,7 @@ function DeleteRetiredDialog({ descriptor, actions, confirmDiscard }) {
     () => new Set(candidates.map((candidate) => candidate.conv_id)),
   );
   const [deleteWorktrees, setDeleteWorktrees] = useState(false);
+  const [alsoDependents, setAlsoDependents] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [failedAttempt, setFailedAttempt] = useState(false);
@@ -1223,6 +1246,7 @@ function DeleteRetiredDialog({ descriptor, actions, confirmDiscard }) {
   const visibleSelected = visibleCandidates.filter(
     (candidate) => selected.has(candidate.conv_id),
   );
+  const dependents = useAgentDependents(actions, visibleSelected.map((candidate) => candidate.conv_id));
   const dirty = !result && (
     query !== '' || minAge !== '0' || selected.size !== candidates.length
     || deleteWorktrees || failedAttempt
@@ -1278,6 +1302,7 @@ function DeleteRetiredDialog({ descriptor, actions, confirmDiscard }) {
         (candidate) => candidate.agent_id || candidate.conv_id,
       )),
       deleteWorktrees,
+      ...(alsoDependents ? {} : { keepDependents: true }),
     });
     setError('');
     setBusy(true);
@@ -1385,6 +1410,14 @@ function DeleteRetiredDialog({ descriptor, actions, confirmDiscard }) {
           <span class="wt-note">removes the worktree directory; the branch and its commits are kept — the main repo and worktrees shared with a surviving agent are always kept</span>
         </span>
       </label>
+      <${DependentsChoice}
+        id="delete-retired-dependents"
+        loading=${dependents.loading}
+        summary=${dependents.summary}
+        checked=${alsoDependents}
+        disabled=${busy}
+        onChange=${(event) => setAlsoDependents(event.currentTarget.checked)}
+      />
     `}
   </${TransactionDialogFrame}>`;
 }
@@ -1467,6 +1500,8 @@ function DeleteWorktreeChoice({ worktree, checked, disabled, onChange }) {
 function RetireAgentDialog({ descriptor, actions, confirmDiscard }) {
   const [shutdown, setShutdown] = useState(true);
   const [deleteWorktree, setDeleteWorktree] = useState(false);
+  const [alsoDependents, setAlsoDependents] = useState(true);
+  const dependents = useAgentDependents(actions, [descriptor.conv], descriptor.node || '');
   const [worktree, setWorktree] = useState(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -1531,6 +1566,7 @@ function RetireAgentDialog({ descriptor, actions, confirmDiscard }) {
     // real frozen value, not an absent one.
     const choice = submittedChoice || Object.freeze({
       shutdown,
+      ...(alsoDependents ? {} : { keepDependents: true }),
       deleteWorktree: deleting,
       ...(deleting ? {
         expectedWorktree: worktree.path,
@@ -1615,6 +1651,14 @@ function RetireAgentDialog({ descriptor, actions, confirmDiscard }) {
           if (!busy && !locked) setDeleteWorktree(event.currentTarget.checked);
         }}
       />`}
+      <${DependentsChoice}
+        id="retire-dependents"
+        loading=${dependents.loading}
+        summary=${dependents.summary}
+        checked=${alsoDependents}
+        disabled=${busy || locked}
+        onChange=${(event) => { if (!busy && !locked) setAlsoDependents(event.currentTarget.checked); }}
+      />
     </${TransactionDialogFrame}>
   `;
 }
@@ -1696,6 +1740,8 @@ function ShutdownAgentDialog({ descriptor, actions, confirmDiscard }) {
 }
 
 function DeleteAgentDialog({ descriptor, actions, confirmDiscard }) {
+  const [alsoDependents, setAlsoDependents] = useState(true);
+  const dependents = useAgentDependents(actions, [descriptor.agent], descriptor.node || '');
   const [worktree, setWorktree] = useState(null);
   const [deleteWorktree, setDeleteWorktree] = useState(false);
   const [probing, setProbing] = useState(true);
@@ -1754,6 +1800,7 @@ function DeleteAgentDialog({ descriptor, actions, confirmDiscard }) {
       agent: descriptor.agent,
       ...(descriptor.node ? { node: descriptor.node } : {}),
       label: descriptor.label,
+      ...(alsoDependents ? {} : { keepDependents: true }),
       deleteWorktree: worktree?.removable === true && deleteWorktree === true,
       ...(worktree?.removable === true && deleteWorktree === true
         ? { expectedWorktree: worktree.path } : {}),
@@ -1808,6 +1855,14 @@ function DeleteAgentDialog({ descriptor, actions, confirmDiscard }) {
         onChange=${(event) => {
           if (!busy && !retrying) setDeleteWorktree(event.currentTarget.checked);
         }}
+      />
+      <${DependentsChoice}
+        id="delete-agent-dependents"
+        loading=${dependents.loading}
+        summary=${dependents.summary}
+        checked=${alsoDependents}
+        disabled=${busy || retrying}
+        onChange=${(event) => { if (!busy && !retrying) setAlsoDependents(event.currentTarget.checked); }}
       />
       ${probeError && !retrying ? html`<div class="transaction-probe-retry">
         <${Button} size="sm"

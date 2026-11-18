@@ -183,6 +183,9 @@ test('retire retry stays bound to the confirmed worktree after the agent moves',
   const actions = createTransactionDialogActions({
     state,
     fetchImpl: (url) => {
+      if (url.includes('/dependents')) {
+        return Promise.resolve(new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } }));
+      }
       if (url.includes('/worktree')) {
         return Promise.resolve(new Response(JSON.stringify({
           kind: 'linked', ...claimed, shared: false, removable: true,
@@ -563,6 +566,9 @@ test('retire failure stays inline with frozen choices and explicit retry', async
     state,
     fetchImpl: (url, init) => {
       requests.push([url, init]);
+      if (url.includes('/dependents')) {
+        return Promise.resolve(new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } }));
+      }
       if (url.includes('/worktree')) {
         return Promise.resolve(new Response(JSON.stringify({ kind: 'none', path: '', removable: false }), {
           status: 200, headers: { 'Content-Type': 'application/json' },
@@ -689,3 +695,63 @@ test("another node's retire shows worktree deletion locked unless that node trus
     });
   }
 });
+
+for (const keep of [false, true]) {
+  test(`retire lists what refers to the agent, checked by default${keep ? '; unchecked it keeps them' : ''}`, async (t) => {
+    const harness = await createPreactHarness(t);
+    const [{ createTransactionDialogState }, { createTransactionDialogActions }, island] = await Promise.all([
+      harness.importDashboardModule('js/transaction-dialog-state.js'),
+      harness.importDashboardModule('js/transaction-dialog-actions.js'),
+      harness.importDashboardModule('js/transaction-dialog-island.js'),
+    ]);
+    const state = createTransactionDialogState();
+    const host = harness.document.body.appendChild(harness.document.createElement('div'));
+    const conv = 'dddddddd-bbbb-cccc-dddd-eeeeeeeeeeee';
+    const json = (body) => new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    const retireURLs = [];
+    const actions = createTransactionDialogActions({
+      state,
+      fetchImpl: (url) => {
+        if (url.includes('/dependents')) {
+          return Promise.resolve(json({
+            conv_id: conv,
+            dependents: [
+              { kind: 'cron', id: 1, name: 'nightly-nudge', via: 'owner' },
+              { kind: 'cron', id: 2, name: 'lead-ping', via: 'target' },
+              { kind: 'trigger_rule', id: 3, name: 'on-ci-red', via: 'owner' },
+            ],
+            runs: [{ id: 'run_1', template_ref: 'review@abc' }],
+            pinned_steps: [{ template: 'review', node: 'implement', slot: 'performer' }],
+          }));
+        }
+        if (url.includes('/worktree')) return Promise.resolve(json({ kind: 'none' }));
+        retireURLs.push(url);
+        return Promise.resolve(json({ conv_id: conv }));
+      },
+      refresh: async () => {}, notify: () => {}, confirm: async () => false,
+    });
+    await harness.mount(harness.html`
+      <${island.TransactionDialogApp} state=${state} actions=${actions} confirmDiscard=${async () => true} />
+    `, host);
+    await harness.act(() => { state.open({ kind: 'retire-agent', conv, label: 'Pinned worker' }); });
+    await harness.act(() => new Promise((resolve) => setTimeout(resolve, 0)));
+    const box = host.querySelector('#retire-dependents');
+    assert.ok(box, 'the row lists what refers to the agent');
+    assert.equal(box.hasAttribute('checked'), true, 'removing them is the default');
+    const label = host.querySelector('#retire-dependents-label').textContent;
+    assert.match(label, /remove 2 cron jobs, 1 automation/);
+    assert.match(label, /cancel 1 run scoped to it/);
+    assert.match(label, /clear 1 template step pinned to it/);
+    assert.equal(host.querySelectorAll('#retire-dependents-details li').length, 5);
+
+    if (keep) {
+      box.checked = false;
+      await harness.act(() => harness.fireEvent(box, 'change'));
+    }
+    host.querySelector('#retire-ok').click();
+    await harness.act(() => new Promise((resolve) => setTimeout(resolve, 0)));
+    assert.equal(retireURLs.length, 1);
+    assert.equal(new URL(retireURLs[0], 'http://x').searchParams.get('keep_dependents'), keep ? '1' : null,
+      keep ? 'unchecked, the retire keeps them' : 'checked, nothing is sent: cascading is the server default');
+  });
+}

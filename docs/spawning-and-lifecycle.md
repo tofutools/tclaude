@@ -683,7 +683,9 @@ orders the agent owns are then disabled, and a reinstate does not turn them
 back on.
 
 Either way, a running step the agent held falls back to its If-nobody rule
-right away. The outcome lists what went.
+right away. The outcome lists what went. In the dashboard, the retire and
+delete dialogs, single and bulk, list what would go with a checkbox that is
+checked by default. Unchecking it is `--keep-dependents`.
 
 `reinstate <selector>` returns a retired agent to active status — old
 memberships and grants do **not** come back. Authorization is
