@@ -571,6 +571,24 @@ func TestProcessPerformer_UnscopedRunNeedsAssignee(t *testing.T) {
 	assert.Equal(t, "needs_performer", foreign.Action)
 	assert.Contains(t, foreign.Commands[0].Performer.WaitReason, "shares no group with the run owner")
 	assert.Len(t, processInbox(t, conv), 1, "only the operator-owned run reached alice")
+
+	// An assignee that is gone (retired, deleted, or never there) waits by
+	// default, and fails the step when its fallback says fail: there is no
+	// member to fall back to.
+	gone := devPerformer()
+	gone.Assignee = "nobody-by-that-name"
+	waiting := startPerformerRun(t, f, root, "run_gone_wait", performerTemplate("gone-wait", gone, nil),
+		agentd.ProcessRunScopeForTest{Kind: "none"})
+	assert.Equal(t, "needs_performer", waiting.Action)
+	assert.Contains(t, waiting.Commands[0].Performer.WaitReason, "is not an active agent")
+
+	gone.Fallback = &model.PerformerFallback{Action: model.FallbackFail}
+	failed := startPerformerRun(t, f, root, "run_gone_fail", performerTemplate("gone-fail", gone, nil),
+		agentd.ProcessRunScopeForTest{Kind: "none"})
+	assert.Equal(t, engine.RunFailed, failed.Status, "%+v", failed)
+	require.Len(t, failed.Performers, 1)
+	assert.Equal(t, "failed", failed.Performers[0].Outcome)
+	assert.Contains(t, failed.Performers[0].Note, `assignee "nobody-by-that-name" is not an active agent; the step's fallback fails it`)
 }
 
 // Scenario: a person settles an agent's node in its place (human
