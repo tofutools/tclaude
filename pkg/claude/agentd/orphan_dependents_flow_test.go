@@ -10,6 +10,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/process/engine"
+	"github.com/tofutools/tclaude/pkg/claude/process/store"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
 
@@ -44,6 +45,10 @@ func TestOrphanedDependents_DryRunThenCleanup(t *testing.T) {
 	const conv = "orph-1111-2222-3333-4444"
 	agentID := havePerformerAgent(t, f, "", conv, "left-behind", "", "offline")
 	putProcessRuntimeTemplate(t, root, performerTemplate("orphan-template", devPerformer(), nil))
+	byName, byID := devPerformer(), devPerformer()
+	byName.Assignee, byID.Assignee = "left-behind", agentID
+	putProcessRuntimeTemplate(t, root, performerTemplate("pinned-by-name", byName, nil))
+	putProcessRuntimeTemplate(t, root, performerTemplate("pinned-by-id", byID, nil))
 	created := processRuntimeRequest(t, f, http.MethodPost, "/v1/process/runs", map[string]any{
 		"id": "run_orphan", "templateId": "orphan-template", "agent": agentID, "authorizeProgramProfiles": []string{},
 	})
@@ -93,4 +98,17 @@ func TestOrphanedDependents_DryRunThenCleanup(t *testing.T) {
 	assert.Nil(t, job)
 	assert.Equal(t, engine.RunCanceled, showPerformerRun(t, f, "run_orphan").Status)
 	assert.Empty(t, agentd.OrphanedDependentsCheckTitleForTest(), "nothing is left for the Doctor to report")
+
+	fs, err := store.NewFS(root)
+	require.NoError(t, err)
+	assignee := func(id string) string {
+		head, err := fs.GetTemplateHeadGeneration(t.Context(), id)
+		require.NoError(t, err)
+		current, err := fs.GetTemplate(t.Context(), head.Ref)
+		require.NoError(t, err)
+		return current.Nodes[performerNode].Performer.Assignee
+	}
+	assert.Empty(t, assignee("pinned-by-id"), "a step pinned by the agent's id is cleared")
+	assert.Equal(t, "left-behind", assignee("pinned-by-name"),
+		"a step pinned by a retired agent's name is left: a later agent may answer to it")
 }

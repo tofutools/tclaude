@@ -31,6 +31,19 @@ type orphanedAgentDependents struct {
 	Error       string              `json:"error,omitempty"`
 }
 
+// orphanAssigneeMatcher matches an assignee naming agentID by its stable id
+// or one of its conversations, never by name: a retired agent's name may
+// since have gone to another agent, so a step pinned by name is left as
+// written.
+func orphanAssigneeMatcher(agentID string) func(string) bool {
+	convs, _ := db.ConvsForAgent(agentID)
+	ids := map[string]bool{agentID: true}
+	for _, conv := range convs {
+		ids[conv] = true
+	}
+	return func(assignee string) bool { return ids[strings.TrimSpace(assignee)] }
+}
+
 // listOrphanedAgentDependents finds the orphans. withSteps also walks the
 // process templates for steps pinned to each one, which the Doctor skips.
 func listOrphanedAgentDependents(ctx context.Context, withSteps bool) ([]orphanedAgentDependents, []string, error) {
@@ -49,8 +62,10 @@ func listOrphanedAgentDependents(ctx context.Context, withSteps bool) ([]orphane
 	out := make([]orphanedAgentDependents, 0, len(agents))
 	for _, a := range agents {
 		o := orphanedAgentDependents{OrphanedAgent: a}
-		if a.ConvID != "" {
-			o.Title = strings.TrimSpace(agent.FreshTitle(a.ConvID))
+		if a.ConvID != "" && withSteps {
+			if title := strings.TrimSpace(agent.CachedTitle(a.ConvID)); title != agent.UnknownTitle {
+				o.Title = title
+			}
 		}
 		if o.Dependents, err = db.ListAgentDependents(a.AgentID); err != nil {
 			return nil, nil, err
@@ -59,7 +74,7 @@ func listOrphanedAgentDependents(ctx context.Context, withSteps bool) ([]orphane
 			return nil, nil, err
 		}
 		if fs != nil {
-			steps, err := templatesPinnedTo(ctx, fs, agentAssigneeMatcher(a.AgentID), nil)
+			steps, err := templatesPinnedTo(ctx, fs, orphanAssigneeMatcher(a.AgentID), nil)
 			if err != nil {
 				unavailable = append(unavailable, "process templates: "+err.Error())
 				fs = nil
@@ -73,7 +88,10 @@ func listOrphanedAgentDependents(ctx context.Context, withSteps bool) ([]orphane
 
 // cleanupOrphanedAgentDependents removes or repairs what each orphan still
 // has, as a retire's cascade would, attributed to by. An agent reinstated
-// since the listing is left as it is.
+// before its rows are removed is left as it is. One reinstated in the moment
+// between that and the run cancellations still has its scoped runs cancelled
+// and its pinned steps cleared; the window is one agent's cascade long, and
+// closing it would mean holding the reinstate out for the template walk.
 func cleanupOrphanedAgentDependents(ctx context.Context, by string) ([]orphanedAgentDependents, error) {
 	orphans, _, err := listOrphanedAgentDependents(ctx, false)
 	if err != nil {
@@ -81,7 +99,7 @@ func cleanupOrphanedAgentDependents(ctx context.Context, by string) ([]orphanedA
 	}
 	for i := range orphans {
 		o := &orphans[i]
-		matches := agentAssigneeMatcher(o.AgentID)
+		matches := orphanAssigneeMatcher(o.AgentID)
 		cronAuthorityMu.Lock()
 		removed, orphaned, err := db.RemoveOrphanedAgentDependents(o.AgentID)
 		cronAuthorityMu.Unlock()

@@ -54,7 +54,8 @@ func cleanupDependentsCmd() *cobra.Command {
 			"or automations (their own, or cron jobs and standing orders addressed to them) or unfinished runs " +
 			"scoped to them, as retirements before the cascade, or with --keep-dependents, left behind. It removes " +
 			"those rows, cancels the runs and clears template steps pinned to the agent by id, as retiring it " +
-			"today would. --dry-run lists what that would do. Operator only: run it from your own shell.",
+			"today would. --dry-run lists what that would do. An agent away on a federation peer is not an orphan. " +
+			"It exits non-zero when an agent was skipped or left a warning. Operator only: run it from your own shell.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *cleanupDependentsParams, _ *cobra.Command, _ []string) {
 			os.Exit(runCleanupDependents(p, cliStdout, cliStderr))
@@ -85,6 +86,7 @@ func runCleanupDependents(p *cleanupDependentsParams, stdout, stderr io.Writer) 
 	if len(out.Agents) == 0 {
 		fmt.Fprintln(stdout, "(nothing refers to a retired or deleted agent)")
 	}
+	incomplete := 0
 	for _, a := range out.Agents {
 		name := a.Title
 		if name == "" {
@@ -93,10 +95,14 @@ func runCleanupDependents(p *cleanupDependentsParams, stdout, stderr io.Writer) 
 		fmt.Fprintf(stdout, "%s (%s, %s)\n", name, a.AgentID, a.State)
 		if a.Error != "" {
 			fmt.Fprintf(stdout, "  skipped: %s\n", a.Error)
+			incomplete++
 			continue
 		}
 		if !p.DryRun {
 			a.Result.print(stdout)
+			if a.Result != nil && len(a.Result.Warnings) > 0 {
+				incomplete++
+			}
 			continue
 		}
 		for _, dep := range a.Dependents {
@@ -119,6 +125,10 @@ func runCleanupDependents(p *cleanupDependentsParams, stdout, stderr io.Writer) 
 	}
 	for _, note := range out.Unavailable {
 		fmt.Fprintln(stdout, "note: "+note)
+	}
+	if incomplete > 0 {
+		fmt.Fprintf(stderr, "Error: %d agent(s) were not fully cleaned up; see skipped and warning lines above\n", incomplete)
+		return rcIOFailure
 	}
 	return rcOK
 }

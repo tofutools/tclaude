@@ -704,7 +704,9 @@ cancels the runs, and clears template steps pinned to the agent by id or
 conversation. A step pinned only by the name of an agent retired earlier is
 left as written, because a later agent may answer to that name. Run it with
 `--dry-run` first to list what it would do. It is the operator's own: an
-agent cannot run it. An agent reinstated in the meantime keeps everything.
+agent cannot run it. An agent reinstated in the meantime keeps everything,
+and so does one away on a federation peer: it is not gone. The command exits
+non-zero when it skipped an agent or left a warning.
 
 ### dir
 
