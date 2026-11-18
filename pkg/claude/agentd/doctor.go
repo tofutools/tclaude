@@ -34,7 +34,8 @@ var doctorProbes = doctor.HostProbes
 // buildDoctorChecks is the full, host-touching check run. A var so tests can
 // count and stall builds.
 var buildDoctorChecks = func() []doctor.Check {
-	return append(doctor.Run(doctorProbes()), harnessConfigRepairChecks()...)
+	checks := append(doctor.Run(doctorProbes()), harnessConfigRepairChecks()...)
+	return append(checks, orphanedDependentsChecks()...)
 }
 
 var doctorCache struct {

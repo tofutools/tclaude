@@ -182,3 +182,74 @@ func TestDeleteAgent_PurgesRowsWithoutForeignKeys(t *testing.T) {
 	assert.Equal(t, "exited", state)
 	assert.Equal(t, "the agent was deleted", detail)
 }
+
+// A retirement that kept its dependents, and a deletion before the cascade,
+// leave orphans; a live agent's rows are not orphans. A cleanup removes an
+// orphan's rows, and leaves an agent reinstated meanwhile alone.
+func TestOrphanedAgents_ListAndRemove(t *testing.T) {
+	setupTestDB(t)
+	f := haveCascadeFixture(t)
+	_, err := RetireAgentAuthorizationWithOptions("cascade-agent", "human", "test", false, RetireOptions{})
+	require.NoError(t, err)
+	gone, err := InsertAgentCronJob(&AgentCronJob{Name: "gone", OwnerConv: "cascade-bystander", TargetConv: "cascade-bystander",
+		TargetKind: CronTargetConv, IntervalSeconds: 60, Body: "gone", Enabled: true})
+	require.NoError(t, err)
+	d, err := Open()
+	require.NoError(t, err)
+	_, err = d.Exec(`UPDATE agent_cron_jobs SET owner_agent = 'agt_deleted' WHERE id = ?`, gone)
+	require.NoError(t, err)
+
+	orphans, err := ListOrphanedAgents()
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []OrphanedAgent{
+		{AgentID: f.agentID, State: OrphanedAgentRetired, ConvID: "cascade-agent"},
+		{AgentID: "agt_deleted", State: OrphanedAgentDeleted},
+	}, orphans, "the bystander is live, so its rows are not orphans")
+
+	removed, orphaned, err := RemoveOrphanedAgentDependents("agt_deleted")
+	require.NoError(t, err)
+	assert.True(t, orphaned)
+	require.Len(t, removed, 1)
+	assert.Equal(t, gone, removed[0].ID)
+
+	ok, err := ReinstateAgentByID(f.agentID)
+	require.NoError(t, err)
+	require.True(t, ok)
+	removed, orphaned, err = RemoveOrphanedAgentDependents(f.agentID)
+	require.NoError(t, err)
+	assert.False(t, orphaned, "a reinstated agent is not an orphan")
+	assert.Empty(t, removed)
+	job, err := GetAgentCronJob(f.ownedCron)
+	require.NoError(t, err)
+	assert.NotNil(t, job, "a reinstated agent keeps its cron jobs")
+
+	orphans, err = ListOrphanedAgents()
+	require.NoError(t, err)
+	assert.Empty(t, orphans)
+}
+
+// An agent away on a federation peer has a retired home row, but it lives
+// on: it is not an orphan, and a cleanup leaves its rows.
+func TestOrphanedAgents_AwayAgentIsNotOne(t *testing.T) {
+	setupTestDB(t)
+	f := haveCascadeFixture(t)
+	_, err := RetireAgentAuthorizationWithOptions("cascade-agent", "system:federation-away", "away", false, RetireOptions{})
+	require.NoError(t, err)
+	d, err := Open()
+	require.NoError(t, err)
+	_, err = d.Exec(`INSERT INTO agent_federation_presence (agent_id, home_instance, state, current_instance, current_peer,
+		predecessor_instance, departure_offer, arrival_offer, hop_count, visit_epoch, continuation_nonce_hash, transfer_json, updated_at)
+		VALUES (?, 'home', 'away', 'peer', 'peer', 'home', '', '', 1, 1, '', '{}', 1)`, f.agentID)
+	require.NoError(t, err)
+
+	orphans, err := ListOrphanedAgents()
+	require.NoError(t, err)
+	assert.Empty(t, orphans)
+	removed, orphaned, err := RemoveOrphanedAgentDependents(f.agentID)
+	require.NoError(t, err)
+	assert.False(t, orphaned)
+	assert.Empty(t, removed)
+	job, err := GetAgentCronJob(f.ownedCron)
+	require.NoError(t, err)
+	assert.NotNil(t, job, "an away agent keeps its cron jobs")
+}
