@@ -29,6 +29,7 @@ import { UNTITLED_PROCESS, openProcessDraft } from './process-draft-handoff.js';
 import { PROCESS_SCRIBE_PROMPT_MAX } from './process-scribe.js';
 import { Button, Select } from './ui-components.js';
 import { TypedField } from './typed-field.js';
+import { effectiveLifetime, lifetimeChoices } from './process-spawn-lifetime.js';
 
 const html = htm.bind(h);
 
@@ -175,6 +176,15 @@ export function ProfilePicker({ value = '', defaultSpawnProfile = '', profiles =
   return html`<${Select} size="sm" class="gq-profile-select" aria-label=${label} data-profile=${value} value=${value}
     onChange=${(event) => onChange(event.currentTarget.value)}>
     ${profileChoices({ current: value, defaultSpawnProfile, profiles }).map((option) => html`<option key=${option.value} value=${option.value}>${option.label}</option>`)}
+  <//>`;
+}
+
+// LifetimePicker picks how long a new agent stays once spawned
+// (process-spawn-lifetime.js); it shows the default when none is set.
+export function LifetimePicker({ fallback, decider = false, label = 'Afterwards', onChange }) {
+  return html`<${Select} size="sm" class="gq-lifetime-select" aria-label=${label} data-lifetime=${effectiveLifetime(fallback, { decider })}
+    value=${effectiveLifetime(fallback, { decider })} onChange=${(event) => onChange(event.currentTarget.value)}>
+    ${lifetimeChoices({ decider }).map((option) => html`<option key=${option.value} value=${option.value}>${option.label}</option>`)}
   <//>`;
 }
 

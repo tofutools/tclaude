@@ -16,6 +16,7 @@
 // (tk_bd629fb5; process-step-gate.js edits them).
 
 import { LOOP_DEFAULT_ROUNDS, exhaustionChoices, loopBound, setLoopBound } from './process-loops.js';
+import { keepLifetime } from './process-spawn-lifetime.js';
 
 export const STEP_LIST_START_OUTCOME = 'start';
 export const STEP_CONTINUE_OUTCOME = 'next';
@@ -388,7 +389,7 @@ export function setStepWho(step, who, { legacyRoles = false } = {}) {
       // Who is the fallback: nobody matches no selector, so it always spawns.
       delete performer.profile;
       delete performer.spawn;
-      performer.fallback = who.profile ? { action: 'spawn', profile: who.profile } : { action: 'spawn' };
+      performer.fallback = keepLifetime(old.fallback, who.profile ? { action: 'spawn', profile: who.profile } : { action: 'spawn' });
     }
   }
   node.performer = performer;

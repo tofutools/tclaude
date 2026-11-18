@@ -12,6 +12,7 @@
 // editor.
 
 import { setStepWho } from './process-step-list.js';
+import { keepLifetime } from './process-spawn-lifetime.js';
 import { ruleOperands, seedRule } from './process-rules.js';
 
 export { ruleOperands };
@@ -1348,6 +1349,8 @@ function deciderOf(who, text) {
   else if (who.mode === 'role') decider.role = who.role;
   else if (who.mode === 'anyone') decider.anyone = true;
   else if (who.mode === 'lead') decider.lead = true;
+  // A new agent: no selector matches, so its fallback always spawns.
+  else if (who.mode === 'spawn') decider.fallback = who.profile ? { action: 'spawn', profile: who.profile } : { action: 'spawn' };
   return decider;
 }
 
@@ -1358,6 +1361,7 @@ export function deciderWho(decider) {
   if (decider.role) return { mode: 'role', role: decider.role };
   if (decider.anyone) return { mode: 'anyone' };
   if (decider.lead) return { mode: 'lead' };
+  if (decider.fallback?.action === 'spawn' && !decider.sameAs) return { mode: 'spawn', profile: decider.fallback.profile || '' };
   return { mode: 'nobody' };
 }
 
@@ -1439,7 +1443,12 @@ export function setDecider(view, id, index, who) {
   if (!old) return { view, id };
   const decider = deciderOf(who, deciderText(old));
   if (decider.kind === 'agent' && old.kind === 'agent') {
-    for (const key of ['sameAs', 'differentFrom', 'fallback', 'model', 'effort', 'profile']) if (old[key] !== undefined && who.mode !== 'agent') decider[key] = old[key];
+    for (const key of ['sameAs', 'differentFrom', 'fallback', 'model', 'effort', 'profile']) {
+      // A new agent's fallback is its Who; the old one only lends its lifetime.
+      if (key === 'fallback' && who.mode === 'spawn') continue;
+      if (old[key] !== undefined && who.mode !== 'agent') decider[key] = old[key];
+    }
+    if (decider.fallback) decider.fallback = keepLifetime(old.fallback, decider.fallback);
   }
   node.deciders[index] = decider;
   return { view: next, id };
