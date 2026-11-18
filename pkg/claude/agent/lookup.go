@@ -65,6 +65,15 @@ var errAmbiguous = ErrAmbiguous
 // paying for a full ~/.claude/projects rescan-and-retry.
 var errNoAgentMatch = errors.New("no agent matches")
 
+// errNoConvMatch tags a selector that matched no conversation at all.
+var errNoConvMatch = errors.New("no conversation matches")
+
+// IsNoMatch reports whether a ResolveSelector error says nothing matches the
+// selector, as opposed to an ambiguous selector or a lookup that failed.
+func IsNoMatch(err error) bool {
+	return errors.Is(err, errNoAgentMatch) || errors.Is(err, errNoConvMatch)
+}
+
 // Resolved is a minimal handle to a conversation reachable by a selector.
 // Exported so the daemon (pkg/claude/agentd) can reuse the resolver.
 type Resolved struct {
@@ -315,7 +324,7 @@ func tryResolve(selector string) (*resolved, []*resolved, error) {
 		return &resolved{ConvID: walked, Row: row}, nil, nil
 	}
 
-	return nil, nil, fmt.Errorf("no conversation matches %q", selector)
+	return nil, nil, fmt.Errorf("%w %q", errNoConvMatch, selector)
 }
 
 // refreshAllProjects walks ~/.claude/projects/* and runs the same

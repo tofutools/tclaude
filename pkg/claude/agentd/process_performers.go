@@ -617,23 +617,33 @@ func resolveProcessPerformer(runID string, scope processRunScope, command engine
 				return processPerformerChoice{candidate: candidate, resolution: processResolutionSameSession, feedback: feedback}
 			}
 		}
+		// An unscoped run has nobody else to give the node to, so when its
+		// performer cannot be had the step's fallback decides: fail fails it,
+		// anything else waits and says why.
+		unavailable := func(reason string) processPerformerChoice {
+			if action, _ := spec.Fallback(); action == model.FallbackFail {
+				return processPerformerChoice{failReason: reason + "; the step's fallback fails it"}
+			}
+			return processPerformerChoice{waitReason: reason}
+		}
 		if spec.Assignee != "" {
 			candidate := processAgentBySelector(spec.Assignee)
 			if candidate == nil {
-				return processPerformerChoice{waitReason: fmt.Sprintf("assignee %q is not an active agent", spec.Assignee)}
+				reason := fmt.Sprintf("assignee %q is not an active agent", spec.Assignee)
+				if !processAssigneeGone(spec.Assignee) {
+					// An ambiguous name or a failed lookup is not proof the
+					// assignee is gone: wait for the next sweep.
+					return processPerformerChoice{waitReason: reason}
+				}
+				return unavailable(reason)
 			}
 			if !processOwnerMayTask(scope.Owner, *candidate) {
-				return processPerformerChoice{waitReason: fmt.Sprintf(
-					"assignee %q shares no group with the run owner", spec.Assignee)}
+				return unavailable(fmt.Sprintf("assignee %q shares no group with the run owner", spec.Assignee))
 			}
 			return processPerformerChoice{candidate: candidate, resolution: processResolutionAssignee}
 		}
-		reason := "an unscoped run has no members to perform this node: " +
-			"name an assignee, or start the run scoped to a group or an agent"
-		if action, _ := spec.Fallback(); action == model.FallbackFail {
-			return processPerformerChoice{failReason: reason}
-		}
-		return processPerformerChoice{waitReason: reason}
+		return unavailable("an unscoped run has no members to perform this node: " +
+			"name an assignee, or start the run scoped to a group or an agent")
 	}
 }
 
@@ -939,6 +949,21 @@ func processAgentBySelector(selector string) *processPerformerCandidate {
 	}
 	candidate, _ := processBoundCandidate(resolved.AgentID)
 	return candidate
+}
+
+// processAssigneeGone reports whether an assignee is confirmed not to be an
+// active agent: nothing matches it, it names a plain conversation, or the
+// agent it names is retired.
+func processAssigneeGone(selector string) bool {
+	resolved, _, err := agent.ResolveSelector(selector)
+	if err != nil {
+		return agent.IsNoMatch(err)
+	}
+	if resolved.AgentID == "" {
+		return true
+	}
+	performer, err := db.GetAgent(resolved.AgentID)
+	return err == nil && !performer.Active()
 }
 
 // processOwnerMayTask reports whether an unscoped run's owner may hand a node

@@ -48,9 +48,12 @@ func TestFederationIdentitySignedNoticeRebindsOnlyAfterWindow(t *testing.T) {
 	old, err = db.GetFederationPeer(fh.peer.id.ID())
 	require.NoError(t, err)
 	require.Nil(t, old)
-	rec := fedHuman(t, fh.f, http.MethodGet, "/v1/federation/audit?peer="+next.ID(), nil)
-	require.Equal(t, 200, rec.Code)
-	require.Contains(t, rec.Body.String(), "identity.accepted")
+	// The acceptance commits before its audit row is written, so the
+	// successor can be trusted a moment before the audit shows it.
+	fedEventually(t, "acceptance audited", func() bool {
+		rec := fedHuman(t, fh.f, http.MethodGet, "/v1/federation/audit?peer="+next.ID(), nil)
+		return rec.Code == 200 && strings.Contains(rec.Body.String(), "identity.accepted")
+	})
 }
 
 func TestFederationIdentityOperatorOnlyPreviewAndLocalKeyLossRecovery(t *testing.T) {
