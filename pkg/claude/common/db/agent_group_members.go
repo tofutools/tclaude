@@ -284,13 +284,19 @@ func deleteAgentByConvID(convID string, unlaunched bool) (AgentDeletionCounts, e
 		{`DELETE FROM conv_index WHERE conv_id = ?`, &c.ConvIndex},
 		{`DELETE FROM conversation_resume_profiles WHERE conv_id = ?`, &c.ResumeProfiles},
 		{`DELETE FROM sessions WHERE conv_id = ?`, &c.Sessions},
+		// The recorded working directory and workspace of this generation:
+		// conv-keyed, with no FK and nothing else that removes them.
+		{`DELETE FROM agent_workdir WHERE conv_id = ?`, nil},
+		{`DELETE FROM agent_workspace WHERE conv_id = ?`, nil},
 	} {
 		res, err := tx.Exec(s.stmt, convID)
 		if err != nil {
 			return AgentDeletionCounts{}, fmt.Errorf("delete agent (%s): %w", s.stmt, err)
 		}
-		n, _ := res.RowsAffected()
-		*s.into = n
+		if s.into != nil {
+			n, _ := res.RowsAffected()
+			*s.into = n
+		}
 	}
 
 	// Actor-scoped teardown: the agent_id-keyed identity rows (memberships,
@@ -333,6 +339,13 @@ func deleteAgentByConvID(convID string, unlaunched bool) (AgentDeletionCounts, e
 			} else if err := terminalFederationPresenceTx(tx, agentID); err != nil {
 				return c, err
 			}
+			// A worker a trigger or cron spawned is done once its agent is
+			// gone: still counted live, it would hold a max_live_workers slot
+			// forever, since its session row goes below.
+			if _, err := tx.Exec(`UPDATE trigger_workers SET state = 'exited', detail = 'the agent was deleted', completed_at = ?
+				WHERE agent_id = ? AND state IN ('reserved','pending','live')`, dbTime(time.Now().UTC()), agentID); err != nil {
+				return AgentDeletionCounts{}, fmt.Errorf("delete agent: close trigger worker: %w", err)
+			}
 			type actorStep struct {
 				stmt string
 				into *int64
@@ -365,6 +378,18 @@ func deleteAgentByConvID(convID string, unlaunched bool) (AgentDeletionCounts, e
 				// The startup snapshot is agent-keyed without an FK, and holds
 				// profile context text that should not outlive the actor.
 				{`DELETE FROM agent_startup_snapshots WHERE agent_id = ?`, nil},
+				// More agent-keyed rows without an FK: its own lineage entry
+				// (its children keep theirs as history), the Steward seat and
+				// the permissions offered with it, its Claude subscription
+				// choice, and the standing-order and trigger state kept for it
+				// as a recipient.
+				{`DELETE FROM agent_lineage WHERE child_agent_id = ?`, nil},
+				{`DELETE FROM steward_roster WHERE agent_id = ?`, nil},
+				{`DELETE FROM steward_offered_permissions WHERE agent_id = ?`, nil},
+				{`DELETE FROM agent_claude_subscriptions WHERE agent_id = ?`, nil},
+				{`DELETE FROM agent_standing_order_debounce WHERE target_agent = ?`, nil},
+				{`DELETE FROM agent_standing_order_turn_origins WHERE target_agent = ?`, nil},
+				{`DELETE FROM trigger_dwell_states WHERE agent_id = ?`, nil},
 				{`DELETE FROM agents WHERE agent_id = ?`, nil}, // cascades agent_conversations
 			} {
 				res, err := tx.Exec(s.stmt, agentID)

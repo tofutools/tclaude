@@ -138,12 +138,13 @@ func handleAgentDelete(w http.ResponseWriter, r *http.Request, targetConv string
 		return
 	}
 
-	if db.AgentConvAway(targetConv) {
-		if _, err := db.RetireAgentAuthorizationByConv(targetConv, "human", "deleted while away"); err != nil {
-			writeError(w, 500, "retire", err.Error())
-			return
-		}
-		notifyAwayAgentTerminal(targetConv)
+	// Retire first, cascading to what refers to the agent unless the caller
+	// keeps it (agent_dependents.go). An away agent's retirement also tells
+	// its host it is terminal.
+	dependents, err := cascadeAgentDelete(targetConv, enrollmentActor(caller), agentDependentsKeep(r))
+	if err != nil {
+		writeError(w, 500, "retire", err.Error())
+		return
 	}
 
 	// Comprehensive cleanup: DB purge + filesystem + sync tombstone +
@@ -180,6 +181,9 @@ func handleAgentDelete(w http.ResponseWriter, r *http.Request, targetConv string
 		"conv_id":   targetConv,
 		"action":    "deleted",
 		"db_counts": counts,
+	}
+	if dependents != nil {
+		resp["dependents"] = dependents
 	}
 	// Surface the full generation set reaped when more than the named conv
 	// went (a multi-generation actor) — otherwise it's just [targetConv].

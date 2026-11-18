@@ -113,6 +113,11 @@ func runRetiredAgentCleanup(now time.Time) {
 		// retirement); DeleteAgentAllGenerations reaps EVERY generation's
 		// rows + .jsonl, so none orphan. `swept` is logged so the forensic
 		// record names each conv-id whose .jsonl was removed.
+		// What still refers to it goes with it, as on any delete.
+		if _, err := cascadeAgentDelete(e.CurrentConvID, "system:retired-cleanup", false); err != nil {
+			slog.Warn("retired cleanup: cascade failed", "conv", e.CurrentConvID, "error", err)
+			continue
+		}
 		if _, err := removeAgentDirectoriesForConv(e.CurrentConvID); err != nil {
 			slog.Warn("retired cleanup: agent-owned directory cleanup failed",
 				"conv", e.CurrentConvID, "error", err)

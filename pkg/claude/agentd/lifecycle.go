@@ -22,6 +22,9 @@ type memberOpResult struct {
 	// bulk op (stop/resume) and on a retire that did not ask for cleanup,
 	// so the field is omitted from those responses entirely.
 	Worktree *retireWorktreePlan `json:"worktree,omitempty"`
+	// Dependents is what a retire or delete did to what refers to the member
+	// (agent_dependents.go); nil on every other op.
+	Dependents *agentCascade `json:"dependents,omitempty"`
 }
 
 type groupOpResp struct {

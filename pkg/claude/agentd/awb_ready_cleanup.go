@@ -119,9 +119,9 @@ func (w awbReadyWorker) cleanupAfterClose(ctx context.Context, dispatch *db.AWBR
 	}
 
 	if a.Active() {
-		_, _, err := retireAgentConvGuarded(convID, awbReadyRetireActor,
+		_, _, err := retireAgentConvCascading(convID, awbReadyRetireActor,
 			"AWB issue "+dispatch.IssueID+" closed automatically", false,
-			func() error { return awbReadyStillSettledFn(agentID) })
+			func() error { return awbReadyStillSettledFn(agentID) }, false)
 		if errors.Is(err, errAWBReadyAgentBusy) {
 			w.reportCleanupSkipped(dispatch.IssueID, agentID, convID)
 			return false

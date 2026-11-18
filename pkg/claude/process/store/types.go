@@ -89,6 +89,9 @@ type TemplateAuthorship struct {
 	SourceHash string    `json:"sourceHash"`
 	Actor      ActorRef  `json:"actor"`
 	AuthoredAt time.Time `json:"authoredAt"`
+	// Note says why the save was made when the actor did not edit by hand,
+	// such as a step cleared because the agent it named was retired.
+	Note string `json:"note,omitempty"`
 }
 
 type TemplateAuthoringSnapshot struct {

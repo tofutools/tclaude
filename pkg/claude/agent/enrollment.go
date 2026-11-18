@@ -90,6 +90,7 @@ type retireParams struct {
 	Reason           string `long:"reason" short:"r" optional:"true" help:"Why the agent is being retired (recorded in the audit trail)"`
 	NoShutdown       bool   `long:"no-shutdown" help:"Leave the agent's running session alive. By default retire also soft-exits the running tmux session (sends /exit); pass this to keep the process running."`
 	NoDeleteWorktree bool   `long:"no-delete-worktree" help:"Keep the agent's git worktree + branch. By default retire also removes a removable linked worktree (never the main repo or one shared with a live agent) and deletes its branch if it is merged (a branch with unmerged commits is kept); pass this to leave the worktree untouched."`
+	KeepDependents   bool   `long:"keep-dependents" help:"Keep what refers to the agent. By default retire also removes its own cron jobs, standing orders and automations and the cron jobs and standing orders addressed to it, cancels the process runs scoped to it, and clears template steps pinned to it (they go back to their role, or to nobody yet). Kept, the cron jobs and standing orders it owns are disabled instead."`
 	AskHuman         string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s' or '60'). Capped at 300s. Timeout = deny."`
 }
 
@@ -119,6 +120,13 @@ func retireCmd() *cobra.Command {
 			"cwd IS the worktree, removal waits until its pane exits; with " +
 			"--no-shutdown a still-running agent keeps its worktree. Pass " +
 			"--no-delete-worktree to leave the worktree and branch untouched. " +
+			"\n\n" +
+			"By default retire also takes what exists only for the agent: its " +
+			"own cron jobs, standing orders and automations, and the cron jobs " +
+			"and standing orders addressed to it. It cancels the process runs " +
+			"scoped to it and clears template steps pinned to it, which go back " +
+			"to their role or to nobody yet. Pass --keep-dependents to keep " +
+			"them; the cron jobs and standing orders it owns are then disabled. " +
 			"\n\n" +
 			"This is the non-destructive alternative to `tclaude agent " +
 			"delete`, which permanently wipes the conversation. " +
@@ -168,6 +176,7 @@ func runRetire(p *retireParams, stdout, stderr io.Writer) int {
 	} else {
 		q.Set("delete_worktree", "1")
 	}
+	setKeepDependents(q, p.KeepDependents)
 	path := "/v1/agent/" + url.PathEscape(selector) + "/retire?" + q.Encode()
 	var resp struct {
 		ConvID  string `json:"conv_id"`
@@ -176,6 +185,8 @@ func runRetire(p *retireParams, stdout, stderr io.Writer) int {
 			PermsRevoked int64    `json:"perms_revoked"`
 			SudoRevoked  int64    `json:"sudo_revoked"`
 			Retired      bool     `json:"retired"`
+			// Dependents is what the retire removed, cancelled or cleared.
+			Dependents *dependentsReply `json:"dependents"`
 		} `json:"outcome"`
 		// Shutdown is present only when shutdown was requested. Action
 		// mirrors stopOneConv: soft_stopped | skipped:already_offline |
@@ -217,6 +228,7 @@ func runRetire(p *retireParams, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stdout, "  revoked: %d permission grant(s), %d sudo grant(s)\n",
 			resp.Outcome.PermsRevoked, resp.Outcome.SudoRevoked)
 	}
+	resp.Outcome.Dependents.print(stdout)
 	if resp.Shutdown != nil {
 		switch {
 		case resp.Shutdown.Action == "soft_stopped":

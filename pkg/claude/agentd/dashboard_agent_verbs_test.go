@@ -35,6 +35,7 @@ func TestDashboardAgentVerbs_MethodErrorsAreUnchanged(t *testing.T) {
 		"prs":               "GET or POST only",
 		"rename":            "POST only",
 		"worktree":          "GET only",
+		"dependents":        "GET only",
 		"notify":            "POST only",
 		"tags":              "POST only",
 		"task":              "POST only",

@@ -249,7 +249,7 @@ func TestRetire_RevocationFailureDoesNotDemoteAgent(t *testing.T) {
 			require.NoError(t, err)
 
 			rec := testharness.Serve(agentd.BuildDashboardHandlerForTest(),
-				testharness.JSONRequest(t, http.MethodPost, "/api/agents/"+conv+"/retire?shutdown=1&delete_worktree=0", nil))
+				testharness.JSONRequest(t, http.MethodPost, "/api/agents/"+conv+"/retire?shutdown=1&delete_worktree=0&keep_dependents=1", nil))
 			assert.Equal(t, http.StatusInternalServerError, rec.Code, rec.Body.String())
 			assert.Contains(t, rec.Body.String(), tt.wantError)
 			live, err := db.IsLiveAgentConv(conv)
@@ -277,7 +277,7 @@ func TestRetire_RevocationFailureDoesNotDemoteAgent(t *testing.T) {
 			_, err = d.Exec(`DROP TRIGGER ` + tt.triggerName)
 			require.NoError(t, err)
 			retry := testharness.Serve(agentd.BuildDashboardHandlerForTest(),
-				testharness.JSONRequest(t, http.MethodPost, "/api/agents/"+conv+"/retire?shutdown=1&delete_worktree=0", nil))
+				testharness.JSONRequest(t, http.MethodPost, "/api/agents/"+conv+"/retire?shutdown=1&delete_worktree=0&keep_dependents=1", nil))
 			require.Equal(t, http.StatusOK, retry.Code, retry.Body.String())
 			var retryResp struct {
 				Outcome struct {
