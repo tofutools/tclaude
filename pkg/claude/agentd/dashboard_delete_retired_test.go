@@ -60,7 +60,7 @@ func TestDashboardTransactionDeleteRetiredExclusiveOwnership(t *testing.T) {
 		}
 	}
 	for _, required := range []string{
-		"async deleteRetiredPreview({ agents, deleteWorktrees })",
+		"async deleteRetiredPreview({ agents, deleteWorktrees, keepDependents })",
 		"'/api/cleanup/agents'",
 		"agents, mode: 'delete', delete_worktrees: !!deleteWorktrees",
 		"async finishDeleteRetired(result)",

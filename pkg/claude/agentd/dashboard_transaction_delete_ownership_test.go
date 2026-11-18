@@ -47,7 +47,7 @@ func TestDashboardTransactionDeleteExclusiveOwnership(t *testing.T) {
 		t.Error("transaction controller is missing stable-agent permanent delete launcher")
 	}
 	for _, required := range []string{
-		"async deleteAgent({ agent, node = '', label, deleteWorktree, expectedWorktree })",
+		"async deleteAgent({ agent, node = '', label, deleteWorktree, expectedWorktree, keepDependents })",
 		"deleteWorktree === true",
 		"params.set('delete_worktree', '1')",
 		"params.set('expected_worktree', choice.expectedWorktree)",

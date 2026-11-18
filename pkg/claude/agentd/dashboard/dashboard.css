@@ -9257,6 +9257,13 @@ body.wizard .directory-picker-action-modal .modal-buttons { border-top-color: rg
 .delete-agent-wt .wt-note { color: var(--ui-muted-text); font-size: 11px; }
 #retire-modal .delete-agent-wt .wt-note { margin-left: 6px; }
 #worktree-cleanup-modal .delete-agent-wt .wt-note { margin-left: 6px; }
+/* The retire/delete dialogs' "also remove what refers to it" row: the
+   items it would remove or repair, folded. */
+.delete-agent-wt[id$="-dependents-row"] .wt-note,
+#retire-modal .delete-agent-wt[id$="-dependents-row"] .wt-note { display: block; margin-left: 0; }
+.delete-agent-wt .dependents-list { margin-top: 4px; font-size: 11px; color: var(--ui-muted-text); }
+.delete-agent-wt .dependents-list summary { cursor: pointer; }
+.delete-agent-wt .dependents-list ul { margin: 4px 0 0; padding-left: 18px; max-height: 140px; overflow-y: auto; }
 /* Bulk window focus/unfocus selection modal. Reuses the cleanup-modal
    shell (toolbar / list / rows / buttons); the rules below are
    specific to this modal: the focus-vs-unfocus direction picker and
