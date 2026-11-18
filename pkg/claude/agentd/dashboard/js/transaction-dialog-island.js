@@ -957,7 +957,7 @@ function BulkRetireDialog({ descriptor, actions, confirmDiscard }) {
   const locked = !!submittedRequest || !!result;
   const dirty = !result && (
     query !== '' || selected.size !== candidates.length
-    || !shutdown || !deleteWorktrees || !!submittedRequest
+    || !shutdown || !deleteWorktrees || !alsoDependents || !!submittedRequest
   );
   const regularTitle = descriptor.kind === 'retire-group-preview'
     ? `Retire ${descriptor.status} agents in "${descriptor.group}"`
@@ -1178,6 +1178,8 @@ function BulkRetireDialog({ descriptor, actions, confirmDiscard }) {
         id="retire-preview-dependents"
         loading=${dependents.loading}
         summary=${dependents.summary}
+        failed=${dependents.failed}
+        remote=${dependents.remote}
         checked=${alsoDependents}
         disabled=${busy || locked}
         onChange=${(event) => { if (!busy && !locked) setAlsoDependents(event.currentTarget.checked); }}
@@ -1249,7 +1251,7 @@ function DeleteRetiredDialog({ descriptor, actions, confirmDiscard }) {
   const dependents = useAgentDependents(actions, visibleSelected.map((candidate) => candidate.conv_id));
   const dirty = !result && (
     query !== '' || minAge !== '0' || selected.size !== candidates.length
-    || deleteWorktrees || failedAttempt
+    || deleteWorktrees || !alsoDependents || failedAttempt
   );
 
   const updateVisible = (checked) => {
@@ -1414,6 +1416,8 @@ function DeleteRetiredDialog({ descriptor, actions, confirmDiscard }) {
         id="delete-retired-dependents"
         loading=${dependents.loading}
         summary=${dependents.summary}
+        failed=${dependents.failed}
+        remote=${dependents.remote}
         checked=${alsoDependents}
         disabled=${busy}
         onChange=${(event) => setAlsoDependents(event.currentTarget.checked)}
@@ -1655,6 +1659,8 @@ function RetireAgentDialog({ descriptor, actions, confirmDiscard }) {
         id="retire-dependents"
         loading=${dependents.loading}
         summary=${dependents.summary}
+        failed=${dependents.failed}
+        remote=${dependents.remote}
         checked=${alsoDependents}
         disabled=${busy || locked}
         onChange=${(event) => { if (!busy && !locked) setAlsoDependents(event.currentTarget.checked); }}
@@ -1860,6 +1866,8 @@ function DeleteAgentDialog({ descriptor, actions, confirmDiscard }) {
         id="delete-agent-dependents"
         loading=${dependents.loading}
         summary=${dependents.summary}
+        failed=${dependents.failed}
+        remote=${dependents.remote}
         checked=${alsoDependents}
         disabled=${busy || retrying}
         onChange=${(event) => { if (!busy && !retrying) setAlsoDependents(event.currentTarget.checked); }}

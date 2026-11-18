@@ -5,7 +5,7 @@
 // scoped to it and clears template steps pinned to it. The row lists that,
 // checked by default; unchecking it keeps them (keep_dependents).
 import { h } from 'preact';
-import { useEffect, useState } from 'preact/hooks';
+import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 
 const html = htm.bind(h);
@@ -52,54 +52,82 @@ export function dependentsSummary(previews) {
 }
 
 // useAgentDependents loads the previews for the given agents (at most four
-// at a time) and returns {loading, summary}. A node or agent that cannot
-// answer is left out: the row is advisory, the server decides.
+// at a time) and returns {loading, summary, failed, remote}. Each agent's
+// preview is fetched once per dialog, so changing the selection only fetches
+// the agents not seen yet. An agent that cannot answer is counted in failed:
+// the row is advisory, the server decides. An agent on another node has no
+// preview and no opt-out (the peer retire and delete take no such option), so
+// the hook reports remote and fetches nothing.
 export function useAgentDependents(actions, convs, node = '') {
   const key = (convs || []).join(',');
-  const [state, setState] = useState({ loading: !!key, summary: dependentsSummary([]) });
+  const cache = useRef(new Map());
+  const empty = { loading: false, summary: dependentsSummary([]), failed: 0, remote: !!node };
+  const [state, setState] = useState(node || !key ? empty : { ...empty, loading: true });
   useEffect(() => {
-    if (!key || typeof actions?.loadAgentDependents !== 'function') {
-      setState({ loading: false, summary: dependentsSummary([]) });
+    if (node || !key || typeof actions?.loadAgentDependents !== 'function') {
+      setState(empty);
+      return undefined;
+    }
+    const wanted = key.split(',');
+    const fold = () => {
+      const previews = [];
+      let failed = 0;
+      for (const conv of wanted) {
+        const entry = cache.current.get(conv);
+        if (entry?.ok) previews.push(entry.preview);
+        else if (entry) failed += 1;
+      }
+      return { loading: false, summary: dependentsSummary(previews), failed, remote: false };
+    };
+    const queue = wanted.filter((conv) => !cache.current.has(conv));
+    if (!queue.length) {
+      setState(fold());
       return undefined;
     }
     const controller = new AbortController();
-    const queue = key.split(',');
-    const previews = [];
     const worker = async () => {
       while (queue.length && !controller.signal.aborted) {
         const conv = queue.shift();
         try {
-          previews.push(await actions.loadAgentDependents(conv, { signal: controller.signal, node }));
-        } catch (_) { /* advisory: leave it out */ }
+          const preview = await actions.loadAgentDependents(conv, { signal: controller.signal });
+          cache.current.set(conv, { ok: true, preview });
+        } catch (_) {
+          if (!controller.signal.aborted) cache.current.set(conv, { ok: false });
+        }
       }
     };
-    setState({ loading: true, summary: dependentsSummary([]) });
+    setState((current) => ({ ...current, loading: true }));
     Promise.all(Array.from({ length: Math.min(4, queue.length) }, worker)).then(() => {
-      if (!controller.signal.aborted) setState({ loading: false, summary: dependentsSummary(previews) });
+      if (!controller.signal.aborted) setState(fold());
     });
     return () => controller.abort();
   }, [key, node]);
   return state;
 }
 
-// DependentsChoice is the row itself. Nothing to remove or repair renders
-// nothing; while the previews load it says so.
-export function DependentsChoice({ id, loading, summary, checked, disabled, onChange }) {
-  if (loading) {
-    return html`<div class="delete-agent-wt disabled" id=${`${id}-row`}>
-      <span class="wt-note">Checking what refers to it…</span>
+// DependentsChoice is the row itself. The checkbox stays on screen while the
+// previews load, so the choice that is sent is always the one shown. Nothing
+// to remove or repair, and nothing unchecked, renders nothing.
+export function DependentsChoice({ id, loading, summary, failed = 0, remote = false, checked, disabled, onChange }) {
+  if (remote) {
+    return html`<div class="delete-agent-wt" id=${`${id}-row`}>
+      <span class="wt-note" id=${`${id}-label`}>On its node, this also removes what refers to the agent there (its cron jobs, standing orders and automations, the runs scoped to it and template steps pinned to it). Keeping them is only possible from that node.</span>
     </div>`;
   }
-  if (!summary?.total) return null;
+  if (!loading && !summary?.total && !failed && checked) return null;
+  const lead = loading
+    ? 'Also remove what refers to it (checking…)'
+    : summary?.total ? `Also ${summary.text}` : 'Also remove what refers to it';
   return html`
     <label class=${`delete-agent-wt${disabled ? ' disabled' : ''}`} id=${`${id}-row`}>
       <input type="checkbox" id=${id} checked=${checked} disabled=${disabled} onChange=${onChange} />
-      <span id=${`${id}-label`}>Also ${summary.text}
-        <span class="wt-note">Unchecked, they are kept: its own cron jobs and standing orders are disabled, the rest left as they are.</span>
-        <details class="dependents-list" id=${`${id}-details`}>
+      <span id=${`${id}-label`}>${lead}
+        <span class="wt-note">Unchecked, they are kept: its own cron jobs and standing orders are disabled, the rest left as they are.${failed
+          ? ` ${failed === 1 ? '1 agent' : `${failed} agents`} could not be checked; the choice applies to them too.` : ''}</span>
+        ${summary?.total ? html`<details class="dependents-list" id=${`${id}-details`}>
           <summary>${summary.total === 1 ? '1 item' : `${summary.total} items`}</summary>
           <ul>${summary.lines.map((line) => html`<li>${line}</li>`)}</ul>
-        </details>
+        </details>` : null}
       </span>
     </label>
   `;

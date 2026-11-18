@@ -755,3 +755,28 @@ for (const keep of [false, true]) {
       keep ? 'unchecked, the retire keeps them' : 'checked, nothing is sent: cascading is the server default');
   });
 }
+
+test('retiring a remote agent says what goes on its node and has no opt-out', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createTransactionDialogState }, island] = await Promise.all([
+    harness.importDashboardModule('js/transaction-dialog-state.js'),
+    harness.importDashboardModule('js/transaction-dialog-island.js'),
+  ]);
+  const state = createTransactionDialogState();
+  const host = harness.document.body.appendChild(harness.document.createElement('div'));
+  let previews = 0;
+  const actions = {
+    close: () => state.close(),
+    loadAgentDependents: async () => { previews += 1; return {}; },
+    loadAgentWorktree: async () => ({ kind: 'none' }),
+    retireAgent: async () => {},
+  };
+  await harness.mount(harness.html`
+    <${island.TransactionDialogApp} state=${state} actions=${actions} confirmDiscard=${async () => true} />
+  `, host);
+  await harness.act(() => { state.open({ kind: 'retire-agent', conv: 'eeeeeeee-bbbb-cccc-dddd-eeeeeeeeeeee', node: 'peer-a', label: 'Remote' }); });
+  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 0)));
+  assert.match(host.querySelector('#retire-dependents-label').textContent, /On its node, this also removes/);
+  assertAbsent(host.querySelector('#retire-dependents'), 'no checkbox: a peer retire takes no keep option');
+  assert.equal(previews, 0, 'no preview is asked of a remote agent');
+});
