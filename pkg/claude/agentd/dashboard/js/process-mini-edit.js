@@ -1031,6 +1031,40 @@ export function deleteOrphans(view, id) {
   }
 }
 
+// deleteSteps removes several nodes as one edit, each through deleteStep,
+// so every one is rewired the way a single delete is: steps first, then
+// ends, which a removed step may have been the last to lead to. A node that
+// cannot go (the start, an end steps still lead to) is skipped, named in
+// `skipped` with why; `removed` names what went, `orphans` the steps that
+// went only because what led to them did. Nothing deletable: it throws.
+export function deleteSteps(view, ids) {
+  const nameOf = (id) => view.template.nodes[id]?.name || id;
+  const wanted = [...new Set(ids)].filter((id) => view.template.nodes[id]);
+  const order = [...wanted.filter((id) => view.template.nodes[id].type !== 'end'), ...wanted.filter((id) => view.template.nodes[id].type === 'end')];
+  let next = view;
+  const orphans = [];
+  const skipped = [];
+  const notes = [];
+  for (const id of order) {
+    if (!next.template.nodes[id]) continue;
+    const why = canDelete(next, id);
+    if (why) { skipped.push({ id, name: nameOf(id), why }); continue; }
+    const result = deleteStep(next, id);
+    next = result.view;
+    orphans.push(...result.orphans);
+    if (result.note) notes.push(result.note);
+  }
+  // A wanted node an earlier delete took as an orphan went too.
+  const removed = wanted.filter((id) => !next.template.nodes[id]);
+  if (!removed.length) throw new Error(skipped.length === 1 ? `${skipped[0].name}: ${skipped[0].why}` : 'none of these can be deleted');
+  const extra = [...new Set(orphans)].filter((id) => !wanted.includes(id) && isStep(view.template.nodes[id]));
+  const note = notes.join(' ');
+  return {
+    view: next, id: '', removed: removed.map(nameOf), orphans: extra.map(nameOf), skipped,
+    ...(note ? { note } : {}),
+  };
+}
+
 // setOutcomeTarget points one of a step's outcomes at another node.
 export function setOutcomeTarget(view, id, outcome, to) {
   const next = copyView(view);
