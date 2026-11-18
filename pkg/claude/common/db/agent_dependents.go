@@ -179,3 +179,96 @@ func ListAgentScopedActiveRuns(agentID string) ([]AgentScopedRun, error) {
 	}
 	return out, rows.Err()
 }
+
+// Orphaned agent states: what became of an agent that rows or runs still
+// refer to.
+const (
+	OrphanedAgentRetired = "retired"
+	OrphanedAgentDeleted = "deleted"
+)
+
+// OrphanedAgent is a retired or deleted agent that cron jobs, standing
+// orders, trigger rules or unfinished runs still refer to. Retirements and
+// deletions before the cascade, and those that kept their dependents, leave
+// these behind.
+type OrphanedAgent struct {
+	AgentID string `json:"agent_id"`
+	// State is OrphanedAgentRetired or OrphanedAgentDeleted.
+	State string `json:"state"`
+	// ConvID is a retired agent's last conversation; empty once deleted.
+	ConvID string `json:"conv_id,omitempty"`
+}
+
+// ListOrphanedAgents returns every retired or deleted agent that something
+// listed by ListAgentDependents, or an unfinished run scoped to it, still
+// refers to, by agent id.
+func ListOrphanedAgents() ([]OrphanedAgent, error) {
+	d, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	rows, err := d.Query(`WITH refs(ref) AS (
+			SELECT owner_agent FROM agent_cron_jobs
+			UNION SELECT target_agent FROM agent_cron_jobs
+			UNION SELECT owner_agent FROM agent_standing_orders
+			UNION SELECT target_agent FROM agent_standing_orders
+			UNION SELECT owner_agent FROM trigger_rules
+			UNION SELECT scope_agent_id FROM process_runs
+				WHERE scope_kind = 'agent' AND status NOT IN ('completed', 'failed', 'canceled')
+		)
+		SELECT r.ref, COALESCE(a.current_conv_id, ''), a.agent_id IS NOT NULL
+		FROM refs r LEFT JOIN agents a ON a.agent_id = r.ref
+		WHERE COALESCE(r.ref, '') <> '' AND (a.agent_id IS NULL OR a.retired_at IS NOT NULL)
+		ORDER BY r.ref`)
+	if err != nil {
+		return nil, fmt.Errorf("list orphaned agents: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var out []OrphanedAgent
+	for rows.Next() {
+		var o OrphanedAgent
+		var exists bool
+		if err := rows.Scan(&o.AgentID, &o.ConvID, &exists); err != nil {
+			return nil, fmt.Errorf("list orphaned agents: %w", err)
+		}
+		o.State = OrphanedAgentDeleted
+		if exists {
+			o.State = OrphanedAgentRetired
+		}
+		out = append(out, o)
+	}
+	return out, rows.Err()
+}
+
+// RemoveOrphanedAgentDependents removes what ListAgentDependents names for
+// agentID, but only while the agent is still retired or deleted: an agent
+// reinstated meanwhile keeps everything, and orphaned is false.
+func RemoveOrphanedAgentDependents(agentID string) (removed []AgentDependent, orphaned bool, err error) {
+	agentID = strings.TrimSpace(agentID)
+	if agentID == "" {
+		return nil, false, nil
+	}
+	d, err := Open()
+	if err != nil {
+		return nil, false, err
+	}
+	tx, err := d.Begin()
+	if err != nil {
+		return nil, false, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	var live int
+	if err := tx.QueryRow(`SELECT COUNT(*) FROM agents WHERE agent_id = ? AND retired_at IS NULL`, agentID).Scan(&live); err != nil {
+		return nil, false, fmt.Errorf("check agent %s: %w", agentID, err)
+	}
+	if live > 0 {
+		return nil, false, nil
+	}
+	if removed, err = deleteAgentDependentsTx(tx, agentID, false); err != nil {
+		return nil, true, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, true, err
+	}
+	return removed, true, nil
+}

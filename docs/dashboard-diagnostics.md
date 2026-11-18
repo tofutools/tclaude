@@ -28,7 +28,10 @@ A fix is a command to **copy** (`sudo apt install bubblewrap`, `tclaude setup`) 
 button. Some fixes open a batch preview: it lists what the fix would change, with
 every item selected. Deselect any you want left alone, then apply. One example is
 restoring agents that [lost their `--harness-config`](sandboxing.md#the-harness-config-floor)
-on a relaunch. The view never changes the host by itself. Results are cached for a minute;
+on a relaunch. Another is the cron jobs, standing orders, automations and runs that
+still refer to retired or deleted agents: copy
+[`tclaude agent cleanup-dependents --orphaned`](spawning-and-lifecycle.md#retire-reinstate-delete).
+The view never changes the host by itself. Results are cached for a minute;
 **Re-check** refreshes them.
 
 ## Audit

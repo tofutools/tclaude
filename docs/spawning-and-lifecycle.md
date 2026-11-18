@@ -696,6 +696,16 @@ its rows either way). It refuses while the tmux session is alive
 unless `--force`, requires `agent.delete` (not granted by default) or
 group ownership, and refuses self-deletion (use `tclaude conv rm`).
 
+Retirements and deletions from before the cascade, and ones that kept their
+dependents, leave rows that still refer to the agent. Doctor counts them.
+`tclaude agent cleanup-dependents --orphaned` removes them, as retiring the
+agent today would: it removes the cron jobs, standing orders and automations,
+cancels the runs, and clears template steps pinned to the agent by id or
+conversation. A step pinned only by the name of an agent retired earlier is
+left as written, because a later agent may answer to that name. Run it with
+`--dry-run` first to list what it would do. It is the operator's own: an
+agent cannot run it. An agent reinstated in the meantime keeps everything.
+
 ### dir
 
 `dir [selector]` reports the directory an agent is working in — the

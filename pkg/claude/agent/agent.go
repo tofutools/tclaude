@@ -38,6 +38,7 @@ func Cmd() *cobra.Command {
 			retireCmd(),
 			reinstateCmd(),
 			deleteCmd(),
+			cleanupDependentsCmd(),
 			contextInfoCmd(),
 			dirCmd(),
 			lookupCmd(),

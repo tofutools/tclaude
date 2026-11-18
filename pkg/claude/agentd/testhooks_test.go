@@ -2955,3 +2955,13 @@ func DashboardIndexHTMLForTest() []byte { return dashboardIndexHTML() }
 // DashboardManifestForTest is the web app manifest built for the icons in
 // fsys's pwa/ (dashboard_pwa.go).
 func DashboardManifestForTest(fsys fs.FS) []byte { return buildDashboardManifest(fsys) }
+
+// OrphanedDependentsCheckTitleForTest is the Doctor's orphaned-dependents
+// check title, or "" when it reports nothing.
+func OrphanedDependentsCheckTitleForTest() string {
+	checks := orphanedDependentsChecks()
+	if len(checks) == 0 {
+		return ""
+	}
+	return checks[0].Title
+}
