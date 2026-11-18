@@ -14,7 +14,7 @@ var (
 	stepFields       = stringSet("id", "name", "description", "doc", "performer", "approval", "approvalRetry", "retry")
 	performerFields  = stringSet("kind", "profile", "prompt", "ask", "choices", "choiceOutcomes", "assignee", "role", "anyone", "lead", "sameAs", "differentFrom", "fallback", "spawn", "model", "effort", "run", "args", "timeout", "contact", "cases", "else")
 	ruleCaseFields   = stringSet("when", "then")
-	fallbackFields   = stringSet("action", "profile")
+	fallbackFields   = stringSet("action", "profile", "lifetime")
 	contactFields    = stringSet("cadence", "budget", "escalationTarget")
 	retryFields      = stringSet("maxAttempts", "backoff", "onFail")
 	waitFields       = stringSet("duration", "until", "signal")

@@ -1090,6 +1090,18 @@ the legacy `spawn: allowed` (spawn with its `profile`), and otherwise waits.
 Validating a template warns (`unknown_spawn_profile`) about a fallback that
 names a spawn profile this node does not have; such a spawn is refused.
 
+A spawn's `lifetime` says how long the agent it spawns stays:
+
+| `lifetime` | The spawned agent |
+| --- | --- |
+| `run` (the default) | stays for later steps of the run, which pick it with `sameAs`, and is retired when the run ends, however it ends |
+| `step` (the default for a gate's deciders) | is retired once its step is done: past every retry, and in a loop once the loop has exited, so a review loop keeps one implementer |
+| `keep` | is never retired by the run; it stays a member of the group |
+
+A spawned agent is retired only once it has settled (its turn is over) and has
+no other process step open, so a busy one is retired a little later. Its
+worktree and branch are kept, as the Retire dialog keeps them by default.
+
 A spawn fallback that a spawn profile refuses fails the attempt with the reason,
 instead of waiting for a performer that cannot come. The refusing profile can be
 the step's own, the group's default or the global default: it is disabled, or it

@@ -782,6 +782,15 @@ func validateFallback(fallback *PerformerFallback, path string) Diagnostics {
 	if !isBlank(fallback.Profile) && fallback.Action != FallbackSpawn {
 		out = append(out, diagError("invalid_fallback", path+".profile", "a fallback profile is only valid with action "+FallbackSpawn))
 	}
+	switch fallback.Lifetime {
+	case "", LifetimeStep, LifetimeRun, LifetimeKeep:
+		if fallback.Lifetime != "" && fallback.Action != FallbackSpawn {
+			out = append(out, diagError("invalid_fallback", path+".lifetime", "a fallback lifetime is only valid with action "+FallbackSpawn))
+		}
+	default:
+		out = append(out, diagError("invalid_fallback", path+".lifetime",
+			fmt.Sprintf("fallback lifetime must be %q, %q or %q", LifetimeStep, LifetimeRun, LifetimeKeep)))
+	}
 	return append(out, checkInertParamRef(path+".profile", fallback.Profile)...)
 }
 

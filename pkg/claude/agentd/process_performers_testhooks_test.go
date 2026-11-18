@@ -1,5 +1,7 @@
 package agentd
 
+import "github.com/tofutools/tclaude/pkg/claude/process/executor"
+
 // ProcessRunScopeForTest is the run scope a flow test binds a run to without
 // going through scoped run creation, so a test can pick an owner or an
 // orphaned state directly. TestProcessPerformer_PersistedGroupScope covers the
@@ -44,4 +46,19 @@ func WaitForProcessDispatchForTest() {
 		processDispatchWG.Wait()
 		processRuns.wg.Wait()
 	}
+}
+
+// ReapProcessSpawnedPerformersForTest waits for every run end the executor has
+// told of (its hook also reaps), then runs the spawned-performer sweep once.
+func ReapProcessSpawnedPerformersForTest() {
+	executor.WaitTerminalHooks()
+	reapProcessSpawnedPerformers()
+	processSpawnedTeardowns.Wait()
+}
+
+// SetProcessSpawnedSettledForTest swaps the settled check the reaper uses.
+func SetProcessSpawnedSettledForTest(t interface{ Cleanup(func()) }, settled func(agentID string) (bool, error)) {
+	previous := processSpawnedSettledFn
+	processSpawnedSettledFn = settled
+	t.Cleanup(func() { processSpawnedSettledFn = previous })
 }

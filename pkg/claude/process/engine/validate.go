@@ -864,9 +864,11 @@ func AgentCommandFor(bound model.Performer, processFallback *model.PerformerFall
 	switch {
 	case bound.Fallback != nil:
 		command.FallbackAction, command.FallbackProfile = bound.Fallback.Action, strings.TrimSpace(bound.Fallback.Profile)
+		command.FallbackLifetime = bound.Fallback.Lifetime
 	case bound.Spawn == model.SpawnAllowed:
 	case processFallback != nil:
 		command.FallbackAction, command.FallbackProfile = processFallback.Action, strings.TrimSpace(processFallback.Profile)
+		command.FallbackLifetime = processFallback.Lifetime
 	}
 	return command
 }
@@ -1566,7 +1568,8 @@ func agentCommandsEqual(left, right AgentCommand) bool {
 		left.Anyone == right.Anyone && left.Lead == right.Lead && left.SameAs == right.SameAs &&
 		slices.Equal(left.DifferentFrom, right.DifferentFrom) && slices.Equal(left.Captures, right.Captures) &&
 		left.Spawn == right.Spawn && left.FallbackAction == right.FallbackAction &&
-		left.FallbackProfile == right.FallbackProfile && left.RetryMode == right.RetryMode
+		left.FallbackProfile == right.FallbackProfile && left.FallbackLifetime == right.FallbackLifetime &&
+		left.RetryMode == right.RetryMode
 }
 
 func commandsEqual(left, right Command) bool {

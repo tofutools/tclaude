@@ -54,7 +54,30 @@ const (
 type PerformerFallback struct {
 	Action  string `json:"action" yaml:"action"`
 	Profile string `json:"profile,omitempty" yaml:"profile,omitempty"`
+	// Lifetime is how long an agent this fallback spawns stays: LifetimeStep,
+	// LifetimeRun or LifetimeKeep. Empty takes the default (DefaultLifetime).
+	Lifetime string `json:"lifetime,omitempty" yaml:"lifetime,omitempty"`
 }
+
+// How long an agent a run spawned for a step stays (PerformerFallback.Lifetime).
+const (
+	// LifetimeStep retires it once its step is done: past every retry, and,
+	// in a loop, once the loop has exited (its rounds keep the agent).
+	LifetimeStep = "step"
+	// LifetimeRun keeps it for later steps of the run (sameAs picks it) and
+	// retires it when the run ends, however it ends.
+	LifetimeRun = "run"
+	// LifetimeKeep never retires it: it stays a member of the group.
+	LifetimeKeep = "keep"
+)
+
+// DefaultLifetime is the lifetime of an agent spawned for a step whose
+// fallback names none. A gate's deciders take DefaultDeciderLifetime.
+func DefaultLifetime() string { return LifetimeRun }
+
+// DefaultDeciderLifetime is the lifetime of an agent spawned to cast one of a
+// gate's votes when its fallback names none: a vote is one-shot.
+func DefaultDeciderLifetime() string { return LifetimeStep }
 
 const (
 	PerformerHuman   PerformerKind = "human"

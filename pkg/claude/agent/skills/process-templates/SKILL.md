@@ -286,6 +286,11 @@ Every performer starts with `kind` and may use shared `profile`, `timeout`, and
   wait}`, or `{action: fail}`. A top-level template `fallback` sets the
   default for every agent step. Prefer `fallback` over the legacy `spawn:
   allowed` (spawn with `profile`); never set both on one step.
+  A spawn's `lifetime` says how long the new agent stays: `run` (default:
+  kept for later steps, which pick it with `sameAs`, and retired when the run
+  ends), `step` (retired once its step is done, after its loop if it is in
+  one; the default for a gate's deciders) or `keep` (never retired by the
+  run). E.g. `fallback: {action: spawn, profile: sonnet-dev, lifetime: run}`.
 - `kind: human`: require `ask` or `prompt`; optional `profile`, `assignee`,
   `choices`. Decision choices route through exact `next` outcomes. Human task
   choices require `choiceOutcomes` mapping each label to `pass` or `fail`.

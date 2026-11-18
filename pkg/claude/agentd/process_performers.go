@@ -422,6 +422,9 @@ func resolveAndDeliverProcessDispatch(row db.ProcessAgentDispatch, command engin
 			if err := db.MarkProcessAgentDispatchDelivered(row.RunID, row.CommandID, row.State,
 				agentID, processResolutionSpawned, 0); err != nil {
 				slog.Warn("process performers: spawned delivery not recorded", "run", row.RunID, "node", row.NodeID, "error", err)
+			} else if err := db.SetProcessAgentDispatchSpawnLifetime(row.RunID, row.CommandID,
+				processSpawnLifetimeOf(row.RunID, command)); err != nil {
+				slog.Warn("process performers: spawned lifetime not recorded", "run", row.RunID, "node", row.NodeID, "error", err)
 			}
 			return nil
 		case choice.failReason != "":
