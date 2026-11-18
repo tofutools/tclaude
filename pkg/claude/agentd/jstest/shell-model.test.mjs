@@ -65,8 +65,24 @@ test('shell models preserve usage layouts, badge urgency, footer, and activity d
     what_if_enabled: true,
     what_if_costs: [{ provider: 'github', total_cost_usd: 1.75 }],
   }, { copilot: 'cost' });
-  assert.equal(copilotCost.lines[0].tokens[0].key, 'copilot-whatif');
-  assert.equal(copilotCost.lines[0].whatIf, true);
+  // In dollars, Copilot reads the account's own spend, AIC / 100, which
+  // counts usage made outside tclaude, and keeps the share of its allowance.
+  assert.deepEqual(copilotCost.lines[0].tokens.map((token) => token.key), ['copilot-monthly', 'copilot-monthly-usd']);
+  assert.equal(copilotCost.lines[0].tokens[0].pct, 58);
+  assert.equal(copilotCost.lines[0].tokens[1].mtd, '$1.75');
+  assert.equal(copilotCost.lines[0].whatIf, false, 'the account figure is not an estimate');
+  const noAccountUnits = usageView({
+    copilot: { available: true, monthly: { pct: 58.2 } },
+    what_if_enabled: true,
+    what_if_costs: [{ provider: 'github', total_cost_usd: 1.75 }],
+  }, { copilot: 'cost' });
+  assert.equal(noAccountUnits.lines[0].tokens[0].key, 'copilot-whatif', 'no AIC figures: the what-if estimate');
+  assert.equal(noAccountUnits.lines[0].whatIf, true);
+  const dollarsWithoutWhatIf = usageView({
+    copilot: { available: true, monthly: { pct: 10, used_units: 30, limit_units: 300 } },
+  }, { copilot: 'cost' });
+  assert.deepEqual(dollarsWithoutWhatIf.lines[0].modes, ['usage', 'cost', 'units'], 'dollars need no what-if pricing');
+  assert.equal(dollarsWithoutWhatIf.lines[0].tokens[1].mtd, '$0.30');
   const zeroCost = usageView({
     available: true, five_hour: { pct: 0 }, seven_day: { pct: 0 }, what_if_enabled: true,
   }, { claude: 'cost' });
@@ -774,4 +790,14 @@ test('Open MRs lists your recently closed merge requests on Mine only', async (t
   const tab = authoredOpenMRsView(snapshot, 'recent', false, mine.projects[0].key);
   assert.equal(tab.panel.recentWindowDays, 0, 'a project tab has no recently closed list');
   assert.deepEqual(tab.panel.items.map((mr) => mr.number), [7]);
+});
+
+test('one AIC is one cent, wherever Copilot shows dollars', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { aicToUSD, fmtAicUSD, USD_PER_AIC } = await harness.importDashboardModule('js/copilot-credits.js');
+  assert.equal(USD_PER_AIC, 0.01);
+  assert.equal(aicToUSD(174.6), 1.746);
+  assert.equal(aicToUSD(-3), 0);
+  assert.equal(aicToUSD('x'), 0);
+  assert.equal(fmtAicUSD(1500), '$15.00');
 });

@@ -1,3 +1,4 @@
+import { fmtAicUSD } from './copilot-credits.js';
 export const USAGE_HISTORY_SPANS = [
   { hours: 24, label: '24h' },
   { hours: 168, label: '7d' },
@@ -145,12 +146,12 @@ export function formatUsageResetCountdown(value, now = Date.now(), wizard = fals
     : `reset ${formatUsageDuration(delta)} ago`;
 }
 
-export function usageForecastView(forecast, now = Date.now(), latestAt = '', wizard = false, unitLimit = 0) {
+export function usageForecastView(forecast, now = Date.now(), latestAt = '', wizard = false, unitLimit = 0, usd = false) {
   const w = (plain, wizardly) => (wizard ? wizardly : plain);
   if (!forecast) return { tone: 'muted', headline: w('Prediction unavailable', 'No prophecy to be had'), lines: [] };
   const rate = forecast.rate_pct_per_hour
     ? unitLimit > 0
-      ? `Average usage rate: ${formatUsageUnits(forecast.rate_pct_per_hour * unitLimit / 100)}/hour`
+      ? `Average usage rate: ${usd ? fmtAicUSD(forecast.rate_pct_per_hour * unitLimit / 100) : formatUsageUnits(forecast.rate_pct_per_hour * unitLimit / 100)}/hour`
       : w(`Average usage rate: ${forecast.rate_pct_per_hour.toFixed(1)} percentage points/hour`,
         `Channeling rate: ${forecast.rate_pct_per_hour.toFixed(1)} percentage points of mana per hour`)
     : '';

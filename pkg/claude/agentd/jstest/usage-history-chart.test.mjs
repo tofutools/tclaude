@@ -244,3 +244,25 @@ test('Copilot usage chart switches its scale and accessible values to AIC', asyn
     'reset markers retain the allowance active when the reset was observed');
   await view.unmount();
 });
+
+test('Copilot usage chart in dollars plots the AIC series at one cent each', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { UsageHistoryChart } = await harness.importDashboardModule('js/usage-history-chart.js');
+  const now = Date.UTC(2026, 8, 8, 12);
+  const series = {
+    provider: 'github', window_name: 'monthly',
+    points: [
+      { at: new Date(now - 3600000).toISOString(), pct: 20, used_units: 100, limit_units: 500 },
+      { at: new Date(now).toISOString(), pct: 38, used_units: 190, limit_units: 500 },
+    ],
+    resets: [],
+    forecast: { status: 'flat', rate_pct_per_hour: 0 },
+  };
+  const view = await harness.mount(harness.preact.h(UsageHistoryChart, {
+    series, from: new Date(now - 86400000).toISOString(), generatedAt: new Date(now).toISOString(), unit: 'usd',
+  }));
+  assert.match(view.container.querySelector('svg').getAttribute('aria-label'), /dollars/);
+  assert.deepEqual([...view.container.querySelectorAll('.usage-grid text')].map((node) => node.textContent), ['$0', '$2.50', '$5']);
+  assert.match(view.container.querySelectorAll('.usage-point-hit-target')[1].getAttribute('aria-label'), /\$1\.90/);
+  await view.unmount();
+});

@@ -1,3 +1,5 @@
+import { aicToUSD, fmtAicUSD } from './copilot-credits.js';
+import { fmtAxisUSD } from './costs-model.js';
 import { Fragment, h } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
 import htm from 'htm';
@@ -147,7 +149,9 @@ export function UsageHistoryChart({
   const x = (time) => PAD.left + Math.max(0, Math.min(1, (time - start) / (horizon - start))) * (W - PAD.left - PAD.right);
   const includedPoints = points.filter((point) => !point.excluded);
   const latestLimit = [...includedPoints].reverse().find((point) => Number(point.limit_units || 0) > 0)?.limit_units || 0;
-  const units = unit === 'units' && latestLimit > 0;
+  // AIC and dollars plot the same allowance series; dollars only relabel it.
+  const units = (unit === 'units' || unit === 'usd') && latestLimit > 0;
+  const usd = units && unit === 'usd';
   const unitScale = units ? Math.max(latestLimit,
     ...points.map((point) => Number(point.limit_units || 0)), ...points.map((point) => Number(point.used_units || 0))) : 100;
   const pctValue = (pct) => units ? pct * latestLimit / 100 : pct;
@@ -155,7 +159,7 @@ export function UsageHistoryChart({
     ? Number(point.used_units || 0) : pctValue(point.pct);
   const resetValue = (reset) => units && Number(reset.limit_units || 0) > 0
     ? Number(reset.used_units || 0) : pctValue(reset.pct);
-  const formatValue = (value) => units ? formatUsageUnits(value) : `${value.toFixed(1)}%`;
+  const formatValue = (value) => usd ? fmtAicUSD(value) : units ? formatUsageUnits(value) : `${value.toFixed(1)}%`;
   const y = (value) => PAD.top + (1 - Math.max(0, Math.min(unitScale, value)) / unitScale) * (H - PAD.top - PAD.bottom);
   const resetMarkers = (series.resets || [])
     .map((reset) => ({ ...reset, time: finiteDate(reset.at) }))
@@ -309,12 +313,12 @@ export function UsageHistoryChart({
     ? Math.max(4, Math.min(H - tooltipHeight - 4, tooltip.y < tooltipHeight + 8 ? tooltip.y + 10 : tooltip.y - tooltipHeight - 8))
     : 0;
   return html`<svg class="usage-line-chart" viewBox=${`0 0 ${W} ${H}`} role="group"
-    aria-label=${`${series.provider} ${series.window_name} ${units ? 'AIC' : w('subscription usage history', 'mana reserve chronicle')}`}>
+    aria-label=${`${series.provider} ${series.window_name} ${usd ? 'dollars' : units ? 'AIC' : w('subscription usage history', 'mana reserve chronicle')}`}>
     ${[0, .5, 1].map((ratio) => {
       const tick = unitScale * ratio;
       return html`<g class="usage-grid" key=${ratio}>
       <line x1=${PAD.left} x2=${W - PAD.right} y1=${y(tick)} y2=${y(tick)} />
-      <text x=${PAD.left - 8} y=${y(tick) + 4} text-anchor="end">${units ? formatUsageUnits(tick).replace(' AIC', '') : `${tick}%`}</text>
+      <text x=${PAD.left - 8} y=${y(tick) + 4} text-anchor="end">${usd ? fmtAxisUSD(aicToUSD(tick)) : units ? formatUsageUnits(tick).replace(' AIC', '') : `${tick}%`}</text>
     </g>`;})}
     ${xTicks.map((tick, index) => html`<g class="usage-x-tick" key=${tick.time}>
       <line x1=${x(tick.time)} x2=${x(tick.time)} y1=${PAD.top} y2=${H - PAD.bottom} />

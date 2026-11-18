@@ -8,6 +8,7 @@ import {
 } from './group-activity.js';
 import { scribeGroupVisible } from './scribe-groups.js';
 import { fmtExactUSD, fmtUSD } from './costs-model.js';
+import { fmtAicUSD } from './copilot-credits.js';
 import { prReviewState, readyToMerge } from './pr-review-model.js';
 
 const USAGE_BAR_WIDTH = 8;
@@ -49,6 +50,11 @@ function costToken(key, today, mtd) {
     today: today > 0 ? fmtUSD(today) : '',
     mtd: fmtUSD(mtd),
   };
+}
+
+// creditsCostToken is the dollars an AIC allowance has spent this month.
+function creditsCostToken(key, win) {
+  return { key, kind: 'cost', label: '', today: '', mtd: fmtAicUSD(win?.used_units) };
 }
 
 function unitsToken(key, win) {
@@ -153,13 +159,18 @@ export function usageView(usage, modes = {}) {
   if (copilot.length) {
     const canUnits = Number(copilotUsage.monthly.limit_units || 0) > 0;
     const estimate = whatIfCosts.get('github') || {};
-    const canCost = !!usage?.what_if_enabled;
+    // In dollars, Copilot reads its account's own spend (AIC / 100), which
+    // counts premium requests made outside tclaude too, beside the share of
+    // the allowance. Only an account without AIC figures falls back to the
+    // what-if estimate of local sessions.
+    const canCost = canUnits || !!usage?.what_if_enabled;
     const availableModes = ['usage', ...(canCost ? ['cost'] : []), ...(canUnits ? ['units'] : [])];
     const mode = availableModes.includes(modes.copilot) ? modes.copilot : 'usage';
     lines.push({
       key: 'copilot', label: 'Copilot:', mode, modes: availableModes.length > 1 ? availableModes : [],
-      whatIf: mode === 'cost',
+      whatIf: mode === 'cost' && !canUnits,
       tokens: mode === 'units' ? [unitsToken('copilot-monthly-units', copilotUsage.monthly)]
+        : mode === 'cost' && canUnits ? [...copilot, creditsCostToken('copilot-monthly-usd', copilotUsage.monthly)]
         : mode === 'cost' ? [costToken('copilot-whatif', estimate.today_cost_usd, estimate.total_cost_usd)]
         : copilot,
     });

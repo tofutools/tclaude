@@ -19,6 +19,7 @@ import (
 	"image/color"
 	"image/draw"
 	"image/png"
+	"math"
 	"mime/multipart"
 	"net"
 	"net/http"
@@ -348,6 +349,7 @@ func seedSandboxFull(t *testing.T, f *testharness.Flow) {
 		seedSandboxFederation(t)
 	}
 	seedSandboxUsageLimit(s)
+	seedSandboxCopilotQuota(t)
 	seedSandboxPlugin(s)
 	seedSandboxLog(t)
 	seedSandboxAccessRequest(s)
@@ -697,6 +699,44 @@ func seedSandboxUsageLimit(s *sandboxSeeder) {
 		"name": "monthly-cap", "period": "month", "budget": 400,
 		"steps": []any{map[string]any{"at": 100, "action": "block_spawn"}},
 	}}, nil)
+}
+
+// seedSandboxCopilotQuota gives Copilot 30 days of account readings, as the
+// daemon's account.getQuota poller stores them: every 6h, across the monthly
+// reset, with the jumps a premium request made outside tclaude (a review in
+// the GitHub UI) leaves between two readings.
+func seedSandboxCopilotQuota(t *testing.T) {
+	t.Helper()
+	const limit = 1500.0
+	now := time.Now().UTC()
+	monthStart := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
+	used := 0.0
+	ats := []time.Time{}
+	for at := now.Add(-30 * 24 * time.Hour).Truncate(6 * time.Hour); at.Before(now); at = at.Add(6 * time.Hour) {
+		ats = append(ats, at)
+	}
+	for _, at := range append(ats, now) { // the newest reading is fresh, as the header wants
+		if at.Before(monthStart) {
+			used = 1100 + float64(at.Sub(now.Add(-30*24*time.Hour)).Hours())*1.5
+		} else {
+			hours := at.Sub(monthStart).Hours()
+			used = hours * 1.2
+			if day := int(hours / 24); day >= 6 {
+				used += 120 // a burst of GitHub UI reviews on the 7th
+			}
+			if day := int(hours / 24); day >= 12 {
+				used += 200
+			}
+		}
+		used = math.Min(used, limit)
+		if _, err := db.SaveSubscriptionUsageSample(db.SubscriptionUsageSample{
+			Provider: db.SubscriptionProviderGitHub, ObservedAt: at, Source: "account.getQuota",
+			Windows: []db.SubscriptionUsageWindow{{Name: "monthly", UsedPercent: used / limit * 100, UsedUnits: used,
+				LimitUnits: limit, ResetsAt: time.Date(at.Year(), at.Month()+1, 1, 0, 0, 0, 0, time.UTC)}},
+		}); err != nil {
+			t.Fatalf("seed Copilot quota: %v", err)
+		}
+	}
 }
 
 // seedSandboxLog writes a few daemon log lines for Diagnostics → Logs.
