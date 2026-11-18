@@ -125,11 +125,6 @@ type usageCoverageWarning struct {
 
 type usageSeriesKey struct{ provider, window string }
 
-// collectUsageHistory builds one series per provider × quota window. Each
-// series is clipped to its own view start: the per-series override when the
-// request carried one, the shared default otherwise. Series with retained
-// rows but none inside their view are kept with empty points so a card whose
-// span the operator narrowed past its data never loses its span controls.
 // usageSeriesViewFrom is where one series' view starts: the span the request
 // names for it, else the shared one. A monthly allowance reads as a month, so
 // without a span of its own it shows at least 30 days: a week of it hides how
@@ -144,6 +139,11 @@ func usageSeriesViewFrom(key usageSeriesKey, since time.Time, seriesSince map[us
 	return since
 }
 
+// collectUsageHistory builds one series per provider × quota window. Each
+// series is clipped to its own view start: the per-series override when the
+// request carried one, the shared default otherwise (a month at least for a monthly window). Series with retained
+// rows but none inside their view are kept with empty points so a card whose
+// span the operator narrowed past its data never loses its span controls.
 func collectUsageHistory(since time.Time, seriesSince map[usageSeriesKey]time.Time, now time.Time) (usageHistoryResponse, error) {
 	// Forecast from the whole retained history so a 24h chart can still anchor
 	// a weekly series at a reset that happened several days earlier. Only the
