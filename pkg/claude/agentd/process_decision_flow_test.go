@@ -311,3 +311,56 @@ func TestProcessRuntimeSweepResumesReadyBranchBesideAwaitedDecision(t *testing.T
 	require.NoError(t, err)
 	assert.Equal(t, db.ProcessRunStatusCompleted, final.Status)
 }
+
+// TestProcessRuntimeSweepResumesReadyBranchBesidePersonStep is the same
+// stranding regression for a step a person performs: its open command waits
+// on the person, takes no slot and needs no reconcile, so the sweep must still
+// reach a sibling branch's ready task.
+func TestProcessRuntimeSweepResumesReadyBranchBesidePersonStep(t *testing.T) {
+	_, root := processRuntimeFlow(t)
+	tmpl := &model.Template{
+		APIVersion: model.APIVersion, Kind: model.Kind, ID: "person-branch-recovery", Start: "start",
+		Nodes: map[string]model.Node{
+			"start": {Type: model.NodeTypeStart, Next: model.Next{"next": "fork"}},
+			"fork":  {Type: model.NodeTypeParallel, Next: model.Next{"a": "check", "b": "task-b"}},
+			"check": {Type: model.NodeTypeTask, Next: model.Next{"next": "join"},
+				Performer: &model.Performer{Kind: model.PerformerHuman, Ask: "Check it."}},
+			"task-b": {Type: model.NodeTypeTask, Next: model.Next{"next": "join"},
+				Performer: &model.Performer{Kind: model.PerformerProgram, Profile: "safe", Run: "true"}},
+			"join": {Type: model.NodeTypeEnd, Join: model.JoinAll, Result: "success"},
+		},
+	}
+	record := putProcessRuntimeTemplate(t, root, tmpl)
+
+	// The durable state a crash after opening the person's step leaves: its
+	// command is out, and the sibling task is ready with nothing planned.
+	definition, err := engine.Prepare(tmpl, map[string]string{})
+	require.NoError(t, err)
+	checkpoint, err := engine.Initialize("run_person_branch", definition)
+	require.NoError(t, err)
+	checkpoint, command, planned, err := engine.AdvanceAndPlan(checkpoint, definition)
+	require.NoError(t, err)
+	require.True(t, planned)
+	require.Equal(t, "check", command.NodeID)
+	require.Equal(t, engine.CommandHuman, command.Kind)
+	require.Len(t, checkpoint.Commands, 1, "planning puts the person's command in the outbox")
+	require.Equal(t, engine.NodeReady, checkpoint.Nodes["task-b"], "the sibling branch task must be ready")
+	createProcessRunFixtureWithCheckpoint(t, "run_person_branch", record.Ref, tmpl, checkpoint)
+
+	var dispatches atomic.Int32
+	t.Cleanup(agentd.SetProcessProgramPerformForTest(func(ctx context.Context, dispatch *executor.Dispatch) (executor.Result, error) {
+		dispatches.Add(1)
+		return executor.Perform(ctx, dispatch)
+	}))
+	agentd.RunProcessRunSweepForTest()
+	agentd.WaitForProcessRunRuntimeForTest()
+	assert.Equal(t, int32(1), dispatches.Load(), "the sweep must plan and dispatch the ready branch task")
+
+	reloaded, err := db.GetProcessRun("run_person_branch")
+	require.NoError(t, err)
+	var resumed engine.Checkpoint
+	require.NoError(t, reloaded.DecodeCheckpoint(&resumed))
+	assert.Equal(t, engine.NodeDone, resumed.Nodes["task-b"], "the stranded branch must have run")
+	require.Len(t, resumed.Commands, 1, "the person's step stays open")
+	assert.Equal(t, engine.CommandHuman, resumed.Commands[0].Kind)
+}
