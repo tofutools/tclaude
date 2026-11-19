@@ -266,7 +266,7 @@ function GateNoteSheet({ label, title, onSend, close, decision = null }) {
   const [error, setError] = useState('');
   // A note written and not sent is asked about before Back drops it.
   const root = useRef(null);
-  const guard = useDraftGuard(!!note.trim(), busy, () => root.current?.querySelector('textarea'));
+  const guard = useDraftGuard(!!note.trim() || Object.values(outputs).some((value) => String(value).trim()), busy, () => root.current?.querySelector('textarea'));
   const send = async () => {
     setBusy(true);
     setError('');

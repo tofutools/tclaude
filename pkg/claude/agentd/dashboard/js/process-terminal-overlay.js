@@ -368,12 +368,12 @@ function ProcessRunGraphPopover({ run, agentId, agentName = '', actions = {}, on
         <${ReassignControl} key=${`${node?.id || ''}:${node?.dispatch?.nodeId || ''}:${node?.dispatch?.attempt || 0}`}
           run=${run} node=${node} actions=${actions} candidatesFor=${candidatesFor} />
         ${personStep ? html`<span class="pk-run-popover-hint" data-person-step=${personNode.id}>${personNode.label || personNode.id} waits on you:</span>` : null}
-        ${personStep && actions.decide && !(personStep.outputs || []).length
-          ? (personStep.choices || []).map((choice) => html`<${Button} size="sm" key=${choice} class="mux-btn pk-run-popover-verdict"
+        ${personStep && actions.decide
+          ? (personStep.choices || []).filter((choice) => !(personStep.outputs || []).length || !(personStep.passing || []).includes(choice)).map((choice) => html`<${Button} size="sm" key=${choice} class="mux-btn pk-run-popover-verdict"
               disabled=${deciding} title=${`Finish ${personNode.label || personNode.id} as ${choice}`} onClick=${() => void decidePerson(choice)}>${(personStep.passing || []).includes(choice) ? '✓ ' : ''}${personChoiceLabel(choice)} (as you)<//>`)
           : null}
         ${personStep && (personStep.outputs || []).length
-          ? html`<span class="pk-run-popover-hint">This step asks for ${personStep.outputs.join(', ')}: finish it in Groups.</span>`
+          ? html`<span class="pk-run-popover-hint">It asks for ${personStep.outputs.join(', ')}: finish it as done in Groups.</span>`
           : null}
         ${personStep && !awaitingDecision ? null : awaitingDecision && actions.decide
           ? around.outcomes.map((verdict) => html`<${Button} size="sm" key=${verdict} class="mux-btn pk-run-popover-verdict"
