@@ -168,6 +168,28 @@ test('the popover shows the agent\'s node, what is around it, and acts on the ru
   await bound.unmount();
 });
 
+test("the popover finishes a person's step waiting anywhere in the run", async (t) => {
+  const { harness, mod } = await overlay(t);
+  const decided = [];
+  const actions = { decide: (run, nodeId, verdict) => decided.push([run.runId, nodeId, verdict]) };
+  const base = contextFixture().runs.run_review;
+  const person = (outputs) => ({ ...base, nodes: base.nodes.map((node) => (node.id === 'gate'
+    ? { ...node, kind: 'task', label: 'Read it on a phone', person: { choices: ['done', 'failed'], passing: ['done'], outputs } }
+    : node)) });
+  const plain = await harness.mount(harness.html`<${mod.ProcessRunPopover} run=${person([])} agentId="agt_coder" actions=${actions} onClose=${() => {}} />`);
+  assert.match(plain.container.querySelector('[data-person-step="gate"]').textContent, /Read it on a phone waits on you/);
+  const buttons = [...plain.container.querySelectorAll('.pk-run-popover-verdict')];
+  assert.deepEqual(buttons.map((button) => button.textContent.trim()), ["✓ Done (as you)", "Couldn't do it (as you)"]);
+  await harness.act(() => harness.fireEvent(buttons[0], 'click'));
+  assert.deepEqual(decided, [['run_review', 'gate', 'done']]);
+  await plain.unmount();
+  // One that asks for outputs is finished as done in Groups; failing it works here.
+  const asks = await harness.mount(harness.html`<${mod.ProcessRunPopover} run=${person(['weight'])} agentId="agt_coder" actions=${actions} onClose=${() => {}} />`);
+  assert.deepEqual([...asks.container.querySelectorAll('.pk-run-popover-verdict')].map((button) => button.textContent.trim()), ["Couldn't do it (as you)"]);
+  assert.match(asks.container.textContent, /It asks for weight: finish it as done in Groups/);
+  await asks.unmount();
+});
+
 test('production actions post the decision and refresh the context', async (t) => {
   const { mod, requests } = await overlay(t);
   const posts = [];

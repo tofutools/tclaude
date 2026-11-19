@@ -46,6 +46,14 @@ test('the run log says each oversight step in words, with names for agents', asy
     'you settled concern #3: resume: go');
   assert.equal(say({ kind: 'run_paused', actor: 'agent:agt_lena', payload: {} }), 'lena paused the run');
   assert.equal(say({ kind: 'node_completed', nodeId: 'work', payload: {} }), 'node completed at work');
+  // A step a person performs.
+  assert.equal(say({ kind: 'human_prepared', nodeId: 'pack', payload: { command: { attempt: 1 } } }), 'pack waits on you');
+  assert.equal(say({ kind: 'human_reported', actor: 'human:operator', nodeId: 'pack',
+    payload: { choice: 'done', outcome: 'succeeded', note: 'small crate', outputs: { weight: '18 kg' } } }),
+  'you finished pack as done: small crate (weight = 18 kg)');
+  assert.equal(say({ kind: 'human_reported', actor: 'human:operator', nodeId: 'deliver',
+    payload: { choice: 'nobody home', outcome: 'failed' } }), 'you finished deliver as nobody home');
+  assert.equal(say({ kind: 'human_withdrawn', nodeId: 'pack', payload: { reason: 'the run is ending' } }), 'pack was withdrawn: the run is ending');
 });
 
 test('a concern with the operator offers its card\'s choices; one with an agent can be settled or passed up', async (t) => {

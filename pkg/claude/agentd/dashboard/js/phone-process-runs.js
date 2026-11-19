@@ -27,6 +27,9 @@ import { usePhonePage } from './phone-page.js';
 import { relTime } from './helpers.js';
 import { DesktopOnlyNote } from './phone-desktop-only.js';
 import { RunLog, RunOversight } from './process-oversight.js';
+import {
+  PersonStepOutputs, PersonStepText, filledOutputs, isPersonStep, missingOutputs, personChoiceLabel, personChoicePasses,
+} from './process-person-step.js';
 
 const html = htm.bind(h);
 
@@ -253,19 +256,22 @@ export function useRunView(api, runId) {
 // a reason, so it opens a sheet with a note first.
 const APPROVING = /^(approved?|accept(ed)?|yes|ok|pass(ed)?|lgtm)$/i;
 
-// GateNoteSheet sends one verdict with a note for the record.
-function GateNoteSheet({ label, title, onSend, close }) {
+// GateNoteSheet sends one verdict with a note for the record. For a person's
+// step whose choice fills in outputs (decision), it asks for those too.
+function GateNoteSheet({ label, title, onSend, close, decision = null }) {
   const [note, setNote] = useState('');
+  const [outputs, setOutputs] = useState({});
+  const missing = decision ? missingOutputs(decision, outputs) : [];
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   // A note written and not sent is asked about before Back drops it.
   const root = useRef(null);
-  const guard = useDraftGuard(!!note.trim(), busy, () => root.current?.querySelector('textarea'));
+  const guard = useDraftGuard(!!note.trim() || Object.values(outputs).some((value) => String(value).trim()), busy, () => root.current?.querySelector('textarea'));
   const send = async () => {
     setBusy(true);
     setError('');
     try {
-      await onSend(note.trim());
+      await onSend(note.trim(), decision ? outputs : undefined);
       close();
     } catch (cause) {
       setError(cause?.message || String(cause));
@@ -274,12 +280,15 @@ function GateNoteSheet({ label, title, onSend, close }) {
   };
   return html`<div ref=${root} class="phone-gate-sheet">
     <${SheetTitle}>${title}<//>
+    ${decision && html`<${PersonStepText} decision=${decision} class="pps-text phone-gate-prompt" />`}
+    ${decision && html`<${PersonStepOutputs} decision=${decision} values=${outputs} onChange=${setOutputs} disabled=${busy} idPrefix="phone-output" />`}
     <${Textarea} class="phone-gate-note" rows="3" maxlength="4096" placeholder="Note for the record (optional)"
       aria-label="Note for the record (optional)" value=${note} disabled=${busy} onInput=${(event) => setNote(event.currentTarget.value)} />
     ${error && html`<${ErrorNote}>${error}<//>`}
     ${guard.asking
       ? html`<${DiscardAsk} what="your note" guard=${guard} close=${close} />`
-      : html`<${Button} class="phone-btn phone-btn-pri phone-wide" disabled=${busy} onClick=${send}>${busy ? 'Sending…' : label}<//>`}
+      : html`<${Button} class="phone-btn phone-btn-pri phone-wide" disabled=${busy || missing.length > 0}
+          title=${missing.length ? `Fill in ${missing.join(', ')} first` : undefined} onClick=${send}>${busy ? 'Sending…' : label}<//>`}
   </div>`;
 }
 
@@ -307,8 +316,12 @@ function GateVerdicts({ run, decision, node, onDecide, since = '', tally = '' })
   const [busy, setBusy] = useState('');
   const [decided, setDecided] = useState('');
   const [error, setError] = useState('');
-  const send = (verdict) => (evidence = '') => onDecide({ nodeId: node.id, verdict, evidence, attempt: decision.attempt || 0 })
-    .then(() => setDecided(verdict));
+  const person = isPersonStep(decision);
+  const send = (verdict) => (evidence = '', outputs = undefined) => {
+    const filled = person ? filledOutputs(decision, verdict, outputs) : undefined;
+    return onDecide({ nodeId: node.id, verdict, evidence, attempt: decision.attempt || 0, ...(filled ? { outputs: filled } : {}) })
+      .then(() => setDecided(verdict));
+  };
   const now = async (verdict) => {
     if (busy || decided) return;
     setBusy(verdict);
@@ -322,21 +335,33 @@ function GateVerdicts({ run, decision, node, onDecide, since = '', tally = '' })
     }
   };
   const verdicts = decision.verdicts || [];
-  const label = verdictLabel;
-  return html`<div class="phone-gate" data-run-decision=${node.id}>
+  const label = person ? personChoiceLabel : verdictLabel;
+  // A person's passing choice is one tap unless it fills in outputs; any
+  // other choice opens the note sheet, as a gate's non-approving verdict does.
+  const oneTap = (verdict) => (person
+    ? personChoicePasses(decision, verdict) && !(decision.outputs || []).length
+    : APPROVING.test(verdict));
+  const tone = (verdict) => {
+    if (person) return personChoicePasses(decision, verdict) ? 'ok' : 'no';
+    return APPROVING.test(verdict) ? 'ok' : (REQUESTING.test(verdict) ? 'no' : '');
+  };
+  return html`<div class="phone-gate" data-run-decision=${node.id} data-person-step=${person ? '' : undefined}>
     <div class="phone-gate-title">${node.label}</div>
-    ${node.description && html`<p class="phone-gate-prompt">${node.description}</p>`}
+    ${person
+      ? html`<${PersonStepText} decision=${decision} class="pps-text phone-gate-prompt" />`
+      : node.description && html`<p class="phone-gate-prompt">${node.description}</p>`}
     ${since && html`<p class="phone-gate-since">Waiting on you · ${since}</p>`}
     ${tally && html`<p class="phone-gate-since" data-run-gate=${gateNodeOf(node.id)}>${tally}</p>`}
     ${decided
       ? html`<p class="phone-gate-done" role="status">Recorded: ${label(decided)}</p>`
-      : html`<${ButtonRow} buttons=${verdicts.map((verdict) => (APPROVING.test(verdict)
-          ? { key: verdict, label: busy === verdict ? '…' : label(verdict), tone: 'ok', disabled: !!busy,
+      : html`<${ButtonRow} buttons=${verdicts.map((verdict) => (oneTap(verdict)
+          ? { key: verdict, label: busy === verdict ? '…' : label(verdict), tone: tone(verdict), disabled: !!busy,
               attrs: { 'data-run-verdict': verdict }, onClick: () => now(verdict) }
-          : { key: verdict, label: `${label(verdict)}…`, tone: REQUESTING.test(verdict) ? 'no' : '', disabled: !!busy,
+          : { key: verdict, label: `${label(verdict)}…`, tone: tone(verdict), disabled: !!busy,
               attrs: { 'data-run-verdict': verdict, 'aria-haspopup': 'dialog' },
               onClick: () => openPhoneSheet({ label: `${runName(run)}: ${node.label}`, Body: GateNoteSheet,
-                props: { label: label(verdict), title: `${node.label}: ${label(verdict)}`, onSend: send(verdict) } }) }))} />`}
+                props: { label: label(verdict), title: `${node.label}: ${label(verdict)}`, onSend: send(verdict),
+                  decision: person && personChoicePasses(decision, verdict) ? decision : null } }) }))} />`}
     ${!verdicts.length && html`<p class="phone-gate-done">This gate offers no verdicts.</p>`}
     ${error && html`<${ErrorNote}>${error}<//>`}
   </div>`;
@@ -356,7 +381,7 @@ export function GateCard({ item, api = runDetailApi, source = processContext, on
       <${Avatar} bot glyph="⛭" />
       <div class="phone-card-text">
         <div class="phone-who"><span class="phone-who-name phone-run-name">${runName(run)}</span><span class="phone-who-sub phone-run-sub">${where}</span></div>
-        <div class="phone-card-line">waits on your verdict</div>
+        <div class="phone-card-line">${decisions.length && decisions.every(isPersonStep) ? 'waits on you to do a step' : 'waits on your verdict'}</div>
       </div>
       ${onOpen && html`<button data-ui-exempt type="button" class="phone-link" onClick=${() => onOpen(run.runId)}>Run ›</button>`}
     </div>

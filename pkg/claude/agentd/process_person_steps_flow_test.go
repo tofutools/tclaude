@@ -83,9 +83,8 @@ func TestProcessPersonStep_DoneWithOutputFeedsNextStep(t *testing.T) {
 	person := model.Performer{Kind: model.PerformerHuman, Ask: "Pack the order for {{ params.customer }}.",
 		Prompt: "Use the small box."}
 	putProcessRuntimeTemplate(t, root, personStepTemplate("person-done", person, []string{"tracking"}))
-	t.Cleanup(agentd.SetProcessRunScopeForTest("run_person_done", agentd.ProcessRunScopeForTest{Kind: "group", GroupID: g.ID}))
 	created := processRuntimeRequest(t, f, http.MethodPost, "/v1/process/runs", map[string]any{
-		"id": "run_person_done", "templateId": "person-done", "authorizeProgramProfiles": []string{},
+		"id": "run_person_done", "templateId": "person-done", "authorizeProgramProfiles": []string{}, "group": g.Name,
 		"params": map[string]string{"customer": "Ada"},
 	})
 	require.Equal(t, http.StatusCreated, created.Code, created.Body.String())
@@ -106,6 +105,35 @@ func TestProcessPersonStep_DoneWithOutputFeedsNextStep(t *testing.T) {
 	assert.Equal(t, "Use the small box.", step.Prompt)
 	assert.Equal(t, []string{"tracking"}, step.Outputs)
 	assert.Empty(t, processInbox(t, worker), "nothing goes to an agent while the person works")
+
+	ctxRec := processRuntimeRequest(t, f, http.MethodGet, "/v1/process/context", nil)
+	require.Equal(t, http.StatusOK, ctxRec.Code, ctxRec.Body.String())
+	var projected struct {
+		Runs map[string]struct {
+			Nodes []struct {
+				ID     string `json:"id"`
+				State  string `json:"state"`
+				Person *struct {
+					Choices []string `json:"choices"`
+					Passing []string `json:"passing"`
+					Outputs []string `json:"outputs"`
+				} `json:"person"`
+			} `json:"nodes"`
+		} `json:"runs"`
+	}
+	testharness.DecodeJSON(t, ctxRec, &projected)
+	var packNode bool
+	for _, node := range projected.Runs["run_person_done"].Nodes {
+		if node.ID == "pack" {
+			packNode = true
+			assert.Equal(t, "awaiting", node.State)
+			require.NotNil(t, node.Person, "the dashboard reads a person's step's choices from the projection")
+			assert.Equal(t, []string{"done", "failed"}, node.Person.Choices)
+			assert.Equal(t, []string{"done"}, node.Person.Passing)
+			assert.Equal(t, []string{"tracking"}, node.Person.Outputs)
+		}
+	}
+	assert.True(t, packNode, "the run is in the projection")
 
 	assert.Equal(t, http.StatusUnprocessableEntity,
 		decidePersonStep(t, f, "run_person_done", map[string]any{"nodeId": "pack", "verdict": "done"}),

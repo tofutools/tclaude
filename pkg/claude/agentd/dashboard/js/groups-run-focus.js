@@ -23,6 +23,9 @@ import {
   formatRunDuration, groupContextEntry, groupRunsFor, runDetailApi, runNeedsYou, withPerformerNames,
 } from './process-context.js';
 import { AgentCombobox } from './agent-picker.js';
+import {
+  PersonStepOutputs, PersonStepText, filledOutputs, isPersonStep, missingOutputs, personChoiceLabel, personChoicePasses,
+} from './process-person-step.js';
 import { RunLog, RunOversight, eventSentence, openConcerns } from './process-oversight.js';
 
 const html = htm.bind(h);
@@ -147,6 +150,7 @@ export function verdictPresentation(verdict) {
 function performerText(node, nameOf, wizard) {
   const performer = node.performer || {};
   const kind = String(performer.kind || '').toLowerCase();
+  if (kind === 'human' && node.person) return wizard ? 'you, the keeper' : 'you (the operator)';
   if (kind === 'human') return wizard ? 'any keeper' : 'any operator';
   if (kind === 'program' || kind === 'command') return wizard ? 'an incantation' : 'program';
   if (kind === 'rule') return wizard ? 'its own law' : 'its rule, nobody is asked';
@@ -168,13 +172,17 @@ export function DecisionForm({ decision, node, onDecide, wizard }) {
   const [busy, setBusy] = useState('');
   const [decided, setDecided] = useState('');
   const [note, setNote] = useState('');
+  const [outputs, setOutputs] = useState({});
   const [error, setError] = useState('');
+  const person = isPersonStep(decision);
   const decide = async (verdict) => {
     if (busy || decided) return;
     setBusy(verdict);
     setError('');
     try {
-      await onDecide({ nodeId: node.id, verdict, evidence: note.trim(), attempt: decision.attempt || 0 });
+      const filled = person ? filledOutputs(decision, verdict, outputs) : undefined;
+      await onDecide({ nodeId: node.id, verdict, evidence: note.trim(), attempt: decision.attempt || 0,
+        ...(filled ? { outputs: filled } : {}) });
       // The gate stays shut until the refreshed view drops this decision
       // (the form is keyed by node and attempt), so a second click cannot
       // race the first into a refused duplicate.
@@ -187,17 +195,29 @@ export function DecisionForm({ decision, node, onDecide, wizard }) {
     }
   };
   const verdicts = decision.verdicts || [];
-  return html`<div class="grf-decide" data-run-decision=${node.id}>
+  const missing = person ? missingOutputs(decision, outputs) : [];
+  const present = (verdict) => {
+    if (!person) return verdictPresentation(verdict);
+    const passes = personChoicePasses(decision, verdict);
+    return { label: `${passes ? '✓ ' : ''}${personChoiceLabel(verdict)}`, cls: passes ? 'primary' : '' };
+  };
+  return html`<div class="grf-decide" data-run-decision=${node.id} data-person-step=${person ? '' : undefined}>
+    ${person && html`<${PersonStepText} decision=${decision} />`}
+    ${person && html`<${PersonStepOutputs} decision=${decision} values=${outputs} onChange=${setOutputs}
+      disabled=${!!busy || !!decided} idPrefix="grf-output" />`}
     <textarea name="groups-run-focus-textarea" aria-label=${wizard ? 'Words for the record (optional)' : 'Note for the record (optional)'} rows="2" maxlength="4096"
       placeholder=${wizard ? 'words for the record (optional)' : 'note (optional)'} value=${note} disabled=${!!busy || !!decided}
       onInput=${(event) => setNote(event.currentTarget.value)}></textarea>
     <div class="grf-verdicts">${verdicts.map((verdict) => {
-      const { label, cls } = verdictPresentation(verdict);
-      return html`<${Button} size="sm" variant=${cls === 'primary' ? 'success' : undefined} key=${verdict} data-run-verdict=${verdict} disabled=${!!busy || !!decided}
+      const { label, cls } = present(verdict);
+      // A passing choice waits until every output it fills in has a value.
+      const needs = person && personChoicePasses(decision, verdict) && missing.length > 0;
+      return html`<${Button} size="sm" variant=${cls === 'primary' ? 'success' : undefined} key=${verdict} data-run-verdict=${verdict}
+        disabled=${!!busy || !!decided || needs} title=${needs ? `Fill in ${missing.join(', ')} first` : undefined}
         onClick=${() => decide(verdict)}>${busy === verdict ? '…' : label}<//>`;
     })}</div>
     ${!verdicts.length && html`<div class="grf-muted">This gate offers no verdicts.</div>`}
-    ${decided && html`<div class="grf-muted" role="status">${wizard ? 'Your word is sealed:' : 'Recorded:'} ${verdictPresentation(decided).label}</div>`}
+    ${decided && html`<div class="grf-muted" role="status">${wizard ? 'Your word is sealed:' : 'Recorded:'} ${present(decided).label}</div>`}
     ${error && html`<div class="grf-error ui-error" role="alert">${error}</div>`}
   </div>`;
 }

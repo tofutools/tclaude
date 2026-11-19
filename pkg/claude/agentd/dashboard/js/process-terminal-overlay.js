@@ -17,6 +17,7 @@ import { h } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { useDismissablePopover } from './hover-popover.js';
 import htm from 'htm';
+import { personChoiceLabel } from './process-person-step.js';
 import {
   ProcessMiniGraph, ProcessPauseControl, ProcessPausedChip, ProcessRunIcon, ProcessScopeChip, ProcessStateChip,
   normalizeNodeState, reassignableNode, runIconView, runName,
@@ -308,11 +309,27 @@ function ProcessRunGraphPopover({ run, agentId, agentName = '', actions = {}, on
       setDeciding(false);
     }
   };
+  const decidePerson = async (choice) => {
+    setDeciding(true);
+    setDecideError('');
+    try {
+      await actions.decide(run, personNode.id, choice);
+    } catch (error) {
+      setDecideError(String(error?.message || error || 'decision failed'));
+    } finally {
+      setDeciding(false);
+    }
+  };
   const around = node ? nodeNeighbourhood(run, node.id) : { upstream: [], siblings: [], downstream: [], outcomes: [] };
   const age = formatRunAge(run.startedAt);
   const owner = ownerAgentID(run);
   // The kit normalizes the read model's "awaiting" decision state to waiting.
   const awaitingDecision = node && node.kind === 'decision' && node.state === 'waiting';
+  // A step a person performs waits on you wherever it is in the run, not only
+  // at this agent's node; its choices come with the node. One that fills in
+  // outputs is finished in Groups, where the fields are.
+  const personNode = (run.nodes || []).find((item) => item.person && ['awaiting', 'waiting'].includes(String(item.state))) || null;
+  const personStep = personNode ? personNode.person : null;
   return html`
     <div class="pk-run-popover" role="dialog" aria-label=${`${runName(run)} from this agent`} data-process-popover=${run.runId}>
       <div class="pk-run-popover-head">
@@ -350,7 +367,15 @@ function ProcessRunGraphPopover({ run, agentId, agentName = '', actions = {}, on
         <${ProcessPauseControl} run=${run} actions=${actions} />
         <${ReassignControl} key=${`${node?.id || ''}:${node?.dispatch?.nodeId || ''}:${node?.dispatch?.attempt || 0}`}
           run=${run} node=${node} actions=${actions} candidatesFor=${candidatesFor} />
-        ${awaitingDecision && actions.decide
+        ${personStep ? html`<span class="ui-hint pk-run-popover-person" data-person-step=${personNode.id}>${personNode.label || personNode.id} waits on you:</span>` : null}
+        ${personStep && actions.decide
+          ? (personStep.choices || []).filter((choice) => !(personStep.outputs || []).length || !(personStep.passing || []).includes(choice)).map((choice) => html`<${Button} size="sm" key=${choice} class="mux-btn pk-run-popover-verdict"
+              disabled=${deciding} title=${`Finish ${personNode.label || personNode.id} as ${choice}`} onClick=${() => void decidePerson(choice)}>${(personStep.passing || []).includes(choice) ? '✓ ' : ''}${personChoiceLabel(choice)} (as you)<//>`)
+          : null}
+        ${personStep && (personStep.outputs || []).length
+          ? html`<span class="ui-hint pk-run-popover-person">It asks for ${personStep.outputs.join(', ')}: finish it as done in Groups.</span>`
+          : null}
+        ${personStep && !awaitingDecision ? null : awaitingDecision && actions.decide
           ? around.outcomes.map((verdict) => html`<${Button} size="sm" key=${verdict} class="mux-btn pk-run-popover-verdict"
               disabled=${deciding} title=${`Decide ${verdict} as the human`} onClick=${() => void decide(verdict)}>✓ ${verdict} (as human)<//>`)
           : html`<${Button} size="sm" class="mux-btn" disabled=${true}
