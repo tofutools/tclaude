@@ -600,7 +600,7 @@ function StructureMenu({ view, menu, onRun, onWrap, onClose }) {
   const node = view.template.nodes[id];
   if (!node) return null;
   const step = isStep(node);
-  const orphans = step || node.type === 'end' ? deleteOrphans(view, id) : [];
+  const orphans = step || node.type === 'end' || node.type === 'wait' ? deleteOrphans(view, id) : [];
   // A disabled item says why in visible text under it, not only on hover.
   const why = (text) => text && html`<span class="gm-menu-why" data-mini-why>${text}</span>`;
   const item = (key, text, reason, onClick) => html`<button data-ui-exempt type="button" role="menuitem" class="gm-menu-item" data-mini-menu=${key}

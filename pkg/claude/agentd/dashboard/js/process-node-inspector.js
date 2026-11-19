@@ -34,7 +34,7 @@ import {
 import { NodeField, NodeSelect, PerformerEditor } from './process-node-fields.js';
 import { Button, Select } from './ui-components.js';
 import {
-  CHECK_SOURCES, WAIT_MET, WAIT_TIMED_OUT, DEFAULT_BACKOFF_FACTOR, DEFAULT_MAX_FAILED_CHECKS,
+  CHECK_SOURCES, WAIT_TIMED_OUT, DEFAULT_BACKOFF_FACTOR, DEFAULT_MAX_FAILED_CHECKS,
   waitMode, setWaitMode, checkSource, setCheckSource, setCheckField, checkMoreSet,
   describeCheck, durationFeedback, waitRouteHint,
 } from './process-wait-step.js';
@@ -247,19 +247,16 @@ const CHECK_PERFORMER_FIELDS = { program: ['profile', 'run', 'args'], agent: ['p
 
 // WaitBlock edits a wait step: for a time, or until a criterion holds,
 // checked again and again (process-wait-step.js).
-function WaitBlock({ node, nodeId, controller, commit, readOnly, edges }) {
+function WaitBlock(props) {
+  return html`<${WaitBlockBody} key=${props.nodeId} ...${props} />`;
+}
+
+function WaitBlockBody({ node, nodeId, controller, commit, readOnly, edges }) {
   const mode = waitMode(node);
   const [more, setMore] = useState(() => checkMoreSet(node.wait?.check));
-  // A wait that no longer times out goes on one way: its timedOut route
-  // goes, and met becomes next.
-  const oneWayOn = () => {
-    const outcomes = (edges || []).map((edge) => edge.outcome);
-    if (!outcomes.includes(WAIT_TIMED_OUT)) return;
-    controller.mutate?.(() => {
-      controller.model.deleteEdge(nodeId, WAIT_TIMED_OUT);
-      if (outcomes.includes(WAIT_MET) && !outcomes.includes('next')) controller.model.setEdgeOutcome(nodeId, WAIT_MET, 'next');
-    });
-  };
+  // Mode and limit edits keep the routes right in one undo step
+  // (ProcessEditModel.editWait), and the node stays selected.
+  const routed = (fieldKey, mutate) => (controller.mutate(() => controller.model.editWait(nodeId, mutate)) !== undefined ? { accepted: true } : { blocked: true });
   const check = node.wait?.check;
   // A bad value is refused with its reason, and the field snaps back.
   const field = (fieldKey, raw) => {
@@ -272,7 +269,7 @@ function WaitBlock({ node, nodeId, controller, commit, readOnly, edges }) {
       data-wait-mode=${key} disabled=${readOnly}
       onClick=${() => {
         if (mode === key) return;
-        if (commit('wait.mode', (draft) => setWaitMode(draft, key)).accepted && key === 'time') oneWayOn();
+        routed('wait.mode', (draft) => setWaitMode(draft, key));
       }}>${text}<//>`)}
   </div>`;
   if (mode === 'time') {
@@ -287,6 +284,12 @@ function WaitBlock({ node, nodeId, controller, commit, readOnly, edges }) {
     ${node.wait?.signal && html`<p class="process-node-empty ui-empty">This wait also names a signal (${node.wait.signal}), which does not run yet.</p>`}`;
   }
   const source = checkSource(check);
+  // An agent check names one of role and anyone: a role takes over from anyone.
+  const checkPerformerCommit = (key, mutate) => commit(key, (draft) => {
+    mutate(draft);
+    const performer = draft.wait?.check?.performer;
+    if (performer?.role && key.endsWith('.role')) delete performer.anyone;
+  });
   const routeHint = waitRouteHint(node, (edges || []).map((edge) => edge.outcome));
   return html`${toggle}
     <p class="pni-wait-summary" data-wait-summary>${describeCheck(check)}</p>
@@ -302,7 +305,7 @@ function WaitBlock({ node, nodeId, controller, commit, readOnly, edges }) {
       apply=${field} />`}
     ${source !== 'condition' && html`<${PerformerEditor} performer=${check.performer} path="wait.check.performer" readOnly=${readOnly}
       showKind=${false} only=${CHECK_PERFORMER_FIELDS[source]} choiceRouting=${false}
-      locate=${(draft) => draft.wait.check.performer} commit=${commit} />`}
+      locate=${(draft) => draft.wait.check.performer} commit=${checkPerformerCommit} />`}
     <div class="pni-row">
       <${NodeField} fieldKey="wait.check.maxChecks" label="give up after (checks)" value=${check.maxChecks === undefined ? '' : String(check.maxChecks)}
         placeholder="12" readOnly=${readOnly} apply=${field} />
@@ -310,16 +313,7 @@ function WaitBlock({ node, nodeId, controller, commit, readOnly, edges }) {
         hint="Counted from the first check" apply=${field} />
       <${ChoiceSelect} fieldKey="wait.check.onLimit" label="then" value=${check.onLimit || 'fail'} readOnly=${readOnly}
         options=${[['fail', 'fail the step'], [WAIT_TIMED_OUT, 'take the timed-out route']]}
-        apply=${(fieldKey, raw) => {
-          const result = commit(fieldKey, (draft) => { setCheckField(draft, 'onLimit', raw); });
-          // Its one route becomes the met route; the timed-out one is drawn next.
-          const only = edges?.length === 1 ? edges[0] : null;
-          if (result.accepted && raw === WAIT_TIMED_OUT && only && only.outcome !== WAIT_MET) {
-            controller.renameEdgeOutcome?.(nodeId, only.outcome, WAIT_MET);
-          }
-          if (result.accepted && raw !== WAIT_TIMED_OUT) oneWayOn();
-          return result;
-        }} />
+        apply=${(fieldKey, raw) => routed(fieldKey, (draft) => { setCheckField(draft, 'onLimit', raw); })} />
     </div>
     ${routeHint && html`<p class="ui-hint pni-wait-route-hint" role="status" data-wait-route-hint>${routeHint}</p>`}
     <${Button} size="sm" variant="link" class="pni-wait-more" aria-expanded=${more ? 'true' : 'false'} data-wait-more

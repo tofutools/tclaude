@@ -52,7 +52,7 @@ test('a wait switches between a time and a condition', () => {
   setCheckPerformerField(node, 'role', 'dev');
   assert.deepEqual(node.wait.check.performer, { kind: 'agent', prompt: '', role: 'dev' });
   setWaitMode(node, 'time');
-  assert.equal(node.wait, undefined, 'a time wait starts empty');
+  assert.deepEqual(node.wait, { duration: '1h' }, 'a time wait starts from an hour');
 });
 
 test('setCheckField validates counts and the factor, and fixed drops its knobs', () => {
@@ -147,4 +147,32 @@ test('inside a loop, a wait\'s timed-out route stays in the loop', async () => {
   view = setMiniWaitMode(view, 'hold', 'check').view;
   view = setWaitLimit(view, 'hold', 'timedOut').view;
   assert.deepEqual(view.edges.filter((edge) => edge.from === 'hold').map((edge) => `${edge.outcome}->${edge.to}`).sort(), ['met->review', 'timedOut->review']);
+});
+
+test('the full editor keeps a wait\'s routes right, one undo step per change', () => {
+  const model = new ProcessEditModel({
+    template: {
+      apiVersion: 'tclaude.dev/v1alpha1', kind: 'ProcessTemplate', id: 'w', start: 'hold',
+      nodes: {
+        hold: { type: 'wait', wait: { check: { when: 'params.ok == true', every: '5m', maxChecks: 3 } }, next: { next: 'done' } },
+        done: { type: 'end', result: 'success' },
+      },
+    },
+    edges: [{ from: '', outcome: 'start', to: 'hold' }, { from: 'hold', outcome: 'next', to: 'done' }],
+  });
+  const routes = () => model.outgoingEdges('hold').map((edge) => edge.outcome).sort();
+  model.editWait('hold', (draft) => setCheckField(draft, 'onLimit', 'timedOut'));
+  assert.deepEqual(routes(), ['met'], 'its one route becomes met');
+  // Back to fail before the timed-out connector is drawn: met goes back to next.
+  model.editWait('hold', (draft) => setCheckField(draft, 'onLimit', 'fail'));
+  assert.deepEqual(routes(), ['next']);
+  model.editWait('hold', (draft) => setCheckField(draft, 'onLimit', 'timedOut'));
+  model.addEdge('hold', 'timedOut', 'done');
+  model.editWait('hold', (draft) => setWaitMode(draft, 'time'));
+  assert.deepEqual(routes(), ['next']);
+  assert.deepEqual(model.template.nodes.hold.wait, { duration: '1h' });
+  // One undo puts back the check and both routes together.
+  assert.ok(model.undo());
+  assert.deepEqual(routes(), ['met', 'timedOut']);
+  assert.equal(model.template.nodes.hold.wait.check.onLimit, 'timedOut');
 });

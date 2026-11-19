@@ -124,6 +124,8 @@ export function setWaitMode(node, mode, source = 'condition') {
     if (!wait.check) wait.check = seedCheck(source);
   } else {
     delete wait.check;
+    // A wait for a time needs one: start from an hour, as a new wait does.
+    if (!wait.duration && !wait.until) wait.duration = '1h';
   }
   if (Object.keys(wait).length) node.wait = wait;
   else delete node.wait;
