@@ -75,7 +75,7 @@ disarm() { "$D" eval "window.dispatchEvent(new CustomEvent('tclaude:auth-expired
 groups() {
 	"$D" open "$1/fleet" >/dev/null
 	sleep 3
-	js "(()=>{const g=[...document.querySelectorAll('details[data-group-key]')].filter(d=>d.offsetParent&&d.dataset.groupKey.includes('@'));if(!g.length)return 'NOTFOUND';g.forEach(d=>{d.open=true});return 'ok'})()"
+	js "(()=>{const g=[...document.querySelectorAll('.group-box[data-group-key]')].filter(d=>d.offsetParent&&d.dataset.groupKey.includes('@'));if(!g.length)return 'NOTFOUND';g.filter(d=>!d.classList.contains('open')).forEach(d=>d.querySelector(':scope > .group-summary > .group-toggle').click());return 'ok'})()"
 	sleep 1
 }
 login() { "$D" open "$("$E" dash "$1")" >/dev/null; sleep 2; }

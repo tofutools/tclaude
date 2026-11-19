@@ -58,13 +58,17 @@ export function headToggleClick(onToggle) {
 // - `keepBody` keeps a folded body in the document, hidden, as a closed
 //   <details> did (drop targets and queries still find it); otherwise a
 //   folded body is not drawn at all.
-// - `headAttrs` / `attrs` / `bodyAttrs` land on the header, wrapper, body.
+// - `headAttrs` / `attrs` / `bodyAttrs` land on the header, wrapper, body;
+//   `id` names the body (aria-controls) when the caller has a unique key.
 export function Disclosure({
   open, onToggle, class: extra = '', attrs = {}, headClass = '', headAttrs = {},
   toggle, toggleClass = '', title, label, disabled = false, before = null, actions = null,
-  foldOnHead = false, fill = false, bodyClass = '', bodyAttrs = {}, keepBody = false, children,
+  foldOnHead = false, fill = false, bodyClass = '', bodyAttrs = {}, keepBody = false, id = null, children,
 }) {
-  const bodyId = `${useId()}-disclosure`;
+  // useId numbers per render root, and two islands (Groups, the fused view)
+  // are mounted at once, so a caller with a key of its own passes `id`.
+  const generated = `${useId()}-disclosure`;
+  const bodyId = id || generated;
   const drawn = open || keepBody;
   const fold = (event) => { if (!disabled) onToggle(event); };
   return html`<div class=${['disclosure', extra, open ? 'open' : ''].filter(Boolean).join(' ')} ...${attrs}>

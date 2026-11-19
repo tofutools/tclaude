@@ -52,12 +52,13 @@ function GroupActivity({ members, snapshot }) {
   if (!modes.length) return null;
   const attention = firstUnreadHumanNotification(members, snapshot);
   // The hint opens the quick reader on that notification, as the member row's
-  // own glyph does; it sits in the group's header, beside its fold button.
+  // own glyph does; it sits in the group's header, beside its fold button,
+  // which takes focus back when the hint is gone (read clears it).
   const openReader = (event) => {
     event.preventDefault();
     event.stopPropagation();
     openMemberNotification(attention.member, attention.message, event.currentTarget,
-      event.currentTarget.closest('.group-summary'));
+      event.currentTarget.closest('.group-summary')?.querySelector(':scope > .group-toggle'));
   };
   const hintLabel = `A member of this group has unread notifications — open ${attention?.member.title || 'it'} in the quick reader`;
   return html`<span class="group-activity"
@@ -566,7 +567,7 @@ function GroupBox({ boxKey, openOf, class: extra, attrs, headAttrs = {}, name, l
   return html`<${Disclosure} open=${open} onToggle=${toggle} keepBody=${true}
     class=${['group-box', extra].filter(Boolean).join(' ')} attrs=${{ 'data-group-key': boxKey, ...attrs }}
     headClass="group-summary" headAttrs=${headAttrs} toggleClass="group-toggle" label=${label}
-    toggle=${name} actions=${actions} bodyClass="subtable">${children}<//>`;
+    toggle=${name} actions=${actions} bodyClass="subtable" id=${`group-body-${encodeURIComponent(boxKey)}`}>${children}<//>`;
 }
 
 function SpawnIcon({ subgroup = false }) {

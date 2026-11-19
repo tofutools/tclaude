@@ -167,9 +167,17 @@ function setGroupOpen(name, open) {
   recordGroupInteraction(name);
   if (box.classList.contains('open') !== open) {
     setGroupBoxOpen(name, open);
-    announceFusedSections();
+    redrawGroupFolds();
   }
   box.querySelector(':scope > .group-summary')?.scrollIntoView({ block: 'nearest' });
+}
+
+// redrawGroupFolds redraws the boxes and, since a fold moves activity bots
+// onto (or off) a parent's header, the tree that decides which header owns
+// them.
+function redrawGroupFolds() {
+  announceFusedSections();
+  featureState('groups')?.rerender?.();
 }
 
 function setAllGroupsOpen(open) {
@@ -178,7 +186,7 @@ function setAllGroupsOpen(open) {
   for (const box of all) {
     if (box.classList.contains('open') !== open) setGroupBoxOpen(box.getAttribute('data-group-key'), open);
   }
-  announceFusedSections();
+  redrawGroupFolds();
   const n = `${all.length} group${all.length === 1 ? '' : 's'}`;
   toast(open ? `expanded ${n}` : `collapsed ${n}`);
 }
