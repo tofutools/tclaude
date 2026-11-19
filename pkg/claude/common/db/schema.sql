@@ -2696,3 +2696,21 @@ CREATE TABLE process_message_deliveries (
 		) STRICT;
 
 CREATE INDEX idx_process_message_deliveries_run ON process_message_deliveries(run_id);
+
+CREATE TABLE process_waiting_cards (
+			run_id           TEXT NOT NULL REFERENCES process_runs(id) ON DELETE CASCADE
+			                     CHECK(length(CAST(run_id AS BLOB)) BETWEEN 1 AND 128),
+			node_id          TEXT NOT NULL CHECK(length(CAST(node_id AS BLOB)) BETWEEN 1 AND 512),
+			attempt          INTEGER NOT NULL,
+			kind             TEXT NOT NULL CHECK(kind IN ('decision', 'task')),
+			human_message_id INTEGER NOT NULL,
+			created_at       INTEGER NOT NULL,
+			closed_at        INTEGER,
+			PRIMARY KEY (run_id, node_id, attempt, kind)
+		) STRICT;
+
+CREATE INDEX idx_process_waiting_cards_message
+			ON process_waiting_cards(human_message_id);
+
+CREATE INDEX idx_process_waiting_cards_open
+			ON process_waiting_cards(run_id) WHERE closed_at IS NULL;

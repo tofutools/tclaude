@@ -1687,6 +1687,12 @@ func replyHumanMessage(ctx context.Context, body humanMessageReply) (map[string]
 	} else if ok {
 		return answerProcessAmendmentCard(orig, amendment, decision, body)
 	}
+	// So is a card for what a run waits on the operator for.
+	if card, ok, err := db.GetProcessWaitingCardForHumanMessage(orig.ID); err != nil {
+		return nil, replyFail(http.StatusInternalServerError, "io", "load process card: "+err.Error())
+	} else if ok {
+		return answerProcessWaitingCard(orig, card, decision, body)
+	}
 	if orig.ProcessCommandID != "" {
 		if body.AttachmentToken != "" {
 			return nil, replyFail(http.StatusBadRequest, "invalid_arg", "attachments are not supported for process replies")

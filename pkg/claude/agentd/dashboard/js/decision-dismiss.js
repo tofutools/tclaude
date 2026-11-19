@@ -21,6 +21,8 @@ export async function postDismiss(fetchImpl, ids, reason = '') {
 
 // dismissedNote is the line a dismissed decision shows in place of its choices.
 export function dismissedNote(message) {
+  // A process run withdrew what it waited on the operator for.
+  if (message.dismissed_by === 'process') return `Withdrawn${message.dismiss_reason ? `: ${message.dismiss_reason}` : ''}`;
   const who = message.dismissed_by === 'agent' ? (message.from_title || 'the agent') : 'you';
   return `Dismissed by ${who}${message.dismiss_reason ? `: ${message.dismiss_reason}` : ''}`;
 }

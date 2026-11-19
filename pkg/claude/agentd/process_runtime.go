@@ -1053,6 +1053,8 @@ func startProcessRunRuntime(stop <-chan struct{}) {
 	go runProcessWaitLoop(stop)
 	go func() {
 		sweepProcessRuns()
+		// A restart puts up what runs wait on a person for and lacks a card.
+		sweepProcessWaitingCards()
 		// A restart rediscovers every in-flight agent dispatch here.
 		sweepProcessAgentDispatches()
 		ticker := time.NewTicker(processRunFallbackInterval)

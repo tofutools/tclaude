@@ -1454,6 +1454,14 @@ and instructions, and the outputs it asks for; its command reads
 stale `--attempt` is refused and records nothing. The person, or anyone with
 `process.runs.manage`, finishes it; `record-outcome` settles it too.
 
+Each step that waits on you, and each decision a run waits on you for, also
+puts up a card in Messages. The card shows the step's ask and instructions,
+and its buttons are the step's choices. A pick is applied to the run as
+yours. Finishing a step as done when it asks for outputs happens in the run
+view, which has the fields. When the step is settled, from the card or
+anywhere else, its card shows the pick. When the run withdraws the step (it
+is canceled, or fails elsewhere), its card reads "Withdrawn".
+
 - **Failing it**: a failing choice is a failed attempt, with the note as the
   reason. With retries left the step opens again as the next attempt; with
   `mayFail` the run goes on with the step's result `failed`; otherwise the

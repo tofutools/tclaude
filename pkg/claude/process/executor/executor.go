@@ -1154,6 +1154,7 @@ func persistEvents(run *Run, checkpoint engine.Checkpoint, events []db.ProcessRu
 		return fmt.Errorf("encode process checkpoint: %w", err)
 	}
 	was := run.checkpoint.Status
+	wasWaiting := waitsOnPerson(run.checkpoint)
 	version, err := db.TransitionProcessRun(run.id, db.ProcessRunTransition{
 		ExpectedStateVersion: run.stateVersion,
 		Status:               string(checkpoint.Status),
@@ -1172,6 +1173,15 @@ func persistEvents(run *Run, checkpoint engine.Checkpoint, events []db.ProcessRu
 				defer terminalHooks.Done()
 				(*hook)(id, status)
 			}(run.id, checkpoint.Status)
+		}
+	}
+	if wasWaiting || waitsOnPerson(checkpoint) {
+		if hook := waitingHook.Load(); hook != nil {
+			terminalHooks.Add(1)
+			go func(id string) {
+				defer terminalHooks.Done()
+				(*hook)(id)
+			}(run.id)
 		}
 	}
 	// Live permissions survive a commit by another branch — that is the whole
@@ -1569,6 +1579,36 @@ var terminalHooks sync.WaitGroup
 // WaitTerminalHooks waits for every terminal hook call begun so far, so a
 // shutdown does not leave a run's end half told.
 func WaitTerminalHooks() { terminalHooks.Wait() }
+
+// waitingHook is told of each commit to a run that waits, or waited until
+// this commit, on a person: a decision or a step a person performs. It runs
+// on its own goroutine after the commit, so it reads the committed run; calls
+// for one run may overlap, so it must be idempotent.
+var waitingHook atomic.Pointer[func(runID string)]
+
+// SetWaitingHook installs the hook told of commits that touch what a run
+// waits on a person for (nil removes it). WaitTerminalHooks waits for its
+// calls too.
+func SetWaitingHook(hook func(runID string)) {
+	if hook == nil {
+		waitingHook.Store(nil)
+		return
+	}
+	waitingHook.Store(&hook)
+}
+
+// waitsOnPerson reports whether a checkpoint waits on a person.
+func waitsOnPerson(checkpoint engine.Checkpoint) bool {
+	if len(checkpoint.AwaitingDecisions) > 0 {
+		return true
+	}
+	for _, command := range checkpoint.Commands {
+		if command.Kind == engine.CommandHuman {
+			return true
+		}
+	}
+	return false
+}
 
 // SetTerminalHook installs the hook told of each run's end (nil removes it).
 func SetTerminalHook(hook func(runID string, status engine.RunStatus)) {
