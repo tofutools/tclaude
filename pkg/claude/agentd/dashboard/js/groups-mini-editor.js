@@ -26,7 +26,13 @@ import {
   canRemoveOutcome, removeOutcome, renameOutcome, runAlongside, REVIEWER_TRACK, canAddReviewerTrack, reviewerRoleOf, reviewLoop, setLoopRounds, setOutcomeTarget, targetsFor, updateStep,
   addDecider, canAddDecider, gateDeciders, removeDecider, setAgree, setDecider,
   exhaustionOptions, setDecisionWho, setExhaustion, declareParams, setParams, insertOnAnswer, ruleOperands, setRule,
+  setMiniWaitMode, setWaitLimit,
 } from './process-mini-edit.js';
+import {
+  CHECK_SOURCES, DEFAULT_BACKOFF_FACTOR, DEFAULT_MAX_FAILED_CHECKS, WAIT_TIMED_OUT,
+  checkMoreSet, checkSource, describeWait, durationFeedback, setCheckField, setCheckPerformerField, setCheckSource, waitMode,
+} from './process-wait-step.js';
+import { setWaitField as setWaitTimeField } from './process-node-form.js';
 import { LOOP_MAX_ROUNDS, LOOP_MIN_ROUNDS, loopBound, normalizeRounds } from './process-loops.js';
 import { RuleCases } from './process-rule-cases.js';
 import { FailureRow } from './process-failure-row.js';
@@ -74,7 +80,7 @@ function agentStatus(snapshot, agentId) {
 const KIND_CHOICES = Object.freeze([['agent', '🤖', 'agent'], ['you', '👤', 'you'], ['command', '⌘', 'command'], ['message', '✉', 'message']]);
 // INSERT_CHOICES adds a decision (yes / no, an agent decides until you pick
 // otherwise) to what a new step can be.
-const INSERT_CHOICES = Object.freeze([...KIND_CHOICES, ['decide', '◇', 'decision']]);
+const INSERT_CHOICES = Object.freeze([...KIND_CHOICES, ['decide', '◇', 'decision'], ['wait', '⏳', 'wait']]);
 // BRANCH_TASK_CHOICES are ⑂'s choices on a task, by kind (branchKinds says
 // which apply): its own agent decides, or a decision goes after it.
 const BRANCH_TASK_CHOICES = Object.freeze({
@@ -287,6 +293,110 @@ function ExhaustionPicker({ view, id, outcome, value, onApply }) {
 }
 
 // Inspector is the compact editor of one step: the step list's fields.
+// MiniWaitDuration is a duration field that says what it read: "= 3 days".
+function MiniWaitDuration({ label, value, placeholder, onSet, field }) {
+  const feedback = durationFeedback(value);
+  return html`<label class="gm-wait-field"><span>${label}</span>
+    <${TypedField} name="gm-wait-input" type="text" data-mini-wait=${field} value=${value || ''} placeholder=${placeholder}
+      aria-invalid=${feedback.error ? 'true' : undefined} onChange=${(event) => onSet(event.currentTarget.value)} />
+    ${feedback.text && html`<small class=${`gm-wait-feedback${feedback.error ? ' is-error' : ''}`}>${feedback.text}</small>`}</label>`;
+}
+
+// MiniWait is the inline editor's wait step: for a time, or until a
+// condition, checked again and again, with the backoff and limits under more.
+function MiniWait({ view, id, onApply, onRename, onClose, onFullEditor }) {
+  const node = view.template.nodes[id];
+  const check = node.wait?.check;
+  const [more, setMore] = useState(() => checkMoreSet(check));
+  const [problem, setProblem] = useState('');
+  const mode = waitMode(node);
+  const edit = (mutate) => onApply(updateStep(view, id, (step) => {
+    const draft = JSON.parse(JSON.stringify(step.node));
+    mutate(draft);
+    return { ...step, node: draft };
+  }));
+  const setField = (key) => (raw) => {
+    const draft = JSON.parse(JSON.stringify(node));
+    const why = setCheckField(draft, key, raw);
+    setProblem(why);
+    if (!why) edit((target) => setCheckField(target, key, raw));
+  };
+  const source = checkSource(check);
+  const outcomes = outcomesOf(view, id);
+  return html`<div class="gm-inspector gm-wait" data-mini-inspector=${id} role="dialog" aria-label=${`Wait ${node.name || id}`}
+    onKeyDown=${(event) => { if (event.key === 'Escape') { event.stopPropagation(); onClose(); } }}>
+    <label class="gm-field"><span>Step</span><${TypedField} name="groups-mini-editor-input" type="text" data-mini-name value=${node.name || ''} placeholder=${id}
+      onChange=${(event) => onRename(event.currentTarget.value)} /></label>
+    <div class="gm-field"><span>Waits</span><div class="gm-wait-mode" role="radiogroup" aria-label="How it waits">
+      ${[['time', '⏳ for a time'], ['check', '↻ until a condition']].map(([key, text]) => html`<${Button} size="sm" key=${key} role="radio"
+        class=${`gm-wait-mode-option${mode === key ? ' is-selected' : ''}`} aria-checked=${mode === key ? 'true' : 'false'} data-mini-wait-mode=${key}
+        onClick=${() => { if (mode !== key) onApply(setMiniWaitMode(view, id, key)); }}>${text}<//>`)}
+    </div></div>
+    ${mode === 'time' ? html`<div class="gm-wait-row">
+      <${MiniWaitDuration} label="for" field="duration" value=${node.wait?.duration} placeholder="3 days"
+        onSet=${(raw) => edit((draft) => setWaitTimeField(draft, 'duration', raw))} />
+      <label class="gm-wait-field"><span>or until</span><${TypedField} name="gm-wait-input" type="text" data-mini-wait="until" value=${node.wait?.until || ''}
+        placeholder="2026-12-01T09:00:00Z" title="An RFC3339 time, or {{ params.x }}; with both, whichever comes first"
+        onChange=${(event) => edit((draft) => setWaitTimeField(draft, 'until', event.currentTarget.value))} /></label>
+    </div>` : html`
+      <div class="gm-field"><span>Check</span><${Select} size="sm" aria-label="What answers the check" value=${source} data-mini-wait="source"
+        title=${CHECK_SOURCES.find((item) => item.key === source)?.hint}
+        onChange=${(event) => edit((draft) => setCheckSource(draft, event.currentTarget.value))}>
+        ${CHECK_SOURCES.map((item) => html`<option key=${item.key} value=${item.key}>${item.label}</option>`)}
+      <//></div>
+      ${source === 'condition' && html`<label class="gm-field"><span>That</span><${TypedField} name="gm-wait-input" type="text" data-mini-wait="when"
+        value=${check.when || ''} placeholder='outputs.state == "ready"' title="Like a rule: params, outputs and steps.<id>.result"
+        onChange=${(event) => setField('when')(event.currentTarget.value)} /></label>`}
+      ${source === 'program' && html`<label class="gm-field"><span>Runs</span><${TypedField} name="gm-wait-input" type="text" data-mini-wait="run"
+        value=${check.performer?.run || ''} placeholder="./is-ready.sh" title="Exit 0 is yes, 1 is not yet; anything else is a failed check"
+        onChange=${(event) => edit((draft) => setCheckPerformerField(draft, 'run', event.currentTarget.value))} /></label>`}
+      ${source === 'agent' && html`<label class="gm-field"><span>Asks</span><${TypedField} as="textarea" rows="2" name="gm-wait-textarea" data-mini-wait="prompt"
+        value=${check.performer?.prompt || ''} placeholder="Is the release ready?" title="The agent answers yes or no"
+        onChange=${(event) => edit((draft) => setCheckPerformerField(draft, 'prompt', event.currentTarget.value))} /></label>`}
+      <div class="gm-wait-row">
+        <${MiniWaitDuration} label="every" field="every" value=${check.every} placeholder="5m" onSet=${setField('every')} />
+        <label class="gm-wait-field"><span>at most</span><${TypedField} name="gm-wait-input" type="number" min="1" data-mini-wait="maxChecks"
+          value=${check.maxChecks === undefined ? '' : String(check.maxChecks)} placeholder="12" aria-label="At most this many checks"
+          onChange=${(event) => setField('maxChecks')(event.currentTarget.value)} /><small>checks</small></label>
+        <${MiniWaitDuration} label="or within" field="within" value=${check.within} placeholder="1d" onSet=${setField('within')} />
+      </div>
+      <div class="gm-field"><span>Then</span><${Select} size="sm" aria-label="If it never holds" value=${check.onLimit || 'fail'} data-mini-wait="onLimit"
+        onChange=${(event) => onApply(setWaitLimit(view, id, event.currentTarget.value))}>
+        <option value="fail">if it never holds, fail the step</option>
+        <option value=${WAIT_TIMED_OUT}>if it never holds, take a timed-out route</option>
+      <//></div>
+      <${Button} size="sm" variant="link" class="gq-link gm-wait-more" aria-expanded=${more ? 'true' : 'false'} data-mini-wait-more
+        onClick=${() => setMore(!more)}>${more ? '▾' : '▸'} more: backoff, timeout, failed checks<//>
+      ${more && html`<div class="gm-wait-row" data-mini-wait-more-fields>
+        <label class="gm-wait-field"><span>backoff</span><${Select} size="sm" value=${check.backoff || 'fixed'} data-mini-wait="backoff"
+          onChange=${(event) => setField('backoff')(event.currentTarget.value)}>
+          <option value="fixed">fixed</option><option value="exponential">back off</option><//></label>
+        ${check.backoff === 'exponential' && html`<label class="gm-wait-field"><span>×</span><${TypedField} name="gm-wait-input" type="text" data-mini-wait="factor"
+          value=${check.factor === undefined ? '' : String(check.factor)} placeholder=${String(DEFAULT_BACKOFF_FACTOR)}
+          onChange=${(event) => setField('factor')(event.currentTarget.value)} /></label>`}
+        ${check.backoff === 'exponential' && html`<${MiniWaitDuration} label="up to" field="maxEvery" value=${check.maxEvery} placeholder="1h" onSet=${setField('maxEvery')} />`}
+        ${source === 'program' && html`<${MiniWaitDuration} label="each check ≤" field="timeout" value=${check.timeout} placeholder="2m" onSet=${setField('timeout')} />`}
+        <label class="gm-wait-field" title="Checks that error (not a plain no) in a row before the step fails"><span>fail after</span>
+          <${TypedField} name="gm-wait-input" type="number" min="1" data-mini-wait="maxFailedChecks"
+          value=${check.maxFailedChecks === undefined ? '' : String(check.maxFailedChecks)} placeholder=${String(DEFAULT_MAX_FAILED_CHECKS)}
+          onChange=${(event) => setField('maxFailedChecks')(event.currentTarget.value)} /><small>failed checks in a row</small></label>
+      </div>`}`}
+    ${problem && html`<p class="gm-wait-problem" role="alert">${problem}</p>`}
+    <p class="gq-dim gm-wait-summary" data-mini-wait-summary>${describeWait(node)}</p>
+    <div class="gm-field"><span>Goes on</span><div class="gm-outcomes">
+      ${outcomes.map(({ outcome, to }) => html`<span key=${outcome} class="gm-outcome" data-mini-outcome=${outcome}>
+        ${outcomes.length > 1 ? `${outcome === WAIT_TIMED_OUT ? 'timed out' : outcome} ` : ''}→
+        <${Select} size="sm" aria-label=${`After ${outcome}`} value=${to} onChange=${(event) => onApply(setOutcomeTarget(view, id, outcome, event.currentTarget.value))}>
+          ${targetsFor(view, id, outcome).map((target) => html`<option key=${target.id} value=${target.id}>${target.back ? `↺ ${target.label} (again)` : target.label}</option>`)}
+        <//></span>`)}
+      ${!outcomes.length && html`<span class="gq-dim">nothing yet: hover the step for + after</span>`}
+    </div></div>
+    <div class="gm-row"><${Button} size="sm" variant="link" class="gq-link gm-more" data-mini-more onClick=${onFullEditor}
+      title="A command's profile and an agent check's who are set in the full editor">More options in ⤢ Full editor<//>
+      <span class="gq-spacer"></span><${Button} size="sm" variant="link" class="gq-link" onClick=${onClose}>done<//></div>
+  </div>`;
+}
+
 function Inspector({ view, id, roster, roles, fallbackInfo, onApply, onRename, onKind, onClose, onFullEditor, onAnswerStep, fresh = '', onFreshUsed }) {
   const node = view.template.nodes[id];
   // A step just added opens with its name ready to type: naming it is part
@@ -308,6 +418,9 @@ function Inspector({ view, id, roster, roles, fallbackInfo, onApply, onRename, o
   if (node?.deciders?.length) shownAsk.current[id] = shared;
   if (!node) return null;
   const kind = miniKind(node);
+  if (kind === 'wait') {
+    return html`<${MiniWait} key=${id} view=${view} id=${id} onApply=${onApply} onRename=${onRename} onClose=${onClose} onFullEditor=${onFullEditor} />`;
+  }
   if (!isStep(node)) {
     return html`<div class="gm-inspector" data-mini-inspector=${id} role="dialog" aria-label=${`${node.name || id}`}>
       <div class="gm-row"><b>${node.name || id}</b><span class="gq-dim">${node.type}</span><span class="gq-spacer"></span>
@@ -487,7 +600,7 @@ function StructureMenu({ view, menu, onRun, onWrap, onClose }) {
   const node = view.template.nodes[id];
   if (!node) return null;
   const step = isStep(node);
-  const orphans = step || node.type === 'end' ? deleteOrphans(view, id) : [];
+  const orphans = step || node.type === 'end' || node.type === 'wait' ? deleteOrphans(view, id) : [];
   // A disabled item says why in visible text under it, not only on hover.
   const why = (text) => text && html`<span class="gm-menu-why" data-mini-why>${text}</span>`;
   const item = (key, text, reason, onClick) => html`<button data-ui-exempt type="button" role="menuitem" class="gm-menu-item" data-mini-menu=${key}

@@ -20,6 +20,7 @@
 // assume template-only editing beyond the defaults.
 
 import { PROCESS_NODE_TYPES } from './process-node-types.js';
+import { WAIT_MET, WAIT_TIMED_OUT, waitCheckTimesOut, waitOutcomeFor } from './process-wait-step.js';
 import { layoutProcessGraph, normalizeLayoutDirection } from './process-layout.js';
 import {
   cycleFixEdge, edgeGoesBack, exhaustionChoices, loopBound, loopableEdge, setLoopBound,
@@ -648,6 +649,9 @@ export class ProcessEditModel {
 
   freeOutcome(from, base = 'pass') {
     const taken = new Set(this.outgoingEdges(from).map((edge) => edge.outcome));
+    // A wait that can time out routes by met and timedOut.
+    const routed = waitOutcomeFor(this.template.nodes[from], taken);
+    if (routed) return routed;
     let candidate = base;
     for (let n = 2; taken.has(candidate); n += 1) candidate = `${base}-${n}`;
     return candidate;
@@ -978,6 +982,39 @@ export class ProcessEditModel {
     if (JSON.stringify(draft) === JSON.stringify(node)) return false;
     this.begin();
     this.template.nodes[id] = draft;
+    return true;
+  }
+
+  // editWait edits a wait node and keeps its routes right, as one undo step:
+  // one that can time out goes on along met (its sole route renamed); one
+  // that cannot goes on one way (timedOut dropped, met back to next).
+  editWait(id, mutate) {
+    const node = this.template.nodes[id];
+    if (node?.type !== 'wait') throw new Error(`${id} is not a wait`);
+    this.assertNodeEditable(id);
+    const draft = clone(node);
+    mutate(draft);
+    const out = this.outgoingEdges(id);
+    const named = (outcome) => out.find((edge) => edge.outcome === outcome);
+    const renames = [];
+    let drop = null;
+    if (waitCheckTimesOut(draft)) {
+      if (out.length === 1 && out[0].outcome !== WAIT_MET && out[0].outcome !== WAIT_TIMED_OUT) renames.push([out[0], WAIT_MET]);
+    } else {
+      drop = named(WAIT_TIMED_OUT) || null;
+      if (named(WAIT_MET) && !named('next')) renames.push([named(WAIT_MET), 'next']);
+    }
+    for (const edge of [...renames.map(([edge]) => edge), ...(drop ? [drop] : [])]) this.assertEdgeEditable(edge);
+    if (JSON.stringify(draft) === JSON.stringify(node) && !renames.length && !drop) return false;
+    this.begin();
+    this.template.nodes[id] = draft;
+    if (drop) this.edges = this.edges.filter((edge) => edge !== drop);
+    for (const [edge, outcome] of renames) {
+      const pinned = this.edgePinned(edge.from, edge.outcome);
+      if (pinned !== undefined) { this.writeEdgePin(edge.from, edge.outcome, undefined); this.writeEdgePin(edge.from, outcome, pinned); }
+      edge.outcome = outcome;
+    }
+    if (drop) this.pruneEdgePins();
     return true;
   }
 
