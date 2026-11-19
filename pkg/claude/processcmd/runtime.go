@@ -1014,7 +1014,7 @@ func printProcessRun(out io.Writer, run *processRunJSON) {
 			if command.Performer != nil && command.Performer.WaitReason != "" {
 				fmt.Fprintf(out, "%s waits: %s\n", command.NodeID, displayProcessEventField(command.Performer.WaitReason))
 			}
-			if command.Kind == engine.CommandWait {
+			if command.Kind == engine.CommandWait || (command.Wait != nil && command.Wait.Checking) {
 				fmt.Fprintf(out, "%s waits: %s\n", command.NodeID, command.Wait.status(time.Now()))
 			}
 		}

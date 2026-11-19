@@ -1056,7 +1056,9 @@ cool_off:
   restart does not move it.
 - The clock keeps running while the run is paused: a wait whose time came
   meanwhile ends when the run is resumed.
-- `tclaude process show` says how long a waiting step has left. Someone with
+- The run view (desktop and phone) counts down a waiting step ("2h 13m left
+  · until Thu 14:00"), and a run card says "2h 13m left". `tclaude process
+  show` says the same. Someone with
   `process.runs.manage` can end it now with `tclaude process skip-wait <run>
   --node <step>`, and the run goes on. Canceling the run withdraws the wait.
 - A wait whose time cannot be worked out (an output that is not a time, say)
@@ -1100,9 +1102,14 @@ wait_ready:
 - At `maxChecks` or `within`, `onLimit: fail` fails the step ("wait 'x': not
   met after 20 checks"); `onLimit: timedOut` takes the `timedOut` route
   instead. A wait that holds takes `met` (or its one route).
-- `tclaude process show` says how many checks were made, the last answer, and
-  when the next check is. `skip-wait` ends the wait as met between checks;
-  while a check is out it is refused, so try again once it answers.
+- The run view (desktop and phone) and `tclaude process show` say which check
+  it is on, the last answer, when the next check is and when it gives up
+  ("check 3 of 20 in 4m · last: not yet"). A run card says it short ("check
+  3/20, next in 4m"). Someone with `process.runs.manage` can make the next
+  check now (*↻ Check now*, or `tclaude process check-now <run> --node
+  <step>`), which keeps its count and limits, or end the wait as met
+  (*⤼ Skip wait*, or `skip-wait`). Both work between checks; while a check is
+  out they are refused, so try again once it answers.
 
 ## What does not execute yet
 

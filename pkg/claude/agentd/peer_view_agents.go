@@ -183,6 +183,7 @@ var agentPeerViewRoutes = map[string]agentPeerViewRoute{
 	"POST /v1/process/runs/{id}/resume":          {slugs: []string{PermProcessRunsManage}, target: agentViewNode},
 	"POST /v1/process/runs/{id}/resolve-blocked": {slugs: []string{PermProcessRunsManage}, target: agentViewNode},
 	"POST /v1/process/runs/{id}/skip-wait":       {slugs: []string{PermProcessRunsManage}, target: agentViewNode},
+	"POST /v1/process/runs/{id}/check-now":       {slugs: []string{PermProcessRunsManage}, target: agentViewNode},
 	// Cron jobs (peer_cron_jobs.go): an agent schedules messages under its
 	// target's grant, and lists, changes, fires, stops and deletes only the
 	// jobs it scheduled, under self.schedule for the peer.

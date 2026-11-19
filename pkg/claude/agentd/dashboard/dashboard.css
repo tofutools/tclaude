@@ -19850,6 +19850,13 @@ body.wizard .md-ed .tok-heading { color: var(--ui-wizard-gold, #d9b45a); }
 /* A parked step, with its reason, where the operator looks (BlockedSteps). */
 .pov-blocked { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
 .pov-blocked-item { border: 1px solid #30363d; border-left: 3px solid #f0883e; border-radius: 6px; padding: 8px 10px; background: #1c1610; display: flex; flex-direction: column; gap: 6px; }
+/* Waiting wait steps in a run view (process-run-waits.js). */
+.prw-waits { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.prw-wait { border: 1px solid #30363d; border-left: 3px solid #58a6ff; border-radius: 6px; padding: 8px 10px; background: #0f1722; display: flex; flex-direction: column; gap: 6px; }
+.prw-line { color: #e6edf3; overflow-wrap: anywhere; }
+.prw-status { font-variant-numeric: tabular-nums; }
+.prw-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.prw-waits.is-compact .prw-wait { padding: 6px 8px; }
 /* Inline editor wait step (groups-mini-editor.js MiniWait). */
 .gm-wait-mode { display: inline-flex; flex-wrap: wrap; gap: 4px; }
 .gm-wait-mode .gm-wait-mode-option.is-selected { border-color: #58a6ff; color: #a5d6ff; background: #1f6feb22; }

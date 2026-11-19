@@ -78,6 +78,8 @@ func TestSandboxServe(t *testing.T) {
 	if os.Getenv("TCLAUDE_SANDBOX_CONV_MONITOR") != "" {
 		agentd.StartConvMonitorForTest(t, 200*time.Millisecond)
 	}
+	// Wait steps get their deadlines and end on time, as under serve.
+	agentd.StartProcessWaitLoopForTest(t)
 	if os.Getenv("TCLAUDE_SANDBOX_SWIPE_TUI") != "" {
 		sandboxSwipeTUI(t)
 	} else if os.Getenv("TCLAUDE_SANDBOX_LIVE_SHELL") != "" {

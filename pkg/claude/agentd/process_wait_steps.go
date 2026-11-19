@@ -1,6 +1,8 @@
 package agentd
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -233,6 +235,32 @@ type processRunWaitView struct {
 	// Check is a wait for a criterion's progress: checks made, failed in a
 	// row, the last answer. This timer is its wait for the next check.
 	Check *engine.WaitCheckState `json:"check,omitempty"`
+	// Checking marks a check that is out (its program or agent is answering);
+	// otherwise the wait is waiting for its next check.
+	Checking bool `json:"checking,omitempty"`
+	// MaxChecks, MaxFailedChecks and GivesUpAt are its limits: the checks it
+	// may make, failed checks in a row it allows, and when within runs out.
+	MaxChecks       int        `json:"maxChecks,omitempty"`
+	MaxFailedChecks int        `json:"maxFailedChecks,omitempty"`
+	GivesUpAt       *time.Time `json:"givesUpAt,omitempty"`
+	// TimesOut says it takes a timed-out route at its limit, not failing.
+	TimesOut bool `json:"timesOut,omitempty"`
+}
+
+// withCheckLimits fills in a check wait's limits from its authored spec.
+func (view *processRunWaitView) withCheckLimits(spec model.WaitCheck, ok bool) *processRunWaitView {
+	if view == nil || view.Check == nil || !ok {
+		return view
+	}
+	view.MaxChecks, view.MaxFailedChecks, view.TimesOut = spec.MaxChecks, spec.MaxFailed(), spec.TimesOut()
+	if view.Check.StartedAt != nil && spec.Within != "" {
+		if within, err := model.ParseWaitDuration(spec.Within); err == nil {
+			// To the second, as the engine measures it.
+			at := view.Check.StartedAt.Add(within).UTC().Truncate(time.Second)
+			view.GivesUpAt = &at
+		}
+	}
+	return view
 }
 
 func processRunWaitViewOf(command engine.Command, timers map[string]db.ProcessWaitTimer, checks map[string]engine.WaitCheckState) *processRunWaitView {
@@ -256,6 +284,60 @@ var errProcessNoWait = errors.New("that step is not waiting")
 // processRunSkipWaitRequest is the body of POST .../skip-wait.
 type processRunSkipWaitRequest struct {
 	NodeID string `json:"nodeId"`
+}
+
+// handleProcessRunCheckNow serves POST /v1/process/runs/{id}/check-now: a
+// wait for a criterion waiting for its next check makes it now. Its count and
+// limits are untouched; only the wait between checks is cut short.
+func handleProcessRunCheckNow(w http.ResponseWriter, r *http.Request) {
+	if _, ok := requirePermission(w, r, PermProcessRunsManage); !ok {
+		return
+	}
+	var request processRunSkipWaitRequest
+	if err := decodeProcessRuntimeRequest(w, r, &request); err != nil {
+		writeError(w, http.StatusBadRequest, "process_run_request", err.Error())
+		return
+	}
+	runID := r.PathValue("id")
+	setAuditDetail(r, "run: "+runID+", check now: "+stripControl(request.NodeID))
+	view, err := loadProcessRunView(runID)
+	if err != nil {
+		writeProcessRuntimeError(w, err)
+		return
+	}
+	commandID := ""
+	for _, command := range view.Commands {
+		if command.NodeID != request.NodeID || command.Wait == nil || command.Wait.Check == nil {
+			continue
+		}
+		if command.Kind != engine.CommandWait {
+			writeError(w, http.StatusConflict, "process_check_running", "its check is being made now")
+			return
+		}
+		commandID = command.CommandID
+	}
+	if commandID == "" {
+		writeProcessRuntimeError(w, fmt.Errorf("%w: %q is not a wait for a condition waiting for its next check", errProcessNoWait, request.NodeID))
+		return
+	}
+	processWaitMu.Lock()
+	brought, err := db.BringProcessWaitTimerDue(runID, commandID, processWaitNow())
+	processWaitMu.Unlock()
+	if err != nil {
+		writeProcessRuntimeError(w, err)
+		return
+	}
+	if !brought {
+		// The timer fired meanwhile, is not set yet, or cannot be worked out:
+		// nothing was brought forward.
+		writeError(w, http.StatusConflict, "process_check_running", "its next check is being made or timed now; try again in a moment")
+		return
+	}
+	kickProcessWaits()
+	if fresh, err := loadProcessRunView(runID); err == nil {
+		view = fresh
+	}
+	writeProcessJSON(w, http.StatusAccepted, map[string]any{"run": view})
 }
 
 // handleProcessRunSkipWait ends a waiting wait step now, as skipped by the
@@ -310,4 +392,43 @@ func handleProcessRunSkipWait(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeProcessJSON(w, http.StatusAccepted, map[string]any{"run": view})
+}
+
+// processWaitCheckSpecs caches each run's wait checks' authored limits by run
+// and snapshot: a run view or projection refresh of a run waiting on a check
+// reads them without preparing its definition again. An amend changes the
+// snapshot, and with it the key.
+var processWaitCheckSpecs = struct {
+	sync.Mutex
+	byRun map[string]processWaitCheckSpecEntry
+}{byRun: map[string]processWaitCheckSpecEntry{}}
+
+type processWaitCheckSpecEntry struct {
+	key   string
+	specs map[string]model.WaitCheck
+}
+
+const processWaitCheckSpecCacheSize = 512
+
+func processWaitCheckSpec(record *db.ProcessRun, nodeID string, definitionOf func() (*engine.Definition, error)) (model.WaitCheck, bool) {
+	sum := sha256.Sum256(append(append([]byte(record.TemplateRef+"\x00"), record.TemplateSnapshotJSON...), record.ParamsJSON...))
+	key := hex.EncodeToString(sum[:])
+	processWaitCheckSpecs.Lock()
+	entry, ok := processWaitCheckSpecs.byRun[record.ID]
+	processWaitCheckSpecs.Unlock()
+	if !ok || entry.key != key {
+		definition, err := definitionOf()
+		if err != nil {
+			return model.WaitCheck{}, false
+		}
+		entry = processWaitCheckSpecEntry{key: key, specs: definition.WaitCheckSpecs()}
+		processWaitCheckSpecs.Lock()
+		if len(processWaitCheckSpecs.byRun) >= processWaitCheckSpecCacheSize {
+			clear(processWaitCheckSpecs.byRun)
+		}
+		processWaitCheckSpecs.byRun[record.ID] = entry
+		processWaitCheckSpecs.Unlock()
+	}
+	spec, ok := entry.specs[nodeID]
+	return spec, ok
 }

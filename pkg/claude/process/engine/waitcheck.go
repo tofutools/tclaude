@@ -122,6 +122,19 @@ func (d *Definition) IsWaitCheck(nodeID string) bool {
 	return ok && d.nodes[index].check != nil
 }
 
+
+// WaitCheckSpecs are every wait-until-a-condition node's authored checks, by
+// node id.
+func (d *Definition) WaitCheckSpecs() map[string]model.WaitCheck {
+	specs := map[string]model.WaitCheck{}
+	for id, index := range d.index {
+		if check := d.nodes[index].check; check != nil {
+			specs[id] = check.spec
+		}
+	}
+	return specs
+}
+
 // waitCheckAttempts is a check wait's attempt budget: every timer and every
 // check is an attempt of the node, and its own limits, not attempts, bound it.
 const waitCheckAttempts = math.MaxInt32

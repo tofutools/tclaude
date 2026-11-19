@@ -10,6 +10,7 @@
 // through the run API, so verdicts, notes and the stale-attempt guard are
 // the desktop's.
 
+import { waitShort } from './process-run-wait-words.js';
 import { h } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { signal } from '@preact/signals';
@@ -27,6 +28,7 @@ import { usePhonePage } from './phone-page.js';
 import { relTime } from './helpers.js';
 import { DesktopOnlyNote } from './phone-desktop-only.js';
 import { RunLog, RunOversight } from './process-oversight.js';
+import { useNow } from './process-run-waits.js';
 import {
   PersonStepOutputs, PersonStepText, filledOutputs, isPersonStep, missingOutputs, personChoiceLabel, personChoicePasses,
 } from './process-person-step.js';
@@ -121,6 +123,13 @@ export function waitReason(run) {
   return WAIT_REASONS[run?.action] || 'It waits on you';
 }
 
+// runWaits are a run's waiting wait steps in a few words each, for its card:
+// "⏳ Cool off: 2h 13m left", each with its node id.
+export function runWaits(run, now = Date.now()) {
+  return (run?.nodes || []).filter((node) => node?.wait)
+    .map((node) => ({ id: String(node.id), text: `${node.wait.check ? '↻' : '⏳'} ${node.label || node.id}: ${waitShort({ wait: node.wait }, now)}` }));
+}
+
 // runPosition is where a run stands, in words: the step it waits or works on
 // and its place in the run, or how it ended.
 export function runPosition(run) {
@@ -164,6 +173,8 @@ export function runPill(run, waiting = false) {
 
 function RunRow({ item, waiting, onOpen }) {
   const { run, where } = item;
+  // A run that waits on a timer counts it down.
+  const now = useNow((run?.nodes || []).some((node) => node?.wait));
   const pill = runPill(run, waiting);
   const tag = html`<${StatePill} tone=${pill.tone} class="phone-run-pill">${pill.text}<//>`;
   return html`<li class=${`phone-run-row${waiting ? ' waiting' : ''}`} data-run=${run.runId}>
@@ -171,6 +182,7 @@ function RunRow({ item, waiting, onOpen }) {
       <span class="phone-run-text">
         <span class="phone-run-name">${runName(run)}</span>
         <span class="phone-run-sub">${[where, runPosition(run)].filter(Boolean).join(' · ')}</span>
+        ${runWaits(run, now).map((line) => html`<span key=${line.id} class="phone-run-wait" data-run-wait-line>${line.text}</span>`)}
         ${run.scope?.task && html`<span class="phone-run-task" data-run-task=${run.scope.task}>◈ for task: ${run.scope.taskTitle || run.scope.task}</span>`}
         ${run.concerns > 0 && html`<span class="phone-run-concerns" data-run-concerns=${run.concerns}>⚑ ${run.concernsForYou
           ? `${run.concernsForYou === 1 ? 'a concern waits' : `${run.concernsForYou} concerns wait`} on you`
@@ -434,6 +446,8 @@ export function RunPage({ runId, back, active = true, api = runDetailApi, source
       key: 'hold', icon: pause.paused ? 'Resume' : 'Pause', label: pause.why, disabled: busy, onClick: hold,
     }] : [],
   }, active);
+  // A step that waits on a timer counts it down.
+  const now = useNow((run?.nodes || []).some((node) => node?.wait));
   if (!run) {
     return html`<div class="phone-run-page"><${Empty}>${context ? 'This run is no longer listed.' : 'Loading…'}<//></div>`;
   }
@@ -473,7 +487,9 @@ export function RunPage({ runId, back, active = true, api = runDetailApi, source
         const who = mine ? 'you' : (step.performer?.label || step.performer?.name || '');
         // A finished step says who did it and when.
         const when = step.state === 'done' || step.state === 'failed' ? relTime(lastEvent.get(String(step.id))?.occurredAt) : '';
-        const meta = mine ? 'you' : [who, when].filter(Boolean).join(' · ');
+        // A waiting wait step says how long it has left, or its check.
+        const waits = step.wait ? waitShort({ wait: step.wait }, now) : '';
+        const meta = mine ? 'you' : waits || [who, when].filter(Boolean).join(' · ');
         return html`<li key=${step.id} class=${`phone-run-step s-${step.state}${mine ? ' mine' : ''}`}>
           <span class="phone-run-dot" aria-hidden="true"></span>
           <span class="phone-run-step-label">${step.label}</span>

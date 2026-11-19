@@ -130,6 +130,7 @@ func TestCommandTreeRequiredFlags(t *testing.T) {
 		"claude process record-outcome":                 "outcome",
 		"claude process resolve-blocked":                "node attempt action",
 		"claude process skip-wait":                      "node",
+		"claude process check-now":                      "node",
 		"claude process block":                          "node reason",
 		"claude process send-back":                      "node",
 		"claude process amend":                          "",

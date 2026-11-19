@@ -1863,6 +1863,25 @@ func processRunViewWith(record *db.ProcessRun, accounted map[string]struct{}, cl
 	awaitingPerformer := false
 	waiting := false
 	var waitTimers map[string]db.ProcessWaitTimer
+	// definitionOf prepares the run's definition at most once per view, and
+	// only when something needs it.
+	var (
+		prepared     *engine.Definition
+		prepareErr   error
+		preparedOnce bool
+	)
+	definitionOf := func() (*engine.Definition, error) {
+		if !preparedOnce {
+			preparedOnce = true
+			prepared, prepareErr = prepareProcessRunDefinition(record)
+		}
+		return prepared, prepareErr
+	}
+	// specOf reads a wait check's authored limits, cached per run snapshot so
+	// a refresh of a waiting run does not prepare its definition again.
+	specOf := func(nodeID string) (model.WaitCheck, bool) {
+		return processWaitCheckSpec(record, nodeID, definitionOf)
+	}
 	for i := range checkpoint.Commands {
 		command := checkpoint.Commands[i]
 		view := processRunCommandView{
@@ -1876,8 +1895,15 @@ func processRunViewWith(record *db.ProcessRun, accounted map[string]struct{}, cl
 			}
 			view.State, waiting = processCommandWaiting, true
 			view.Wait = processRunWaitViewOf(command, waitTimers, checkpoint.WaitChecks)
+			if view.Wait.Check != nil {
+				view.Wait = view.Wait.withCheckLimits(specOf(command.NodeID))
+			}
 			commands = append(commands, view)
 			continue
+		}
+		// A wait's check that is out: its program or agent is answering.
+		if state, ok := checkpoint.WaitChecks[command.NodeID]; ok {
+			view.Wait = (&processRunWaitView{Check: &state, Checking: true}).withCheckLimits(specOf(command.NodeID))
 		}
 		if command.Kind == engine.CommandMessage && command.Message != nil {
 			view.Program = "message to " + strings.Join(command.Message.To, ", ")
@@ -1892,7 +1918,7 @@ func processRunViewWith(record *db.ProcessRun, accounted map[string]struct{}, cl
 				if !strings.Contains(command.NodeID, ".") {
 					view.Parkable = true
 				} else if parkable == nil {
-					if definition, err := prepareProcessRunDefinition(record); err == nil {
+					if definition, err := definitionOf(); err == nil {
 						parkable = definition.Parkable
 					}
 				}
@@ -1931,7 +1957,7 @@ func processRunViewWith(record *db.ProcessRun, accounted map[string]struct{}, cl
 	var loops []engine.LoopEdge
 	var gates []processRunGateView
 	if len(checkpoint.AwaitingDecisions) > 0 || len(checkpoint.Iterations) > 0 || processRunMayHaveGates(checkpoint) {
-		definition, err := prepareProcessRunDefinition(record)
+		definition, err := definitionOf()
 		if err != nil {
 			return processRunView{}, err
 		}
