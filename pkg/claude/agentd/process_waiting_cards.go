@@ -77,8 +77,14 @@ func reconcileProcessWaitingCards(runID string) {
 			closeProcessWaitingCard(view, card)
 		}
 	}
-	for _, d := range waiting {
-		postProcessWaitingCard(view, d)
+	carded := map[processWaitingKey]bool{}
+	for _, card := range open {
+		carded[processWaitingKey{card.NodeID, card.Attempt, card.Kind}] = true
+	}
+	for key, d := range waiting {
+		if !carded[key] {
+			postProcessWaitingCard(view, d)
+		}
 	}
 }
 
@@ -188,7 +194,9 @@ func processWaitingCardSettledWith(card db.ProcessWaitingCard) (string, bool) {
 		if json.Unmarshal(event.PayloadJSON, &payload) != nil {
 			return "", false
 		}
-		if card.Attempt != 0 && payload.Attempt != 0 && payload.Attempt != card.Attempt {
+		// A decision's first window is 0 (left out of the payload), so a card
+		// at a later window or attempt only matches its own.
+		if payload.Attempt != card.Attempt {
 			return "", false
 		}
 		if card.Kind == processAwaitingTask {
@@ -220,6 +228,13 @@ func answerProcessWaitingCard(orig *db.HumanMessage, card db.ProcessWaitingCard,
 	}
 	if body.AttachmentToken != "" {
 		return nil, replyFail(http.StatusBadRequest, "invalid_arg", "attachments are not supported for process decisions")
+	}
+	// Under the reconcile lock, so a settle elsewhere cannot close the card
+	// between this pick's claim and its release.
+	processWaitingCardsMu.Lock()
+	defer processWaitingCardsMu.Unlock()
+	if current, ok, err := db.GetProcessWaitingCardForHumanMessage(orig.ID); err == nil && ok {
+		card = current
 	}
 	if card.Closed {
 		return nil, replyFail(http.StatusConflict, "decided", "this step no longer waits on you")

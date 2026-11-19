@@ -1176,13 +1176,7 @@ func persistEvents(run *Run, checkpoint engine.Checkpoint, events []db.ProcessRu
 		}
 	}
 	if wasWaiting || waitsOnPerson(checkpoint) {
-		if hook := waitingHook.Load(); hook != nil {
-			terminalHooks.Add(1)
-			go func(id string) {
-				defer terminalHooks.Done()
-				(*hook)(id)
-			}(run.id)
-		}
+		fireWaitingHook(run.id)
 	}
 	// Live permissions survive a commit by another branch — that is the whole
 	// point of the plural outbox — but a permission whose command has left the
@@ -1595,6 +1589,17 @@ func SetWaitingHook(hook func(runID string)) {
 		return
 	}
 	waitingHook.Store(&hook)
+}
+
+// fireWaitingHook tells the waiting hook, if any, of a commit to runID.
+func fireWaitingHook(runID string) {
+	if hook := waitingHook.Load(); hook != nil {
+		terminalHooks.Add(1)
+		go func() {
+			defer terminalHooks.Done()
+			(*hook)(runID)
+		}()
+	}
 }
 
 // waitsOnPerson reports whether a checkpoint waits on a person.
