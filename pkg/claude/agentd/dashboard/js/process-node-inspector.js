@@ -19,7 +19,7 @@ import {
   defaultPerformer, setStageEnabled, setPlanApproval, addCheck, removeCheck, moveCheck, setCheckID,
   setRetryField, setCaptures, setWaitField, setNodeText, formatLines,
   MAX_GATE_DECIDERS, addGateDecider, removeGateDecider,
-  DECISION_KINDS, RULE_KIND, setDecisionKind, setNodeFailure, setRule,
+  DECISION_KINDS, RULE_KIND, TASK_KINDS, setDecisionKind, setNodeFailure, setRule,
 } from './process-node-form.js';
 import { ruleOperands } from './process-rules.js';
 import { RuleCases } from './process-rule-cases.js';
@@ -45,7 +45,7 @@ export function referencedTemplates(diagnostics = []) {
 export const BLOCK_ORDER_PREF = 'tclaude.dash.processInspector.blockOrder.';
 
 // Prompt and Bounds own these performer fields; Performer shows the rest.
-const PROMPT_FIELDS = ['ask', 'prompt'];
+const PROMPT_FIELDS = ['ask', 'prompt', 'subject', 'text'];
 const BOUNDS_FIELDS = ['timeout'];
 
 export function readBlockOrder(kind) {
@@ -121,7 +121,8 @@ function PerformerBlock({ node, nodeId, controller, commit, readOnly, edges }) {
   }
   return html`<${PerformerEditor} path="performer" locate=${locateMain(type)} performer=${mainPerformer(node)}
     commit=${commit} readOnly=${readOnly} choiceRouting=${type !== 'decision'} omit=${[...PROMPT_FIELDS, ...BOUNDS_FIELDS]}
-    ...${type === 'decision' ? { kinds: DECISION_KINDS, setKind: (slot, kind, draft) => setDecisionKind(model, nodeId, draft, slot, kind) } : {}} />
+    ...${type === 'decision' ? { kinds: DECISION_KINDS, setKind: (slot, kind, draft) => setDecisionKind(model, nodeId, draft, slot, kind) }
+    : type === 'task' && !(node.plan || node.checks?.length || node.review) ? { kinds: TASK_KINDS } : {}} />
     ${rule && html`<${RuleBlock} node=${node} nodeId=${nodeId} model=${model} commit=${commit} readOnly=${readOnly} edges=${edges} />`}
     ${type === 'decision' && !readOnly && node.performer?.kind !== 'program' && !rule && edges.length > 1 && html`<${Button} size="sm" class="process-action process-node-add" data-node-add-decider
       title="Several decide together, and all must agree" onClick=${() => commit('deciders.add', (draft) => addGateDecider(draft, edges.map((edge) => edge.outcome)))}>+ another decider<//>`}`;

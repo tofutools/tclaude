@@ -4,7 +4,7 @@
 // from the built-in ways of working the daemon serves, tk_d02b0f4c.) No DOM and no fetch; the components live in
 // groups-quickstart.js.
 
-import { stepWho } from './process-step-list.js';
+import { messageRecipientWords, stepWho } from './process-step-list.js';
 import { keepLifetime, withLifetime } from './process-spawn-lifetime.js';
 
 export function rosterMember(member) {
@@ -32,7 +32,7 @@ export function groupRoles(roster) {
 // whoOptions are the Who picker's choices for a roster: specific agents, the
 // roles the group holds (`roles`, the process context's [{role, count}], else
 // the roster's), anyone free, you, and a command.
-export function whoOptions(roster, { roles = null, spawn = true, rule = false } = {}) {
+export function whoOptions(roster, { roles = null, spawn = true, rule = false, message = false } = {}) {
   return [
     ...roster.map((m) => ({ value: `agent:${m.name}`, group: 'agent', label: m.name, detail: `${m.role || 'member'} · ${memberState(m)}` })),
     ...(roles?.length ? roles : groupRoles(roster)).map(({ role, count }) => ({ value: `role:${role}`, group: 'role', label: `any ${role}`, detail: `${count} in group` })),
@@ -41,6 +41,8 @@ export function whoOptions(roster, { roles = null, spawn = true, rule = false } 
     ...(spawn ? [{ value: 'spawn', group: 'spawn', label: 'a new agent…', detail: '' }] : []),
     { value: 'you', group: 'other', label: 'you (a question or sign-off)', detail: '' },
     { value: 'command', group: 'other', label: 'a command', detail: '' },
+    // A task can send a message and go on (model.PerformerMessage).
+    ...(message ? [{ value: 'message', group: 'other', label: 'a message', detail: 'tell someone, then go on' }] : []),
     // A decision can decide by itself (process-rules.js).
     ...(rule ? [{ value: 'rule', group: 'other', label: 'a rule', detail: 'decides by itself, nobody is asked' }] : []),
   ];
@@ -193,6 +195,7 @@ export function whoNow(step, roster, { fallback = null, defaultSpawnProfile = ''
   };
   if (who.mode === 'you') return { label: 'you', detail: 'the run waits for your answer' };
   if (who.mode === 'command') return { label: 'a command', detail: 'runs on this host' };
+  if (who.mode === 'message') return { label: 'a message', detail: `to ${(who.to || []).map(messageRecipientWords).join(', ') || 'nobody yet'}` };
   if (who.mode === 'agent') {
     const member = roster.find((m) => m.name === who.agent || m.id === who.agent);
     if (!member) return nobody(who.agent, 'not in this group');

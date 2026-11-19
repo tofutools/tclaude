@@ -17,7 +17,7 @@ import {
   YOU_CONTINUE, forwardTargets, insertStep, moveStep, newStep, removeStep, replaceStep,
   collapseParamShorthand, setStepChoices, setStepName, setStepText, setStepWho, stepListFlow, stepListToView,
   stepTargetLabel, stepText, stepWho, backTargetLabel, backTargets, setStepLoop, stepLoop, stepAnswers, AGENT_VERDICTS,
-  deciderTexts, setDeciderText,
+  deciderTexts, setDeciderText, MESSAGE_MAX_RECIPIENTS, messageRecipientOptions, messageRecipientWords, setStepRecipients,
 } from './process-step-list.js';
 import {
   addStepDecider, agreeChoices, canAddStepDecider, isGateStep, removeStepDecider, setStepAgree, setStepDecider,
@@ -33,7 +33,7 @@ import { effectiveLifetime, lifetimeChoices } from './process-spawn-lifetime.js'
 
 const html = htm.bind(h);
 
-const GLYPHS = Object.freeze({ agent: '🤖', you: '👤', command: '⌘', gate: '⚖', decision: '◇', parallel: '‖' });
+const GLYPHS = Object.freeze({ agent: '🤖', you: '👤', command: '⌘', message: '✉', gate: '⚖', decision: '◇', parallel: '‖' });
 const VALIDATE_DELAY_MS = 400;
 // A draft saves itself this long after its last change.
 export const AUTOSAVE_DELAY_MS = 800;
@@ -96,6 +96,7 @@ function stepKind(step) {
   const mode = stepWho(step).mode;
   if (mode === 'you') return 'you';
   if (mode === 'command') return 'command';
+  if (mode === 'message') return 'message';
   return 'agent';
 }
 
@@ -151,7 +152,10 @@ function GateDeciders({ list, step, index, roster, roles, now, onChange }) {
 export function WhoPicker({ step, roster, roles, label = 'Who does this step', spawn = true, rule = false, profiles = [], defaultSpawnProfile = '', onChange }) {
   const who = stepWho(step);
   const value = whoValue(who);
-  const options = whoOptions(roster, { roles, spawn, rule });
+  // Only a task can send a message: a decision waits for an answer.
+  // nor a staged one: a message has no plan, checks or review.
+  const node = step?.node;
+  const options = whoOptions(roster, { roles, spawn, rule, message: node?.type === 'task' && !node.plan && !node.checks?.length && !node.review });
   const known = options.some((option) => option.value === value);
   const groups = [['agent', 'Specific agent'], ['role', 'By role'], ['spawn', 'New agent'], ['other', 'Not an agent']];
   const unknown = { agent: `${who.agent} (not in this group)`, role: `any ${who.role}`, spawn: 'a new agent' }[who.mode] || 'nobody yet';
@@ -169,6 +173,24 @@ export function WhoPicker({ step, roster, roles, label = 'Who does this step', s
   return html`<span class="gq-pick-pair" data-who-spawn=${who.profile}>${select}
     <${ProfilePicker} value=${who.profile} defaultSpawnProfile=${defaultSpawnProfile} profiles=${profiles} label=${`${label}: spawn profile`}
       onChange=${(profile) => onChange({ mode: 'spawn', profile })} /></span>`;
+}
+
+// RecipientPicker is who a message step tells: a chip per recipient, ✕ to
+// drop one, and a picker of the rest (you, the lead, the whole group, a role,
+// an agent of the group).
+export function RecipientPicker({ to = [], roster = [], roles = null, label = 'Tell', onChange }) {
+  const rest = messageRecipientOptions(roster, roles).filter((option) => !to.includes(option.value));
+  const full = to.length >= MESSAGE_MAX_RECIPIENTS;
+  return html`<span class="gq-recipients" role="group" aria-label=${label} data-recipients=${to.join(' ')}>
+    ${to.map((value) => html`<span key=${value} class="ui-tag gq-recipient" data-recipient=${value}>${messageRecipientWords(value)}
+      <button data-ui-exempt type="button" class="gq-recipient-x" aria-label=${`Do not tell ${messageRecipientWords(value)}`}
+        onClick=${() => onChange(to.filter((other) => other !== value))}>✕</button></span>`)}
+    ${!full && rest.length > 0 && html`<${Select} size="sm" class="gq-recipient-add" aria-label=${`${label}: add someone`} value=""
+      onChange=${(event) => { const picked = event.currentTarget.value; if (picked) onChange([...to, picked]); }}>
+      <option value="">${to.length ? '+ also tell…' : 'tell who…'}</option>
+      ${rest.map((option) => html`<option key=${option.value} value=${option.value}>${option.label}</option>`)}
+    <//>`}
+  </span>`;
 }
 
 // ProfilePicker picks a spawn profile: '' is the group's default.
@@ -316,7 +338,8 @@ function StepRow({ list, step, index, roster, roles, now, problems, fallbackInfo
   const noMoreDeciders = decision && kind !== 'gate' && kind !== 'command' ? canAddStepDecider(list, step) : '';
   // Prompts read {{name}}, the step list's shorthand; edits expand it back.
   const text = collapseParamShorthand(stepText(step));
-  const placeholder = { agent: 'What should the agent do? {{name}} makes a start input', you: 'What do you decide?', command: 'Command line, e.g. make test', gate: 'What do the deciders decide?' }[kind];
+  const placeholder = { agent: 'What should the agent do? {{name}} makes a start input', you: 'What do you decide?', command: 'Command line, e.g. make test',
+    message: 'What to tell them. {{name}} is a start input, {{ outputs.pr }} a step\'s output', gate: 'What do the deciders decide?' }[kind];
   const following = list.steps[index + 1]?.id || list.mainEnd;
   // A decision keeps its answers across a switch between a person and an
   // agent (an agent's lone "continue" is no decision); a command does not
@@ -341,7 +364,7 @@ function StepRow({ list, step, index, roster, roles, now, problems, fallbackInfo
     ? texts.map((own, i) => html`<label key=${i} class="gq-decider-text" data-step-decider-text=${i}><span class="gq-decider-n">${i + 1}</span>
         <${TypedField} as="textarea" name="gq-decider-text" class="gq-step-text" rows="2" aria-label=${`Step ${index + 1} decider ${i + 1} instruction`} placeholder=${placeholder}
           value=${collapseParamShorthand(own)} onChange=${(event) => onChange(setDeciderText(step, i, event.currentTarget.value))} /></label>`)
-    : html`<${TypedField} as="textarea" name="gq-step-text" class="gq-step-text" rows="2" aria-label=${`Step ${index + 1} ${kind === 'command' ? 'command' : 'instruction'}`} placeholder=${placeholder}
+    : html`<${TypedField} as="textarea" name="gq-step-text" class="gq-step-text" rows="2" aria-label=${`Step ${index + 1} ${{ command: 'command', message: 'message' }[kind] || 'instruction'}`} placeholder=${placeholder}
         title=${kind === 'gate' ? 'Every decider is asked this' : undefined}
         value=${text} onChange=${(event) => onChange(setStepText(step, event.currentTarget.value))} />`}
       ${decision && kind !== 'command' && html`<${Answers} list=${list} step=${step} onChange=${onChange} />`}
@@ -356,7 +379,10 @@ function StepRow({ list, step, index, roster, roles, now, problems, fallbackInfo
     ? html`<${GateDeciders} list=${list} step=${step} index=${index} roster=${roster} roles=${roles} now=${now} onChange=${onChange} />`
     : html`<${WhoPicker} step=${step} roster=${roster} roles=${roles} profiles=${fallbackInfo.profiles}
         defaultSpawnProfile=${fallbackInfo.defaultSpawnProfile} onChange=${setWho} />
-      <div class=${`gq-res${now.waits ? ' waits' : ''}`}>${now.detail}</div>`}
+      ${kind === 'message'
+    ? html`<${RecipientPicker} to=${stepWho(step).to || []} roster=${roster} roles=${roles} label=${`Step ${index + 1} tells`}
+          onChange=${(to) => onChange(setStepRecipients(step, to))} />`
+    : html`<div class=${`gq-res${now.waits ? ' waits' : ''}`}>${now.detail}</div>`}`}
       ${decision && kind !== 'gate' && kind !== 'command' && html`<${Button} size="sm" variant="link" class="gq-link" data-step-add-decider=${step.id}
         disabled=${!!noMoreDeciders} title=${noMoreDeciders || 'Several decide together: all must agree'}
         onClick=${() => onChange(addStepDecider(list, step, { mode: 'nobody' }))}>+ another decider<//>`}
@@ -729,7 +755,7 @@ export function StepListEditor({ group, roster, list: initial, origin = '', save
       ${!list.steps.length && html`<div class="gq-empty ui-empty">No steps yet. Add the first one.</div>`}
       <div class="gq-add">
         <span>+ add step:</span>
-        ${[['agent', '🤖 agent'], ['you', '👤 you'], ['command', '⌘ command']].map(([kind, text]) => html`<${Button} size="sm" key=${kind} data-add-step=${kind}
+        ${[['agent', '🤖 agent'], ['you', '👤 you'], ['command', '⌘ command'], ['message', '✉ message']].map(([kind, text]) => html`<${Button} size="sm" key=${kind} data-add-step=${kind}
           onClick=${() => update(insertStep(list, newStep(list, { kind })))}>${text}<//>`)}
       </div>
       ${fallbackSteps.length > 0 && html`<div class="gq-fallback" data-process-fallback=${fallbackAction}>

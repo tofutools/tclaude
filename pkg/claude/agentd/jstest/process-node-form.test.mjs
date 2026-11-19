@@ -8,7 +8,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { ProcessEditModel } from '../dashboard/js/process-edit-model.js';
 import {
-  PERFORMER_KINDS, PERFORMER_FIELDS, RETRY_ON_FAIL_MODES,
+  KNOWN_KINDS, PERFORMER_KINDS, PERFORMER_FIELDS, RETRY_ON_FAIL_MODES,
   performerFieldsFor, defaultPerformer, setPerformerKind, setPerformerField,
   setChoiceOutcome, syncChoiceOutcomes,
   setContactField, setRetryField, setStageEnabled, setPlanApproval,
@@ -90,13 +90,22 @@ test('updateNode enforces unknown-node and read-only guards', () => {
 test('every performer field is declared for all three kinds or explicitly kind-scoped', () => {
   for (const field of PERFORMER_FIELDS) {
     assert.ok(field.kinds.length > 0, `${field.key} declares kinds`);
-    for (const kind of field.kinds) assert.ok(PERFORMER_KINDS.includes(kind), `${field.key} scopes to a real kind`);
+    for (const kind of field.kinds) assert.ok(KNOWN_KINDS.includes(kind), `${field.key} scopes to a real kind`);
   }
   // The kind-specific sets the dialog spec names, pinned:
   const keysFor = (kind) => performerFieldsFor(kind).map((field) => field.key);
   assert.deepEqual(keysFor('human'), ['profile', 'ask', 'choices', 'choiceOutcomes', 'assignee', 'prompt', 'timeout']);
   assert.deepEqual(keysFor('agent'), ['profile', 'assignee', 'role', 'anyone', 'lead', 'sameAs', 'differentFrom', 'spawn', 'fallback', 'prompt', 'model', 'effort', 'timeout']);
   assert.deepEqual(keysFor('program'), ['profile', 'run', 'args', 'timeout']);
+  // A message step takes its recipients, a subject and its text, nothing else.
+  assert.deepEqual(keysFor('message'), ['to', 'subject', 'text']);
+  assert.ok(!PERFORMER_KINDS.includes('message'), 'a message does not decide');
+});
+
+test('a task switched to a message drops what a message has no use for', () => {
+  const performer = { kind: 'agent', prompt: 'x', timeout: '5m', role: 'reviewer' };
+  setPerformerKind(performer, 'message');
+  assert.deepEqual(performer, { kind: 'message' });
 });
 
 test('agent selectors and the fallback edit as their wire shapes', () => {
