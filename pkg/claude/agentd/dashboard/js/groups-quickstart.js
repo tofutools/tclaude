@@ -351,8 +351,10 @@ function StepRow({ list, step, index, roster, roles, now, problems, fallbackInfo
   const setWho = (who) => {
     let next = setStepWho(step, who);
     const answers = stepAnswers(step);
-    // A task stays a task: yours is a step you perform.
+    // A task stays a task: yours is a step you perform, which takes no retry
+    // yet (the engine runs none on it).
     if (who.mode === 'you' && next.node.type === 'decision') next = setStepChoices(next, answers, following);
+    else if (who.mode === 'you' && next.node.retry) next = { ...next, node: Object.fromEntries(Object.entries(next.node).filter(([key]) => key !== 'retry')) };
     else if (next.node.type === 'decision' && (who.mode === 'command' || (answers.length === 1 && answers[0] === YOU_CONTINUE))) next = setStepChoices(next, [], '');
     else if (next.node.type === 'decision') next = setStepChoices(next, answers, following);
     onChange(next);

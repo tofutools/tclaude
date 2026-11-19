@@ -39,7 +39,7 @@ export function whoOptions(roster, { roles = null, spawn = true, rule = false, m
     { value: 'anyone', group: 'role', label: 'anyone free in the group', detail: 'idle first, then the least busy' },
     { value: 'lead', group: 'role', label: "the group's lead", detail: 'the member with role lead, else an owner' },
     ...(spawn ? [{ value: 'spawn', group: 'spawn', label: 'a new agent…', detail: '' }] : []),
-    { value: 'you', group: 'other', label: 'you (a question or sign-off)', detail: '' },
+    { value: 'you', group: 'other', label: 'you (a step you do, or decide)', detail: '' },
     { value: 'command', group: 'other', label: 'a command', detail: '' },
     // A task can send a message and go on (model.PerformerMessage).
     ...(message ? [{ value: 'message', group: 'other', label: 'a message', detail: 'tell someone, then go on' }] : []),
@@ -193,7 +193,9 @@ export function whoNow(step, roster, { fallback = null, defaultSpawnProfile = ''
     if (action === 'fail') return { label, detail: `${why}: the step fails`, waits: true, fails: true };
     return { label, detail: `${why}: the step waits`, waits: true };
   };
-  if (who.mode === 'you') return { label: 'you', detail: 'the run waits for your answer' };
+  if (who.mode === 'you') {
+    return { label: 'you', detail: step?.node?.type === 'decision' ? 'the run waits for your answer' : 'the run waits for you to do it' };
+  }
   if (who.mode === 'command') return { label: 'a command', detail: 'runs on this host' };
   if (who.mode === 'message') return { label: 'a message', detail: `to ${(who.to || []).map(messageRecipientWords).join(', ') || 'nobody yet'}` };
   if (who.mode === 'agent') {

@@ -309,6 +309,17 @@ test('link targets are forward only: later steps and the ends', () => {
   assert.deepEqual(forwardTargets(list, 'c'), ['end']);
 });
 
+test('a step that becomes a decision drops what only a task has: outputs, retries, going on as failed', () => {
+  const list = blankStepList('x');
+  const step = newStep(list, { kind: 'you', name: 'Pack', text: 'Pack it.' });
+  const task = { ...step, node: { ...step.node, captures: ['weight'], retry: { maxAttempts: 2 }, mayFail: true } };
+  const decided = setStepChoices({ ...task, cont: 'yes' }, ['yes', 'no'], 'end');
+  assert.equal(decided.node.type, 'decision');
+  assert.equal(decided.node.captures, undefined);
+  assert.equal(decided.node.retry, undefined);
+  assert.equal(decided.node.mayFail, undefined);
+});
+
 test('renaming the continuing answer keeps it continuing only while it is an answer', () => {
   let list = blankStepList('x');
   list = insertStep(list, setStepChoices({ ...newStep(list, { kind: 'you', name: 'Gate', text: 'Go?' }), cont: YOU_CONTINUE }, [YOU_CONTINUE], ''));

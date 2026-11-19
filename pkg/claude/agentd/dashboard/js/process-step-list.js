@@ -626,6 +626,10 @@ export function setStepChoices(step, choices, following) {
   const performer = { ...(node.performer || { kind: 'human' }) };
   if (answers.length) {
     node.type = 'decision';
+    // Outputs, retries and going on as failed are a task's: a decision has none.
+    delete node.captures;
+    delete node.retry;
+    delete node.mayFail;
     if (performer.kind === 'human') performer.choices = answers;
     else delete performer.choices;
     delete performer.choiceOutcomes;

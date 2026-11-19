@@ -192,7 +192,7 @@ export function branchKinds(view, id) {
 export function canDecide(view, id) {
   const node = view.template.nodes[id];
   if (node?.type !== 'task') return 'only a task becomes a decision';
-  if (node.performer?.kind !== 'agent') return 'a command continues one way; add a "you" step after it to branch';
+  if (node.performer?.kind !== 'agent') return 'a command continues one way; add a decision of yours after it to branch';
   if (node.captures?.length) return 'a step with outputs continues one way; clear its outputs to let its agent decide';
   // Plan, checks, review and retry are a task's; a decision would drop them.
   if (['plan', 'checks', 'review', 'retry'].some((key) => node[key] !== undefined)) return 'its plan, checks, review or retry are a task\'s; change it in the full editor';
@@ -875,9 +875,10 @@ export function changeKind(view, id, kind) {
   next.template.nodes[id] = changed;
   // Only a task reports outputs, and a message reports none.
   if (changed.type !== 'task' || kind === 'message') delete changed.captures;
-  // A retry runs on any task, and only an agent can be handed its own
+  // A retry runs on agent, command and message tasks (the engine runs none
+  // on a step you perform yet), and only an agent can be handed its own
   // failure back: what the new kind cannot run goes.
-  if (changed.type !== 'task') delete changed.retry;
+  if (changed.type !== 'task' || kind === 'you') delete changed.retry;
   // Only a task may fail and go on; a decision with mayFail is refused.
   if (changed.type !== 'task') delete changed.mayFail;
   else if (kind !== 'agent' && changed.retry?.onFail && changed.retry.onFail !== 'fresh-attempt') delete changed.retry.onFail;
@@ -1162,6 +1163,11 @@ export function renameOutcome(view, id, outcome, name) {
     if (other.onExhausted === outcome) decision.loops[looped] = { ...other, onExhausted: value };
   }
   if (decision.performer?.kind === 'human') decision.performer.choices = (decision.performer.choices || []).map((c) => (c === outcome ? value : c));
+  // A person's task routes its choices by name: the route moves with the rename.
+  if (decision.performer?.choiceOutcomes && Object.hasOwn(decision.performer.choiceOutcomes, outcome)) {
+    const { [outcome]: route, ...rest } = decision.performer.choiceOutcomes;
+    decision.performer.choiceOutcomes = { ...rest, [value]: route };
+  }
   if (decision.performer?.kind === 'rule') {
     for (const c of decision.performer.cases || []) if (c.then === outcome) c.then = value;
     if (decision.performer.else === outcome) decision.performer.else = value;

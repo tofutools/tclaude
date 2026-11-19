@@ -1472,10 +1472,10 @@ anywhere else, its card shows the pick. When the run withdraws the step (it
 is canceled, or fails elsewhere), its card reads "Withdrawn".
 
 - **Failing it**: a failing choice is a failed attempt, with the note as the
-  reason. With retries left the step opens again as the next attempt; with
-  `mayFail` the run goes on with the step's result `failed`; otherwise the
-  run stops and names the step (its `failure`), exactly as for a failed
-  agent step.
+  reason. With `mayFail` the run goes on with the step's result `failed`;
+  otherwise the run stops and names the step (its `failure`), exactly as for
+  a failed agent step. A person's step takes no `retry` yet (the engine
+  refuses one, `unsupported_retry`).
 - **Pausing**: a paused run opens no new person's step. One already open can
   still be finished; what it makes ready waits for the resume.
 - **Cancelling**: cancelling the run, or a sibling branch failing it,

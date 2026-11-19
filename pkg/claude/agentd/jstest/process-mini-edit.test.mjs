@@ -366,7 +366,7 @@ test('changing a step\'s kind drops a retry the new kind cannot run', () => {
   const retrying = structuredClone(ship);
   retrying.template.nodes.implement.retry = { maxAttempts: 3, onFail: 'feedback-same-session' };
   const asked = m.changeKind(retrying, 'implement', 'you').view;
-  assert.deepEqual(asked.template.nodes.implement.retry, { maxAttempts: 3 }, 'your step keeps its budget, not a session to hand back');
+  assert.equal(asked.template.nodes.implement.retry, undefined, 'the engine runs no retry on a step you perform yet');
   const decided = m.changeKind(retrying, 'implement', 'agent').view;
   assert.deepEqual(decided.template.nodes.implement.retry, retrying.template.nodes.implement.retry);
   const command = m.changeKind(retrying, 'implement', 'command').view;
@@ -612,6 +612,14 @@ test('inside a parallel branch "fail the run" is offered: a failed end there end
   assert.ok(m.inParallelBranch(view, branch));
   assert.ok(!m.inParallelBranch(view, 'implement'));
   assert.ok(m.exhaustionOptions(view, branch, 'continue').some((o) => o.value === m.FAIL_RUN));
+});
+
+test('renaming a person\'s choice moves its pass or fail route with it', () => {
+  const view = structuredClone(ship);
+  view.template.nodes.implement = { type: 'task', name: 'Pack', performer: { kind: 'human', ask: 'Pack it.', choices: ['packed', 'lost'], choiceOutcomes: { packed: 'pass', lost: 'fail' } } };
+  const renamed = m.renameOutcome(view, 'implement', 'lost', 'gone').view.template.nodes.implement.performer;
+  assert.deepEqual(renamed.choices, ['packed', 'gone']);
+  assert.deepEqual(renamed.choiceOutcomes, { packed: 'pass', gone: 'fail' });
 });
 
 test('a gate inside a parallel branch gives up into a failed end, never its agree', () => {
