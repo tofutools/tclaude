@@ -445,14 +445,14 @@ function fleetOwnName(group) {
   return group.fleet_node && group.name.endsWith(at) ? group.name.slice(0, -at.length) : group.name;
 }
 
-// FleetGroupName renders a merged-view (fleet-merged-island.js) group as
-// group@node: the suffix in the node's own colour opens that node's view.
-function FleetGroupName({ group }) {
+// FleetNodeSuffix is a merged-view (fleet-merged-island.js) group's @node in
+// the node's own colour, which opens that node's view. It is a button of its
+// own beside the fold button, so the keyboard reaches it and it stays out of
+// the fold button's name; it follows the name flush, reading group@node.
+function FleetNodeSuffix({ group }) {
   const node = group.fleet_node;
-  const at = `@${node.name}`;
-  const base = fleetOwnName(group);
-  return html`${base}<span class="fleet-node-suffix" style=${`--nc:${node.color}`} data-fleet-open=${node.local ? '' : node.id}
-    title=${node.local ? 'This node — open its dashboard' : `Open ${node.name}'s dashboard`}>${at}</span>${node.stale ? html` <span class="fleet-stale-label">${node.label}</span>` : null}`;
+  return html`<button data-ui-exempt type="button" class="fleet-node-suffix" style=${`--nc:${node.color}`} data-fleet-open=${node.local ? '' : node.id}
+    title=${node.local ? 'This node — open its dashboard' : `Open ${node.name}'s dashboard`}>@${node.name}</button>${node.stale ? html` <span class="fleet-stale-label">${node.label}</span>` : null}`;
 }
 
 function RealGroupBox({ node, group, activity, membersView, snapshot, actions, class: boxClass, attrs, children }) {
@@ -477,7 +477,7 @@ function RealGroupBox({ node, group, activity, membersView, snapshot, actions, c
   // Renaming swaps the title for an input, which must not sit inside the
   // fold button: the button keeps only its ▶ / ▼, and the input follows it.
   const renaming = interactions.editorKey === renameKey;
-  const name = renaming ? null : html`<strong class="group-name" data-group-name=${group.name}>${group.fleet_node ? html`<${FleetGroupName} group=${group} />` : group.name}</strong>`;
+  const name = renaming ? null : html`<strong class="group-name" data-group-name=${group.name}>${group.fleet_node ? fleetOwnName(group) : group.name}</strong>`;
   const headAttrs = {
     draggable: !groupEditing, 'data-group-reorder': group.name,
     title: `Drag this header to reorder or nest the group · ${modifierText('Mod')}-drag to clone`,
@@ -489,6 +489,7 @@ function RealGroupBox({ node, group, activity, membersView, snapshot, actions, c
       onCommit=${(value) => actions.renameGroup(group, value)}
       triggerProps=${{}}
     >${group.name}<//>` : null}
+    ${group.fleet_node ? html`<${FleetNodeSuffix} group=${group} />` : null}
     ${snapshot?.group_attachments_mode === 'float'
       ? html`<${GroupAttachment} group=${group} actions=${actions} placement="float" />`
       : null}
@@ -551,7 +552,7 @@ function RealGroupBox({ node, group, activity, membersView, snapshot, actions, c
 // under an unchanged snapshot still redraws when the fold is set from
 // outside it (announceFusedSections). The folded body stays in the document,
 // hidden, as a closed <details> kept it.
-function GroupBox({ boxKey, openOf, class: extra, attrs, headAttrs = {}, name, label, actions, children }) {
+function GroupBox({ boxKey, foldName = boxKey, openOf, class: extra, attrs, headAttrs = {}, name, label, actions, children }) {
   const [, bump] = useState(0);
   void fusedSectionsRevision.value;
   const open = openOf();
@@ -567,6 +568,7 @@ function GroupBox({ boxKey, openOf, class: extra, attrs, headAttrs = {}, name, l
   return html`<${Disclosure} open=${open} onToggle=${toggle} keepBody=${true}
     class=${['group-box', extra].filter(Boolean).join(' ')} attrs=${{ 'data-group-key': boxKey, ...attrs }}
     headClass="group-summary" headAttrs=${headAttrs} toggleClass="group-toggle" label=${label}
+    title=${`${open ? 'Fold' : 'Show'} ${foldName}`}
     toggle=${name} actions=${actions} bodyClass="subtable" id=${`group-body-${encodeURIComponent(boxKey)}`}>${children}<//>`;
 }
 
@@ -665,6 +667,7 @@ function GroupTriggersSection({ group, triggers }) {
   if (!rows.length) return null;
   const visible = rows.slice(0, 5);
   return html`<${Disclosure} open=${open} onToggle=${() => setOpen(!open)} foldOnHead=${true} keepBody=${true}
+    id=${`group-triggers-${encodeURIComponent(group.name)}`}
     class="group-triggers-section" headClass="group-triggers-head" toggleClass="group-triggers-toggle" bodyClass="group-triggers-body"
     toggle=${html`<${DisclosureTri} open=${open} /><strong>Triggers</strong><span class="muted">${rows.length} installed here</span>`}
     actions=${html`<a href="/automations/triggers" onClick=${(event) => event.stopPropagation()}>edit in Automations →</a>`}
@@ -772,7 +775,7 @@ function VirtualShell({ group, target, children, name, summary }) {
     'data-dnd-target-ungrouped': drops && target === 'ungrouped' ? '1' : undefined,
     'data-dnd-target-retired': drops && target === 'retired' ? '1' : undefined,
   };
-  return html`<${GroupBox} boxKey=${group.key || group.name} openOf=${() => virtualGroupOpen(group, dashPrefs)}
+  return html`<${GroupBox} boxKey=${group.key || group.name} foldName=${group.name} openOf=${() => virtualGroupOpen(group, dashPrefs)}
     class="group-virtual" attrs=${attrs} name=${name} actions=${summary}>${children}<//>`;
 }
 

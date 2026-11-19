@@ -67,6 +67,7 @@ export function openGroupInProcesses(groupName, filter = 'running', { doc = docu
   setGroupBoxOpen(rowKey, true);
   announceFusedSections();
   groups.rerender?.();
+  doc.getElementById?.('fleetview-fused-groups-root')?.dispatchEvent(new CustomEvent('tclaude:group-disclosure'));
   const reveal = () => {
     const row = doc.querySelector(`.group-box[data-group-key="${cssString(rowKey)}"]`);
     if (!row) return;

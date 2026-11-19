@@ -17389,7 +17389,7 @@ html:not([data-layout="phone"]) nav:has(#node-chips-root :is(.has-fleet, .has-ma
 .fleet-seg-btn { border: 0; font: inherit; font-size: 13px; cursor: pointer; }
 .fleet-seg-btn + .fleet-seg-btn { border-left: 1px solid #30363d; }
 .fleet-seg-btn.on { cursor: default; }
-.fleet-node-suffix { color: var(--nc); font-weight: 600; cursor: pointer; }
+.fleet-node-suffix { color: var(--nc); font: inherit; font-weight: 600; cursor: pointer; background: none; border: 0; padding: 0; margin: 0; }
 .fleet-node-suffix:hover { text-decoration: underline; }
 .fleet-stale-label { font-size: 11px; font-weight: normal; color: #e3b341; }
 /* Away marker (agent-presence.js, tcl-hocp2h): a visiting agent's badge and a

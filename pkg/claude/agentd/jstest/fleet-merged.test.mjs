@@ -103,6 +103,9 @@ test('the merged view polls peers only while shown, renders group@node, and guar
   assert.match(text, /ops@desk/); assert.match(text, /build@forge/);
   const suffix = [...mounted.container.querySelectorAll('[data-fleet-open]')].find((el) => el.textContent === '@forge');
   assert.ok(suffix, 'the @node suffix is a jump to that node');
+  assert.equal(suffix.tagName, 'BUTTON', 'the keyboard reaches the @node jump');
+  assert.equal(suffix.closest('.group-toggle'), null, 'the @node jump is not part of the fold button');
+  assert.equal(suffix.closest('.group-box').querySelector('.group-toggle').title, 'Show build@forge', 'the fold button says what it folds');
   // Read-only: the status dot (a power control), keyboard activation and the
   // row context menu are stopped; view-only controls pass.
   const el = (html) => { const d = harness.document.createElement('div'); d.innerHTML = html; host.appendChild(d); return d.firstElementChild; };

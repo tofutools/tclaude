@@ -768,7 +768,7 @@ export function FusedSection({ group, section, label, count = null, summary = nu
     setTimeout(() => { bump((n) => n + 1); onToggle?.(el); }, 0);
   };
   const title = force ? 'Open while a form inside is in use' : open ? `Fold ${label}` : `Show ${label}`;
-  return html`<${Disclosure} open=${open} onToggle=${toggle} disabled=${force} title=${title}
+  return html`<${Disclosure} open=${open} onToggle=${toggle} disabled=${force} title=${title} id=${`gf-${section}-${encodeURIComponent(group)}`}
     class=${`gf-section gf-section-${section}${force ? ' forced' : ''}`} attrs=${{ 'data-fused-section': section, ...attrs }}
     headClass="gf-section-head" toggleClass="gf-section-toggle" bodyClass="gf-section-body" fill="gf-section-fill"
     toggle=${html`<span class="gf-tri" aria-hidden="true">${open ? '▾' : '▸'}</span>

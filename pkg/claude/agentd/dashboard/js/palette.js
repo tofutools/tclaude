@@ -173,11 +173,13 @@ function setGroupOpen(name, open) {
 }
 
 // redrawGroupFolds redraws the boxes and, since a fold moves activity bots
-// onto (or off) a parent's header, the tree that decides which header owns
-// them.
+// onto (or off) a parent's header, the trees (Groups, the fused view) that
+// decide which header owns them.
 function redrawGroupFolds() {
   announceFusedSections();
   featureState('groups')?.rerender?.();
+  // The fused view is its own island and re-renders on its own event.
+  document.getElementById('fleetview-fused-groups-root')?.dispatchEvent(new CustomEvent('tclaude:group-disclosure'));
 }
 
 function setAllGroupsOpen(open) {
