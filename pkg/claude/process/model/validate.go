@@ -371,10 +371,8 @@ func validateNodes(tmpl *Template, diagnostics *templateDiagnosticCollector, dep
 			}
 			if node.Wait != nil {
 				for _, produced := range []Diagnostics{
-					checkInertParamRef(path+".wait.duration", node.Wait.Duration),
-					validateDuration(path+".wait.duration", node.Wait.Duration),
-					checkInertParamRef(path+".wait.until", node.Wait.Until),
-					validateUntil(path+".wait.until", node.Wait.Until),
+					validateWaitDuration(path+".wait.duration", node.Wait.Duration),
+					validateWaitUntil(path+".wait.until", node.Wait.Until),
 					checkInertParamRef(path+".wait.signal", node.Wait.Signal),
 				} {
 					if !diagnostics.AddAll(produced) {
@@ -948,9 +946,29 @@ func validateUntil(path, value string) Diagnostics {
 	return nil
 }
 
+// validateWaitDuration checks a wait duration (ParseWaitDuration). One bound
+// later, from a param or an output, is checked when the step starts.
+func validateWaitDuration(path, value string) Diagnostics {
+	if isBlank(value) || hasWaitRefs(value) {
+		return nil
+	}
+	if _, err := ParseWaitDuration(value); err != nil {
+		return Diagnostics{diagError("invalid_duration", path, err.Error())}
+	}
+	return nil
+}
+
+// validateWaitUntil checks a wait's until time, unless it is bound later.
+func validateWaitUntil(path, value string) Diagnostics {
+	if hasWaitRefs(value) {
+		return nil
+	}
+	return validateUntil(path, value)
+}
+
 // checkInertParamRef warns when a param reference appears in a field that is not
 // interpolated. Only performer prompt/ask/run/args are templatable; references
-// elsewhere (profile, timeout, backoff, wait fields) are used literally.
+// elsewhere (profile, timeout, backoff, wait.signal) are used literally.
 func checkInertParamRef(path, value string) Diagnostics {
 	if paramRefPattern.MatchString(value) {
 		return Diagnostics{diagWarning("inert_param_ref", path,
@@ -1328,6 +1346,12 @@ func validateParamRefs(tmpl *Template, diagnostics *templateDiagnosticCollector)
 		}
 		for i, decider := range node.Deciders {
 			if !collectPerformerParamRefs(diagnostics, declared, fmt.Sprintf("%s.deciders[%d]", path, i), decider) {
+				return
+			}
+		}
+		if node.Wait != nil {
+			if !collectExecutableParamRefs(diagnostics, declared, path+".wait.duration", node.Wait.Duration) ||
+				!collectExecutableParamRefs(diagnostics, declared, path+".wait.until", node.Wait.Until) {
 				return
 			}
 		}

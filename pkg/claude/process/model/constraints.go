@@ -184,6 +184,20 @@ func validateCaptureRefs(tmpl *Template, diagnostics *templateDiagnosticCollecto
 				}
 			}
 		}
+		// A wait's duration and until may read an output too. One left as
+		// written cannot be read as a time, so the wait fails when it starts.
+		if wait := tmpl.Nodes[nodeID].Wait; wait != nil {
+			for _, field := range []struct{ name, value string }{{"duration", wait.Duration}, {"until", wait.Until}} {
+				for _, ref := range CaptureReferences(field.value) {
+					if _, ok := owners[ref]; !ok {
+						if !diagnostics.Add(diagWarning("unknown_capture_ref", "nodes."+nodeID+".wait."+field.name,
+							fmt.Sprintf("{{ outputs.%s }} names no step output, so this wait fails when it starts", ref))) {
+							return false
+						}
+					}
+				}
+			}
+		}
 	}
 	return true
 }

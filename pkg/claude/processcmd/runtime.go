@@ -115,6 +115,7 @@ type processRunCommandJSON struct {
 	State     string                   `json:"state"`
 	Performer *processRunPerformerJSON `json:"performer,omitempty"`
 	Parkable  bool                     `json:"parkable,omitempty"`
+	Wait      *processRunWaitJSON      `json:"wait,omitempty"`
 }
 
 // processRunPerformerJSON mirrors the daemon's per-attempt performer view.
@@ -996,8 +997,11 @@ func printProcessRun(out io.Writer, run *processRunJSON) {
 		fmt.Fprintln(tw, "NODE\tSTATE\tPROFILE\tPROGRAM\tCOMMAND")
 		for _, command := range run.Commands {
 			program := command.Program
-			if command.Kind == engine.CommandAgent {
+			switch command.Kind {
+			case engine.CommandAgent:
 				program = command.performerLabel()
+			case engine.CommandWait:
+				program = command.Wait.label()
 			}
 			if command.Kind == engine.CommandHuman {
 				program = "a person (operator)"
@@ -1009,6 +1013,9 @@ func printProcessRun(out io.Writer, run *processRunJSON) {
 		for _, command := range run.Commands {
 			if command.Performer != nil && command.Performer.WaitReason != "" {
 				fmt.Fprintf(out, "%s waits: %s\n", command.NodeID, displayProcessEventField(command.Performer.WaitReason))
+			}
+			if command.Kind == engine.CommandWait {
+				fmt.Fprintf(out, "%s waits: %s\n", command.NodeID, command.Wait.status(time.Now()))
 			}
 		}
 	}
@@ -1099,6 +1106,11 @@ func printProcessRunNextSteps(out io.Writer, run *processRunJSON) {
 	}
 	// The attempt is part of the blocked identity, so the hint carries the exact
 	// one rather than an invocation the daemon would refuse as stale.
+	for _, command := range run.Commands {
+		if command.Kind == engine.CommandWait {
+			fmt.Fprintf(out, "Next (to stop waiting now): tclaude process skip-wait %s --node %s\n", run.ID, command.NodeID)
+		}
+	}
 	for _, blocked := range run.Blocked {
 		fmt.Fprintf(out, "Next: tclaude process resolve-blocked %s --node %s --attempt %d --action <%s>\n",
 			run.ID, blocked.NodeID, blocked.Attempt, strings.Join(processResolutionActions, "|"))

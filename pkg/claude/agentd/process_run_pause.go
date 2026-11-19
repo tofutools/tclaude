@@ -129,6 +129,8 @@ func releaseProcessRunPause(runID, actor string) (bool, error) {
 	}
 	if changed {
 		kickProcessAgentDispatch(runID)
+		// A wait whose deadline passed while the run was paused ends now.
+		kickProcessWaits()
 	}
 	return changed, nil
 }

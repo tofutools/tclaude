@@ -892,7 +892,8 @@ func ListRunnableProcessRunIDs(afterID string, limit int) ([]string, string, err
 	// An outstanding program command always excludes the run: it needs explicit
 	// reconciliation, not a resume. An outstanding AGENT command does not: it is
 	// accounted for by its dispatch record and simply occupies a slot while its
-	// performer works, so a sibling ready branch keeps the run runnable.
+	// performer works, so a sibling ready branch keeps the run runnable. A WAIT
+	// command is the same, accounted for by its timer record.
 	//
 	// An orphaned run (its bound group or agent is gone) is excluded too: it is
 	// parked for a human to re-scope, never resumed by the fallback. A paused
@@ -924,7 +925,7 @@ func ListRunnableProcessRunIDs(afterID string, limit int) ([]string, string, err
 			AND paused_at IS NULL
 			AND CASE WHEN json_type(checkpoint_json, '$.commands') = 'array'
 					THEN (SELECT COUNT(*) FROM json_each(checkpoint_json, '$.commands')
-						WHERE json_extract(value, '$.kind') IS NOT 'agent')
+						WHERE COALESCE(json_extract(value, '$.kind'), '') NOT IN ('agent', 'wait'))
 					ELSE 0 END = 0
 			AND CASE WHEN json_type(checkpoint_json, '$.nodes') = 'object'
 					THEN (SELECT COUNT(*) FROM json_each(checkpoint_json, '$.nodes')

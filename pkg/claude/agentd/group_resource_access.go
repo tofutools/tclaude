@@ -279,7 +279,7 @@ func handleAgentGroupResources(w http.ResponseWriter, r *http.Request) {
 //     caller is a member of every group it is pinned to (a save changes it
 //     for all of them). The lock still refuses it.
 // Run mutations (pause, resume, decide, assign, reissue, resolve-blocked,
-// record-outcome, rescope) stay on process.runs.manage: they steer other
+// skip-wait, record-outcome, rescope) stay on process.runs.manage: they steer other
 // agents' work, beside program-profile authorization. Creating, deleting,
 // listing in the library and pinning stay on process.templates.manage.
 

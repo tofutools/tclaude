@@ -192,6 +192,8 @@ func recordStep(checkpoint *Checkpoint, node definitionNode, result string, obse
 		captures = node.agent.Captures
 	case node.human != nil:
 		captures = node.human.Captures
+	case node.wait != nil:
+		// A wait has no exit code and reports no outputs.
 	default:
 		exitCode := observation.ExitCode
 		record.ExitCode = &exitCode

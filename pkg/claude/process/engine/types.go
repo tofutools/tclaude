@@ -74,7 +74,27 @@ const (
 	// settle it through the same observation transition (or the run drops it
 	// once it is doomed). It takes none of the run's concurrency slots.
 	CommandHuman CommandKind = "human"
+	// CommandWait is a wait step's timer. Like an agent command it is not run
+	// by a worker: the daemon fixes its deadline when the step starts, keeps it
+	// in its timer record, and settles it through the observation transition
+	// once the deadline passes or someone skips the wait.
+	CommandWait CommandKind = "wait"
 )
+
+// External reports whether a command of this kind is accounted for outside
+// the run's owner (an agent's dispatch record, a person's open step, a wait's
+// timer record) rather
+// than by a worker the owner is running. Such a command never needs
+// reconciling just because no worker holds it.
+func (k CommandKind) External() bool { return k != CommandProgram }
+
+// WaitCommand is a wait step's bound deadline: Duration after the step starts,
+// Until, or the earlier of the two (model.WaitDeadline). Params are already
+// bound; {{ outputs.name }} references are bound when the step starts.
+type WaitCommand struct {
+	Duration string `json:"duration,omitempty"`
+	Until    string `json:"until,omitempty"`
+}
 
 // Checkpoint is the complete v3 reducer state. The pinned template and run
 // parameters live beside it in the run record, rather than being copied into
@@ -265,6 +285,7 @@ type Command struct {
 	Program ProgramCommand `json:"program,omitzero"`
 	Agent   *AgentCommand  `json:"agent,omitempty"`
 	Human   *HumanCommand  `json:"human,omitempty"`
+	Wait    *WaitCommand   `json:"wait,omitempty"`
 	// Round and Rounds place a command of a loop body: the round of its
 	// innermost loop and that loop's limit. Zero outside loops.
 	Round  int `json:"round,omitempty"`

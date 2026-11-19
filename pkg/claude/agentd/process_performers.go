@@ -1161,6 +1161,8 @@ func withdrawDrainingAgentCommands(runID string, run *executor.Run) {
 		}
 		closeProcessDispatchAfterWithdrawal(runID, command)
 	}
+	// A wait has nothing to come back from: it is withdrawn with the agents.
+	withdrawProcessWaits(runID, run)
 }
 
 // applyRecordedProcessReport applies a report that is durable on its dispatch

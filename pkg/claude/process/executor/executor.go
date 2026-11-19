@@ -348,6 +348,21 @@ func (r *Run) HumanCommands() []engine.Command {
 	return commands
 }
 
+// WaitCommands reports every outstanding wait step's timer. A wait takes no
+// concurrency slot: nothing works while it waits.
+func (r *Run) WaitCommands() []engine.Command {
+	if r == nil {
+		return nil
+	}
+	var commands []engine.Command
+	for i := range r.checkpoint.Commands {
+		if r.checkpoint.Commands[i].Kind == engine.CommandWait {
+			commands = append(commands, cloneCommand(r.checkpoint.Commands[i]))
+		}
+	}
+	return commands
+}
+
 // GateOfTally reports the agreement gate whose tally is tallyID, with its
 // votes as the run has them now.
 func (r *Run) GateOfTally(tallyID string) (engine.Gate, bool) {
@@ -1166,6 +1181,8 @@ func advanceEvidence(command *engine.Command, bounds *ProgramBounds) []db.Proces
 		kind = "agent_prepared"
 	case engine.CommandHuman:
 		kind = "human_prepared"
+	case engine.CommandWait:
+		kind = "wait_prepared"
 	}
 	return []db.ProcessRunEvent{event(kind, command, EngineActor,
 		preparedEvidence{Command: cloneCommand(*command), Bounds: bounds})}

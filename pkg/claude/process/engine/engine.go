@@ -1399,6 +1399,9 @@ func taskCommand(checkpoint Checkpoint, definition *Definition, node definitionN
 		command.Agent = &agent
 	case node.human != nil:
 		command.Human = cloneHumanCommand(node.human)
+	case node.wait != nil:
+		wait := *node.wait
+		command.Wait = &wait
 	default:
 		command.Program = cloneProgramCommand(node.program)
 	}
@@ -1420,6 +1423,8 @@ func (node definitionNode) awaitsHuman() bool {
 // commandKind is the outbox kind a prepared task node plans.
 func (node definitionNode) commandKind() CommandKind {
 	switch {
+	case node.wait != nil:
+		return CommandWait
 	case node.agent != nil:
 		return CommandAgent
 	case node.human != nil:
@@ -1543,6 +1548,10 @@ func cloneCommand(command Command) Command {
 		clone.Agent = &agent
 	}
 	clone.Human = cloneHumanCommand(command.Human)
+	if command.Wait != nil {
+		wait := *command.Wait
+		clone.Wait = &wait
+	}
 	clone.Verdicts = slices.Clone(command.Verdicts)
 	return clone
 }
