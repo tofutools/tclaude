@@ -15,7 +15,7 @@ import { bindSlopCredits } from './slop-credits.js';
 import { bindSlopSpectacle } from './slop-spectacle.js';
 import { bindVegasMusic } from './vegas.js';
 import {
-  bindTabs, bindTabHotkeys, bindDetailsPersistence, bindGroupTitleToggle,
+  bindTabs, bindTabHotkeys,
   confirmDiscard, confirmModal, isCyclingTabs, refresh, toast,
 } from './refresh.js';
 import { openWorktreeCleanup } from './dashboard-operations.js';
@@ -382,7 +382,7 @@ async function settleInitialLayout() {
   // the poll (renderDock only reconciles #dock-body).
   if (!isPhone) bindDock();
   pageCleanups.push(
-    bindDetailsPersistence(), bindGroupTitleToggle(), bindToolbarActionsMenu(), bindRowActions(),
+    bindToolbarActionsMenu(), bindRowActions(),
   );
   if (!isPhone) pageCleanups.push(bindDnd(), bindGroupReorder(), bindGroupsDragAutoScroll());
   // A drawing board or page row dragged onto another group's box moves it there

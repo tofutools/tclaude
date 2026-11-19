@@ -18,7 +18,7 @@ export function actionDescriptor(source, event = null) {
   // In the fused Groups view, a control names its group's node, and its
   // groups read group@node: the handler maps the names back and sends the
   // requests to that node (fleet-merged-island.js, node-api.js).
-  const fleet = source.closest?.('details[data-fleet-node]');
+  const fleet = source.closest?.('.group-box[data-fleet-node]');
   const fleetNode = fleet?.getAttribute('data-fleet-node') || '';
   const fleetName = fleet?.getAttribute('data-fleet-node-name') || '';
   return Object.freeze({

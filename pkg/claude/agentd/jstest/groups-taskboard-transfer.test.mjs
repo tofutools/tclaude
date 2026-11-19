@@ -68,12 +68,12 @@ async function mountTwo(t, { lanes = false, otherNode = '', firstExtra = {} } = 
     status: harness.signals.signal('ready'), attach: () => () => {}, refresh: async () => {} };
   const card = (name, node = '') => {
     const group = { name, members: members() };
-    return harness.html`<details open data-group-key=${name} data-dnd-target-group=${node ? undefined : name} data-fleet-node=${node || undefined} data-fleet-node-name=${node ? 'other' : undefined}>
-      <summary>${name}</summary>
+    return harness.html`<div class="group-box open" data-group-key=${name} data-dnd-target-group=${node ? undefined : name} data-fleet-node=${node || undefined} data-fleet-node-name=${node ? 'other' : undefined}>
+      <div class="group-summary">${name}</div>
       <${TaskboardSection} group=${group} snapshot=${{ groups: [group] }} source=${source} api=${api} />
-    </details>`;
+    </div>`;
   };
-  const mounted = await harness.mount(harness.html`<div>${card('tbt-a')}${card('tbt-b', otherNode)}<details class="group-virtual" data-group-key="virtual:ungrouped" data-fleet-node=${otherNode || undefined}><summary>Ungrouped</summary></details></div>`);
+  const mounted = await harness.mount(harness.html`<div>${card('tbt-a')}${card('tbt-b', otherNode)}<div class="group-box group-virtual" data-group-key="virtual:ungrouped" data-fleet-node=${otherNode || undefined}><div class="group-summary">Ungrouped</div></div></div>`);
   const c = mounted.container;
   const dt = () => ({ setData() {}, setDragImage() {}, effectAllowed: '', dropEffect: '' });
   const handle = (id) => c.querySelector(`tr[data-task-id="${id}"] .tb-handle`) || c.querySelector(`.tb-card[data-task-id="${id}"]`);
@@ -84,7 +84,7 @@ async function mountTwo(t, { lanes = false, otherNode = '', firstExtra = {} } = 
     await harness.act(async () => { await new Promise((r) => setTimeout(r, 0)); });
   };
   const section = (name) => c.querySelector(`[data-fused-taskboard="${name}"]`);
-  const summary = (name) => c.querySelector(`details[data-group-key="${name}"] > summary`);
+  const summary = (name) => c.querySelector(`.group-box[data-group-key="${name}"] > .group-summary`);
   return { harness, c, calls, remote, confirms, toasts, dt, start, over, drop, section, summary, setAnswer: (v) => { answer = v; },
     failAway: (n) => { awayFails = n; }, refuseCheck: () => { checkRefuses = true; },
     awayAnswers: (status) => { awayStatus = status; }, transfer };
@@ -184,7 +184,7 @@ test('its own board and a virtual group are not targets', async (t) => {
   const data = dt();
   await start('tk_00000001', data);
   assert.equal(over(summary('tbt-a'), data).defaultPrevented, false, 'its own group');
-  const virtual = c.querySelector('details[data-group-key="virtual:ungrouped"] > summary');
+  const virtual = c.querySelector('.group-box[data-group-key="virtual:ungrouped"] > .group-summary');
   assert.equal(over(virtual, data).defaultPrevented, false, 'a virtual group');
   await drop(virtual, data);
   assert.deepEqual(calls, []);
@@ -419,7 +419,7 @@ test('the bin is offered only for a task the viewer may drop, as ⋯ Drop is', a
 
 test('Ctrl/Cmd over another group shows the groups view\'s clone look, and back to a move when released', async (t) => {
   const { c, dt, start, over, summary, section } = await mountTwo(t);
-  const box = c.querySelector('details[data-group-key="tbt-b"]');
+  const box = c.querySelector('.group-box[data-group-key="tbt-b"]');
   const data = dt();
   await start('tk_00000001', data);
   over(summary('tbt-b'), data);
@@ -437,7 +437,7 @@ test('Ctrl/Cmd over another group shows the groups view\'s clone look, and back 
   over(section('tbt-b').querySelector('.gf-section-head'), data);
   assert.equal(box.classList.contains('dnd-effect-clone'), false, 'released mid-drag: a move again');
   assert.equal(section('tbt-b').classList.contains('tb-transfer-clone'), false);
-  over(c.querySelector('details[data-group-key="tbt-a"] > summary'), data);
+  over(c.querySelector('.group-box[data-group-key="tbt-a"] > .group-summary'), data);
   assert.equal(box.classList.contains('dnd-drop-over'), false, 'off the target, its look goes');
 });
 

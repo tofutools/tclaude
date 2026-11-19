@@ -60,7 +60,7 @@ test('a peer without processes shows the member tables, and no run filter', asyn
   await harness.act(() => { state.viewOpen.value = true; });
   assert.equal(root.querySelector('.groups-focus-switch'), null);
   assert.equal(root.querySelector('[data-groups-fused]'), null);
-  assert.ok(root.querySelector('details[data-group-key="webshop"]'));
+  assert.ok(root.querySelector('.group-box[data-group-key="webshop"]'));
   assert.equal(root.querySelector('[data-process-filter]'), null);
 });
 
@@ -68,7 +68,7 @@ test('the fused view is the only view: no lens switch, and the tree shows while 
   const { root } = await setup(t);
   assert.equal(root.querySelector('.groups-focus-switch'), null, 'no view switch');
   assert.equal(root.querySelector('[data-groups-focus]'), null);
-  assert.ok(root.querySelector('[data-groups-fused] details[data-group-key="webshop"]'));
+  assert.ok(root.querySelector('[data-groups-fused] .group-box[data-group-key="webshop"]'));
 });
 
 test('the retired lens prefs are cleared on read', async (t) => {

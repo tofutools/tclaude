@@ -69,7 +69,7 @@ async function mountFocus(t, props = {}) {
     <//>
   <//>`);
   const group = (name) => mounted.container.querySelector(`[data-process-group="${name}"]`);
-  const details = (name) => mounted.container.querySelector(`details[data-group-key="${name}"]`);
+  const details = (name) => mounted.container.querySelector(`.group-box[data-group-key="${name}"]`);
   return { harness, mod, source, mounted, root: mounted.container, group, details };
 }
 
@@ -332,17 +332,17 @@ test('the Processes perspective is the Agents tree: nesting, summary counts, a s
     groups, sourceOptions: { context }, onFocusRun: (value) => focused.push(value),
   });
 
-  assert.ok(details('platform').querySelector('.group-subgroups details[data-group-key="frontend-squad"]'), 'subgroups nest as in Agents');
+  assert.ok(details('platform').querySelector('.group-subgroups .group-box[data-group-key="frontend-squad"]'), 'subgroups nest as in Agents');
   assert.equal(root.querySelector('table'), null, 'no member tables');
   assert.equal(root.querySelector('[data-act="spawn-agent"]'), null, 'no agent actions');
   const fe = details('frontend-squad');
-  const graphs = [...fe.querySelector(':scope > summary').querySelectorAll('.gpi-graph')].map((graph) => graph.getAttribute('aria-label'));
+  const graphs = [...fe.querySelector(':scope > .group-summary').querySelectorAll('.gpi-graph')].map((graph) => graph.getAttribute('aria-label'));
   assert.deepEqual(graphs, ['2 needs you', '2 running', '1 planned'], 'the summary row counts runs');
-  assert.equal(details('infra-crew').querySelector(':scope > summary .gpi-graphs'), null, 'a quiet group shows no graphs');
+  assert.equal(details('infra-crew').querySelector(':scope > .group-summary .gpi-graphs'), null, 'a quiet group shows no graphs');
 
   const platform = details('platform');
-  assert.equal(platform.querySelector(':scope > summary .gpi-graphs'), null, 'no roll-up into the parent');
-  assert.equal(platform.querySelector(':scope > summary .gp-subtree-total').textContent, '↳ in subgroups: 2 running · 2 needs you · 1 planned');
+  assert.equal(platform.querySelector(':scope > .group-summary .gpi-graphs'), null, 'no roll-up into the parent');
+  assert.equal(platform.querySelector(':scope > .group-summary .gp-subtree-total').textContent, '↳ in subgroups: 2 running · 2 needs you · 1 planned');
   assert.ok(platform.querySelector(':scope > .subtable > [data-fused-section="subgroups"] + .gp-group'), 'the parent\'s own runs follow its subgroups');
 
   const memberRuns = group('frontend-squad').querySelector('[data-process-member-runs]');
@@ -352,7 +352,7 @@ test('the Processes perspective is the Agents tree: nesting, summary counts, a s
   assert.deepEqual(focused.pop(), { group: 'frontend-squad', runId: 'run_reindex' });
 
   const ungrouped = details(' ungrouped-virtual');
-  assert.equal(ungrouped.querySelector(':scope > summary .gpi-graph').getAttribute('aria-label'), '1 running');
+  assert.equal(ungrouped.querySelector(':scope > .group-summary .gpi-graph').getAttribute('aria-label'), '1 running');
   const agentRuns = group(' ungrouped-virtual').querySelector('[data-process-member-runs]');
   assert.equal(agentRuns.querySelector('.gp-member-runs-label').textContent, 'Agent runs');
   await harness.act(() => harness.fireEvent(agentRuns.querySelector('button[data-process-run]'), 'click'));
@@ -369,7 +369,7 @@ test('an Ungrouped agent run opens in the single-run focus', async (t) => {
     groups, sourceOptions: { context }, focusedRun: { group: ' ungrouped-virtual', runId: 'run_docs' }, onFocusRun: (value) => closed.push(value),
   });
   assert.ok(root.querySelector('[data-run-focus="run_docs"]'), 'the agent run opens');
-  assert.equal(root.querySelector('details[data-group-key]'), null, 'the run focus replaces the tree');
+  assert.equal(root.querySelector('.group-box[data-group-key]'), null, 'the run focus replaces the tree');
   assert.deepEqual(closed, [], 'the run is not treated as stranded');
 });
 
@@ -528,7 +528,7 @@ test('Both shows each group\'s members and runs as sections, each with its contr
   assert.equal(section(fe, 'agents').querySelector('[data-act="create-subgroup"]'), null, 'create subgroup left the Agents section');
   // Every section's add button rides its line folded and heads its content open.
   const subgroups = section(fe, 'subgroups');
-  const subgroupsHome = subgroups.classList.contains('open') ? subgroups.querySelector(':scope > .gf-title-row') : head(fe, 'subgroups');
+  const subgroupsHome = subgroups.classList.contains('open') ? subgroups.querySelector(':scope > .gf-section-body > .gf-title-row') : head(fe, 'subgroups');
   assert.ok(subgroupsHome.querySelector('[data-act="create-subgroup"]'), 'create subgroup sits where the section shows it');
   assert.equal(subgroups.querySelectorAll('[data-act="create-subgroup"]').length, 1, 'one create subgroup button at a time');
   const titleRow = section(fe, 'processes').querySelector('[data-process-group] > .gf-title-row');

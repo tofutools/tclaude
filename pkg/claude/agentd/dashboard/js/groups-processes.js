@@ -39,6 +39,7 @@ import { MiniGraphEditor } from './groups-mini-editor.js';
 import { groupRoster } from './process-quickstart.js';
 import { takeProcessStart } from './process-start-handoff.js';
 import { taskLink } from './cross-links.js';
+import { Disclosure } from './disclosure.js';
 import { fusedSectionOpen, fusedSectionsRevision, setFusedSectionOpen } from './groups-fused-sections.js';
 import { FusedLinks } from './groups-fused-links.js';
 import { useProcessScope } from './groups-process-scope.js';
@@ -767,18 +768,14 @@ export function FusedSection({ group, section, label, count = null, summary = nu
     setTimeout(() => { bump((n) => n + 1); onToggle?.(el); }, 0);
   };
   const title = force ? 'Open while a form inside is in use' : open ? `Fold ${label}` : `Show ${label}`;
-  return html`<div class=${`gf-section gf-section-${section}${open ? ' open' : ''}${force ? ' forced' : ''}`} data-fused-section=${section} ...${attrs}>
-    <div class="gf-section-head">
-      <button data-ui-exempt type="button" class="gf-section-toggle" aria-expanded=${open ? 'true' : 'false'} disabled=${force} title=${title} onClick=${toggle}>
-        <span class="gf-tri" aria-hidden="true">${open ? '▾' : '▸'}</span>
-        <span class="gf-label">${label}</span>
-        ${summary || (count !== null && html`<span class=${`gf-count${count ? '' : ' zero'}`}>${count}</span>`)}
-      </button>
-      ${(actions || (!open && closedActions)) && html`<span class="group-header-actions gf-section-actions" onClickCapture=${unfold}>${!open && closedActions}${actions}</span>`}
-      <span class="gf-section-fill" aria-hidden="true" title=${title} onClick=${toggle}></span>
-    </div>
-    ${open && children}
-  </div>`;
+  return html`<${Disclosure} open=${open} onToggle=${toggle} disabled=${force} title=${title}
+    class=${`gf-section gf-section-${section}${force ? ' forced' : ''}`} attrs=${{ 'data-fused-section': section, ...attrs }}
+    headClass="gf-section-head" toggleClass="gf-section-toggle" bodyClass="gf-section-body" fill="gf-section-fill"
+    toggle=${html`<span class="gf-tri" aria-hidden="true">${open ? '▾' : '▸'}</span>
+      <span class="gf-label">${label}</span>
+      ${summary || (count !== null && html`<span class=${`gf-count${count ? '' : ' zero'}`}>${count}</span>`)}`}
+    actions=${(actions || (!open && closedActions)) && html`<span class="group-header-actions gf-section-actions" onClickCapture=${unfold}>${!open && closedActions}${actions}</span>`}
+  >${children}<//>`;
 }
 
 const ProcessesPerspective = createContext(null);

@@ -74,9 +74,9 @@ async function mountGraphs(t) {
   const navigated = [];
   harness.document.addEventListener('tclaude:navigated', (event) => navigated.push(event.detail.location));
   const counter = { toggles: 0 };
-  const mounted = await harness.mount(harness.html`<details onClick=${() => { counter.toggles++; }}><summary>
+  const mounted = await harness.mount(harness.html`<div class="group-box" onClick=${() => { counter.toggles++; }}><div class="group-summary">
     <${mod.GroupProcessGraphs} group=${{ name: 'frontend-squad' }} snapshot=${ON} source=${fakeSource(harness)} />
-  </summary></details>`);
+  </div></div>`);
   const click = () => harness.act(() => harness.fireEvent(mounted.container.querySelector('[data-group-processes="planned"]'), 'click'));
   return { harness, state, navigated, counter, click };
 }

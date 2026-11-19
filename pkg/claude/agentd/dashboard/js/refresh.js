@@ -10,7 +10,6 @@ import { dashPrefs } from './prefs.js';
 import {
   fetchVisibleGroupListPages, syncServedOffset,
 } from './list-paging.js';
-import { recordGroupInteraction } from './last-group.js';
 import {
   renderDashDefaultProfile, renderDashSandboxProfile,
 } from './toolbar-profile-renderers.js';
@@ -39,7 +38,6 @@ import {
   shellConfirm as confirmModal,
   shellConfirmDiscard as confirmDiscard,
 } from './shell-state.js';
-import { disclosurePreference } from './group-tree-activity.js';
 import { checkAssetsVersion } from './assets-version.js';
 import { setTerminalAttachConfig } from './terminal-attach-config.js';
 import { setStayOnTerminalsAfterLastClose } from './terminal-close-nav.js';
@@ -610,154 +608,7 @@ export function showAccessTab(subtab) {
   if (subtab) activateAccessSubtab(subtab);
 }
 
-// Group <details> headers fold/unfold ONLY when the group title is
-// clicked — not when the click lands on a header chip (📝/📁/👥/🧠), a
-// badge, a link chip, or the empty space to the right of them. The
-// <summary> is one wide hit target (it doubles as a drag/drop zone), so
-// before this a stray click anywhere on the header toggled the group;
-// scoping the toggle to the .group-name label (the disclosure triangle
-// now rides on it, see dashboard.css) leaves the rest of the header inert
-// for folding. Other <details> in the dashboard (the permissions
-// disclosure, the advanced-config panel) carry no data-group-key and keep
-// native whole-summary toggling.
-//
-// Capturing listener so preventDefault lands before the browser's default
-// toggle. Keyboard activation (Enter/Space on a focused summary) arrives
-// as a synthetic click with detail === 0 — normally left alone so the header
-// stays keyboard-foldable.
-//
-// The exception: an inline-edit field (📝 descr / 📁 dir / 👥 cap / 🧠 profile)
-// is swapped in *inside* the <summary>, so while you type in it a Space press
-// fires that same detail===0 summary activation and would fold/unfold the
-// group on every space — most visible in the free-text description. So when an
-// edit field within this summary holds focus, suppress the keyboard toggle (the
-// space still lands in the input; only the fold is cancelled). Verified in
-// Chromium: the Space activation is a synthetic click on the <summary>, and a
-// capture-phase preventDefault cancels the fold without eating the character.
-const groupDisclosureIntents = new Set();
-
-// noteGroupDisclosureIntent marks the next native toggle for one group as a
-// real command rather than reconciliation noise. Title clicks call it here;
-// the command palette calls the exported boundary before assigning .open.
-export function noteGroupDisclosureIntent(key) {
-  if (key) groupDisclosureIntents.add(key);
-}
-
-// Both Groups hosts fold the same way and persist the same per-group key:
-// the fused view's groups are keyed group@node, so each node's groups there
-// remember their own disclosure, apart from the node's own Groups view.
-const GROUP_DISCLOSURE_ROOTS = ['#groups-list', '#fleetview-fused-groups-root'];
-const FUSED_GROUPS_ROOT = 'fleetview-fused-groups-root';
-function groupDisclosureRoots() {
-  return GROUP_DISCLOSURE_ROOTS.map(sel => $(sel)).filter(Boolean);
-}
-function listenOnRoots(roots, type, handler) {
-  roots.forEach(root => root.addEventListener(type, handler, true));
-  return () => roots.forEach(root => root.removeEventListener(type, handler, true));
-}
-
-let groupTitleToggleCleanup = null;
-function bindGroupTitleToggle() {
-  if (groupTitleToggleCleanup) return groupTitleToggleCleanup;
-  const roots = groupDisclosureRoots();
-  if (!roots.length) return () => {};
-  // The fused view's group@node keys are not spawn targets on this node.
-  const remember = (e, key) => { if (e.currentTarget?.id !== FUSED_GROUPS_ROOT) recordGroupInteraction(key); };
-  const onClick = e => {
-    const summary = e.target.closest('summary');
-    if (!summary) return;
-    const details = summary.parentElement;
-    if (!details || !details.hasAttribute('data-group-key')) return;
-    // A validated attachment renders as a real anchor. Let both pointer and
-    // keyboard navigation survive this capture-phase guard without being
-    // misclassified as a disclosure command. Its own click handler stops
-    // propagation, and interactive content inside <summary> does not toggle the
-    // disclosure. Unsafe/hostless values never render an anchor here.
-    if (e.target.closest('.group-attachment a[href]')) return;
-    if (e.detail === 0) {
-      // Keyboard activation. Keep native folding when the summary itself is
-      // focused, but block it while typing in an inline-edit field it hosts.
-      const ae = document.activeElement;
-      if (ae && summary.contains(ae) && ae.matches('input, textarea, select')) {
-        e.preventDefault();
-        return;
-      }
-      // A chip activation synthesized by row-actions' Enter/Space delegate
-      // also arrives with detail === 0. It's a chip action, not a
-      // fold/unfold — don't retarget the palette's default spawn group off
-      // it (a mouse click on the same chip doesn't either). The dispatcher's
-      // own preventDefault stops the summary toggle.
-      if (e.target.closest('[data-act]')) return;
-      // Genuine keyboard fold/unfold — remember it as the last group touched
-      // (drives the command palette's default spawn target).
-      const key = details.getAttribute('data-group-key');
-      noteGroupDisclosureIntent(key);
-      remember(e, key);
-      return;
-    }
-    if (e.target.closest('.group-name')) {
-      // Genuine mouse fold/unfold of the group title — remember it.
-      const key = details.getAttribute('data-group-key');
-      noteGroupDisclosureIntent(key);
-      remember(e, key);
-      return; // the title — allow toggle
-    }
-    e.preventDefault();
-  };
-  const unlisten = listenOnRoots(roots, 'click', onClick);
-  const cleanup = () => {
-    unlisten();
-    if (groupTitleToggleCleanup === cleanup) groupTitleToggleCleanup = null;
-  };
-  groupTitleToggleCleanup = cleanup;
-  return cleanup;
-}
-
-// <details> only fires `toggle` on the element itself (not bubbling), so use a
-// capturing listener on the stable Groups host rather than re-binding keyed
-// details elements after every render.
-let detailsPersistenceCleanup = null;
-function bindDetailsPersistence() {
-  if (detailsPersistenceCleanup) return detailsPersistenceCleanup;
-  const roots = groupDisclosureRoots();
-  if (!roots.length) return () => {};
-  const onToggle = e => {
-    const d = e.target;
-    if (!(d instanceof HTMLDetailsElement)) return;
-    const key = d.getAttribute('data-group-key');
-    if (!key) return;
-    const previous = dashPrefs.getItem('tclaude.dash.group.' + key);
-    const intentional = groupDisclosureIntents.delete(key);
-    const next = disclosurePreference(d.open, intentional, previous);
-    if (next === null) {
-      dashPrefs.removeItem('tclaude.dash.group.' + key);
-    } else {
-      dashPrefs.setItem('tclaude.dash.group.' + key, next);
-    }
-    // Folding changes which visible group header owns descendant activity.
-    // Recompute immediately instead of leaving the bot counts stale until the
-    // next two-second snapshot poll.
-    // Re-created <details> nodes can emit a no-op toggle during reconciliation;
-    // avoid turning that into a second render. A genuine disclosure change
-    // necessarily changes the persisted open preference.
-    const changed = next === null ? previous !== null : previous !== next;
-    if (!changed) return;
-    // The fused island is not the Groups feature; it re-renders on this event.
-    const fused = e.currentTarget?.id === FUSED_GROUPS_ROOT;
-    if (fused) e.currentTarget.dispatchEvent(new CustomEvent('tclaude:group-disclosure'));
-    else featureState('groups')?.rerender();
-  };
-  const unlisten = listenOnRoots(roots, 'toggle', onToggle);
-  const cleanup = () => {
-    unlisten();
-    if (detailsPersistenceCleanup === cleanup) detailsPersistenceCleanup = null;
-  };
-  detailsPersistenceCleanup = cleanup;
-  return cleanup;
-}
-
-
 export {
-  bindTabs, bindTabHotkeys, bindDetailsPersistence, bindGroupTitleToggle,
+  bindTabs, bindTabHotkeys,
   toast, confirmModal, confirmDiscard,
 };

@@ -465,6 +465,24 @@ control, with `data-ui-exempt`. Older markup is held by a per-file baseline;
 after moving an area onto the standard classes, lower it with
 `UPDATE_UI_CONTROLS_BASELINE=1 node --test jstest/ui-controls.test.mjs`.
 
+### Foldable sections
+
+Keep controls out of `<summary>`. Interactive content inside a `<summary>` is
+invalid: Chrome's Issues panel flags every button, link, input or focusable
+chip in one, and a screen reader announces the whole header as a single
+button. A closed `<details>` also hides everything but its `<summary>`, so the
+controls cannot sit beside it either. A bare `<details>` whose `<summary>` is
+only text is fine.
+
+When a foldable section's header carries controls (the group boxes, the
+Agents / Resources / Subgroups lines, Triggers), use `Disclosure` from
+`dashboard/js/disclosure.js`. It draws a header row with a real fold button
+(`aria-expanded`, `aria-controls`) around the title, the controls beside that
+button, and the body. The caller owns the open state and persists it in
+`onToggle`. `foldOnHead` folds on a click in the header's empty space,
+`keepBody` keeps a folded body in the document (hidden), and `headAttrs`
+carries a drag handle's `draggable` and data attributes.
+
 ### Table columns
 
 For a new dashboard table, the default is bounded auto-width: every column

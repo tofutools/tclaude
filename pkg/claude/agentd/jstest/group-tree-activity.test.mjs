@@ -1,25 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  disclosurePreference,
   groupActivityAtDisclosure,
   groupActivityPlacement,
   mergeActivityMembers,
 } from '../dashboard/js/group-tree-activity.js';
 
 const member = (conv_id) => ({ conv_id });
-
-test('disclosure preference distinguishes explicit folds from reconciliation noise', () => {
-  assert.equal(disclosurePreference(true, true), '1');
-  assert.equal(disclosurePreference(false, true), '0',
-    'an operator fold persists across pending-group default-open rendering');
-  assert.equal(disclosurePreference(false, false), null,
-    'a recreated default-closed details does not become explicitly closed');
-  assert.equal(disclosurePreference(false, false, '0'), '0',
-    'a recreated folded pending group keeps its explicit-close sentinel');
-  assert.equal(disclosurePreference(true, false, '1'), '1',
-    'a recreated open group keeps its explicit-open sentinel');
-});
 
 test('folded group rolls every hidden descendant into its header', () => {
   const grandchild = groupActivityAtDisclosure([member('grandchild')], [], false);

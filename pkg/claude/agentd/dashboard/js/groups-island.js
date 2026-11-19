@@ -213,7 +213,7 @@ export function useGroupsHover(host, groups) {
   const [hoveredGroupKey, setHoveredGroupKey] = useState(null);
   useEffect(() => {
     if (!host) return undefined;
-    const summaryFor = (node) => node?.closest?.('details[data-group-key] > summary') || null;
+    const summaryFor = (node) => node?.closest?.('.group-box[data-group-key] > .group-summary') || null;
     const onMouseOver = (event) => {
       const summary = summaryFor(event.target);
       if (summary === summaryFor(event.relatedTarget)) return;

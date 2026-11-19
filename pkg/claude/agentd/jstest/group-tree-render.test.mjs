@@ -51,8 +51,8 @@ test('real group renderer moves activity to the leaf-most visible headers', asyn
     else mounted = await harness.mount(view, host);
   };
   const activity = (name) => {
-    const details = host.querySelector(`details[data-group-key="${name}"]`);
-    const summary = details.querySelector(':scope > summary');
+    const details = host.querySelector(`.group-box[data-group-key="${name}"]`);
+    const summary = details.querySelector(':scope > .group-summary');
     return summary.querySelector('.ga-regular .actbot')?.getAttribute('aria-label') || '';
   };
 
@@ -61,13 +61,13 @@ test('real group renderer moves activity to the leaf-most visible headers', asyn
 
   dashPrefs.setItem('tclaude.dash.group.root', '1');
   await paint(groups);
-  const section = (name) => host.querySelector(`details[data-group-key="${name}"] > .subtable > [data-fused-section="subgroups"]`);
+  const section = (name) => host.querySelector(`.group-box[data-group-key="${name}"] > .subtable > [data-fused-section="subgroups"]`);
   assert.equal(section('root').classList.contains('open'), false,
     'a group with members of its own folds its Subgroups section by default');
   assert.equal(section('root').querySelector('.gf-count').textContent, '1', 'the folded section counts its subgroups');
-  assert.equal(host.querySelector('details[data-group-key="child"]'), null, 'folded subgroups are not drawn');
+  assert.equal(host.querySelector('.group-box[data-group-key="child"]'), null, 'folded subgroups are not drawn');
   assert.equal(activity('root'), '3 working', 'an open root with folded subgroups still owns their activity');
-  assert.equal(host.querySelector('details[data-group-key="root"]').classList.contains('subgroups-folded'), true);
+  assert.equal(host.querySelector('.group-box[data-group-key="root"]').classList.contains('subgroups-folded'), true);
 
   section('root').querySelector('.gf-section-toggle').click();
   assert.equal(dashPrefs.getItem('tclaude.dash.groups.fused.subgroups.root'), '1', 'the fold choice is remembered per group');
@@ -90,7 +90,7 @@ test('real group renderer moves activity to the leaf-most visible headers', asyn
   assert.equal(dashPrefs.getItem('tclaude.dash.groups.fused.subgroups.grandchild'), '1', 'create subgroup opens the section');
   await paint(groups);
   const opened = section('grandchild');
-  assert.ok(opened.querySelector(':scope > .gf-title-row [data-act="create-subgroup"]'), 'open, create subgroup heads the section on its title row');
+  assert.ok(opened.querySelector(':scope > .gf-section-body > .gf-title-row [data-act="create-subgroup"]'), 'open, create subgroup heads the section on its title row');
   assert.equal(opened.querySelector(':scope > .gf-section-head [data-act="create-subgroup"]'), null, 'and leaves the open line');
 
   const container = [
@@ -99,7 +99,7 @@ test('real group renderer moves activity to the leaf-most visible headers', asyn
   ];
   dashPrefs.setItem('tclaude.dash.group.container', '1');
   await paint(container);
-  assert.ok(host.querySelector('details[data-group-key="inner"]'),
+  assert.ok(host.querySelector('.group-box[data-group-key="inner"]'),
     'a group with no members of its own shows its subgroups by default');
 
   const pending = [{
@@ -107,70 +107,103 @@ test('real group renderer moves activity to the leaf-most visible headers', asyn
     pending: [{ label: 'blocked-spawn', group: 'pending-root', online: true }],
   }];
   await paint(pending);
-  assert.equal(host.querySelector('details[data-group-key="pending-root"]').hasAttribute('open'), true,
+  assert.equal(host.querySelector('.group-box[data-group-key="pending-root"]').classList.contains('open'), true,
     'a pending group defaults open without a preference');
   dashPrefs.setItem('tclaude.dash.group.pending-root', '0');
   await paint(pending);
-  assert.equal(host.querySelector('details[data-group-key="pending-root"]').hasAttribute('open'), false,
+  assert.equal(host.querySelector('.group-box[data-group-key="pending-root"]').classList.contains('open'), false,
     'an explicit fold overrides pending-group default-open behavior');
   await mounted.unmount();
 });
 
-test('production disclosure binder persists an intentional fold as zero', async (t) => {
+// The group box's fold button is the one disclosure command: a click on it
+// writes the per-group pref ('0' for a fold of a default-open group), and a
+// click on a header control beside it (the attachment link) neither folds
+// nor retargets the command palette's default spawn group.
+test('a group box fold persists as zero, and a header control beside the toggle does not fold', async (t) => {
   const harness = await createPreactHarness(t);
   await harness.replaceDashboardModule('js/dashboard.js', dashboardStub);
-  const previousFetch = globalThis.fetch;
-  globalThis.fetch = async () => new Response('{}', {
-    status: 200, headers: { 'Content-Type': 'application/json' },
-  });
-  t.after(() => { globalThis.fetch = previousFetch; });
-
-  const [{ bindDetailsPersistence, bindGroupTitleToggle }, { dashPrefs }] = await Promise.all([
-    harness.importDashboardModule('js/refresh.js'),
+  const [{ GroupsNativeList }, { GroupsInteractionProvider }, { dashPrefs }] = await Promise.all([
+    harness.importDashboardModule('js/groups-list.js'),
+    harness.importDashboardModule('js/groups-interactions.js'),
     harness.importDashboardModule('js/prefs.js'),
   ]);
-  harness.document.body.innerHTML = `
-    <div id="groups-list">
-      <details data-group-key="pending-root" open>
-        <summary>
-          <strong class="group-name">pending-root</strong>
-          <span class="group-attachment">
-            <a href="https://example.com/project">📎</a>
-          </span>
-        </summary>
-      </details>
-    </div>`;
-  const details = harness.document.querySelector('details');
-  const title = details.querySelector('.group-name');
-  const attachment = details.querySelector('.group-attachment a');
-  const cleanups = [bindDetailsPersistence(), bindGroupTitleToggle()];
-  t.after(() => cleanups.reverse().forEach((cleanup) => cleanup()));
+  const groups = [{
+    name: 'pending-root', members: [], online: 0,
+    attachment_url: 'https://example.com/project',
+    pending: [{ label: 'blocked-spawn', group: 'pending-root', online: true }],
+  }];
+  const host = harness.document.body.appendChild(harness.document.createElement('div'));
+  host.id = 'groups-list';
+  const snapshot = { activity_bots: { regular: 'off', slop: 'off', wizard: 'off' }, links: [], group_attachments_mode: 'fixed' };
+  const view = () => harness.html`<${GroupsInteractionProvider}>
+    <${GroupsNativeList} groups=${groups} snapshot=${snapshot} actions=${{ openGroupAttachment() {} }} />
+  <//>`;
+  const mounted = await harness.mount(view(), host);
+  t.after(() => mounted.unmount());
+  const box = () => host.querySelector('.group-box[data-group-key="pending-root"]');
+  const toggle = () => box().querySelector(':scope > .group-summary > .group-toggle');
+  assert.equal(box().classList.contains('open'), true, 'a pending group defaults open');
+  assert.equal(toggle().getAttribute('aria-expanded'), 'true');
 
+  const attachment = box().querySelector('.group-attachment a[href]');
+  assert.ok(attachment, 'the validated attachment renders as a link beside the toggle');
+  assert.equal(toggle().contains(attachment), false, 'the link is not inside the fold button');
   for (const detail of [0, 1]) {
-    const attachmentClick = harness.fireEvent(attachment, 'click', { detail });
-    assert.equal(attachmentClick.defaultPrevented, false,
+    const click = harness.fireEvent(attachment, 'click', { detail });
+    assert.equal(click.defaultPrevented, false,
       `${detail === 0 ? 'keyboard' : 'pointer'} attachment navigation remains native`);
-    harness.fireEvent(details, 'toggle');
     assert.equal(dashPrefs.getItem('tclaude.dash.group.pending-root'), null,
-      'attachment activation must not leave a stale disclosure intent');
+      'attachment activation does not fold the group');
     assert.equal(dashPrefs.getItem('tclaude.dash.spawn.lastGroup'), null,
-      'attachment activation must not become the command palette group target');
+      'attachment activation does not become the command palette group target');
   }
 
-  harness.fireEvent(title, 'click', { detail: 1 });
-  details.open = false;
-  harness.fireEvent(details, 'toggle');
+  await harness.act(() => toggle().click());
+  assert.equal(dashPrefs.getItem('tclaude.dash.group.pending-root'), '0', 'an explicit fold persists as zero');
+  assert.equal(dashPrefs.getItem('tclaude.dash.spawn.lastGroup'), 'pending-root',
+    'folding a group makes it the command palette group target');
+  assert.equal(box().classList.contains('open'), false);
+  assert.equal(toggle().getAttribute('aria-expanded'), 'false');
+  assert.equal(box().querySelector(':scope > .subtable').hidden, true, 'the folded body stays in the document, hidden');
 
+  await mounted.rerender(view());
+  assert.equal(box().classList.contains('open'), false, 'a later render keeps the explicit fold');
   assert.equal(dashPrefs.getItem('tclaude.dash.group.pending-root'), '0');
 
-  harness.fireEvent(details, 'toggle');
-  assert.equal(dashPrefs.getItem('tclaude.dash.group.pending-root'), '0',
-    'a later reconciliation toggle preserves the explicit fold');
+  await harness.act(() => toggle().click());
+  assert.equal(dashPrefs.getItem('tclaude.dash.group.pending-root'), '1');
+  assert.equal(box().classList.contains('open'), true);
+});
 
-  const recreated = harness.document.createElement('details');
-  recreated.setAttribute('data-group-key', 'ordinary-default-closed');
-  harness.document.querySelector('#groups-list').append(recreated);
-  harness.fireEvent(recreated, 'toggle');
-  assert.equal(dashPrefs.getItem('tclaude.dash.group.ordinary-default-closed'), null,
-    'reconciliation noise does not turn default-closed groups into explicit folds');
+// The fused Groups view keys its boxes group@node, so a node's group there
+// remembers its own fold apart from the node's own Groups view, re-renders
+// the fused island, and is not a spawn target on this node.
+test('fused Groups folds remember their group@node disclosure like the node Groups view', async (t) => {
+  const harness = await createPreactHarness(t);
+  await harness.replaceDashboardModule('js/dashboard.js', dashboardStub);
+  const [{ GroupsNativeList }, { GroupsInteractionProvider }, { dashPrefs }] = await Promise.all([
+    harness.importDashboardModule('js/groups-list.js'),
+    harness.importDashboardModule('js/groups-interactions.js'),
+    harness.importDashboardModule('js/prefs.js'),
+  ]);
+  const root = harness.document.body.appendChild(harness.document.createElement('div'));
+  root.id = 'fleetview-fused-groups-root';
+  let rerenders = 0;
+  root.addEventListener('tclaude:group-disclosure', () => { rerenders += 1; });
+  const groups = [{ name: 'ops@forge', members: [], online: 0 }];
+  const mounted = await harness.mount(harness.html`<${GroupsInteractionProvider}>
+    <${GroupsNativeList} groups=${groups} snapshot=${{ activity_bots: { regular: 'off', slop: 'off', wizard: 'off' }, links: [] }} actions=${{}} />
+  <//>`, root);
+  t.after(() => mounted.unmount());
+  const box = () => root.querySelector('.group-box[data-group-key="ops@forge"]');
+  assert.equal(box().classList.contains('open'), false, 'a group without a choice starts folded');
+  assert.equal(dashPrefs.getItem('tclaude.dash.group.ops@forge'), null, 'a render is not a choice');
+
+  await harness.act(() => box().querySelector('.group-toggle').click());
+  assert.equal(dashPrefs.getItem('tclaude.dash.group.ops@forge'), '1');
+  assert.equal(box().classList.contains('open'), true);
+  assert.equal(rerenders, 1, 'the fused island is told to re-render');
+  assert.equal(dashPrefs.getItem('tclaude.dash.spawn.lastGroup'), null,
+    "a fused group@node key is not this node's spawn target");
 });

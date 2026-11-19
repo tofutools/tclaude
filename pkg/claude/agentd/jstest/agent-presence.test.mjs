@@ -69,7 +69,7 @@ test('a group keeps an away placeholder row but counts it apart from members', a
   dashPrefs.setItem('tclaude.dash.group.builders', '1');
   const host = harness.document.body.appendChild(harness.document.createElement('div'));
   await harness.mount(harness.html`<${GroupsInteractionProvider}><${GroupsNativeList} groups=${[group]} snapshot=${{ activity_bots: { regular: 'emoji', slop: 'off', wizard: 'off' }, links: [] }} actions=${{}} /><//>`, host);
-  const summary = host.querySelector('details[data-group-key="builders"] > summary');
+  const summary = host.querySelector('.group-box[data-group-key="builders"] > .group-summary');
   assert.match(summary.textContent, /👥 2\/∞/, 'the header counts members only');
   assert.equal(summary.querySelector('.group-away-hint').textContent, '+1 away');
   const placeholder = host.querySelector('tr.away-placeholder');

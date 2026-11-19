@@ -8,6 +8,7 @@
 // still folds on a click anywhere a control is not, as the summary did.
 
 import { h } from 'preact';
+import { useId } from 'preact/hooks';
 import htm from 'htm';
 
 const html = htm.bind(h);
@@ -18,9 +19,12 @@ const CONTROL = 'button, a[href], input, select, textarea, label, [role="menu"],
 
 // DisclosureToggle is the header's fold button: keyboard Enter / Space and
 // the screen reader's expanded state come from it.
-export function DisclosureToggle({ open, class: extra, onToggle, title, children }) {
+// `controls` names the body it folds (aria-controls), `label` replaces the
+// text as its accessible name, and `disabled` holds the section as it is.
+export function DisclosureToggle({ open, class: extra, onToggle, title, controls, label, disabled, children }) {
   return html`<button data-ui-exempt type="button" class=${['disclosure-toggle', extra].filter(Boolean).join(' ')}
-    aria-expanded=${open ? 'true' : 'false'} title=${title} onClick=${() => onToggle()}>${children}</button>`;
+    aria-expanded=${open ? 'true' : 'false'} aria-controls=${controls} aria-label=${label} title=${title}
+    disabled=${disabled} onClick=${(event) => onToggle(event)}>${children}</button>`;
 }
 
 // DisclosureTri is the ▶ / ▼ marker a <details> summary drew from
@@ -36,6 +40,40 @@ export function DisclosureTri({ open }) {
 export function headToggleClick(onToggle) {
   return (event) => {
     if (event.defaultPrevented || event.target.closest?.(CONTROL)) return;
-    onToggle();
+    onToggle(event);
   };
+}
+
+// Disclosure is the shared foldable box: a wrapper (`open` class while
+// open), a header row, and a body. The header holds `before`, the fold
+// button around `toggle`, then `actions` -- controls that sit beside the
+// toggle, never inside it, which is what a <summary> could not do. It is
+// controlled: the caller owns `open` and persists it in `onToggle(event)`.
+//
+// - `foldOnHead` folds on a click anywhere in the header a control is not
+//   (headToggleClick); off, only the toggle folds, as a group's wide header
+//   (a drag handle and drop zone) wants.
+// - `fill` (true, or the span's class) ends the header with an empty span
+//   that folds on a click, the divider line FusedSection draws.
+// - `keepBody` keeps a folded body in the document, hidden, as a closed
+//   <details> did (drop targets and queries still find it); otherwise a
+//   folded body is not drawn at all.
+// - `headAttrs` / `attrs` / `bodyAttrs` land on the header, wrapper, body.
+export function Disclosure({
+  open, onToggle, class: extra = '', attrs = {}, headClass = '', headAttrs = {},
+  toggle, toggleClass = '', title, label, disabled = false, before = null, actions = null,
+  foldOnHead = false, fill = false, bodyClass = '', bodyAttrs = {}, keepBody = false, children,
+}) {
+  const bodyId = `${useId()}-disclosure`;
+  const drawn = open || keepBody;
+  const fold = (event) => { if (!disabled) onToggle(event); };
+  return html`<div class=${['disclosure', extra, open ? 'open' : ''].filter(Boolean).join(' ')} ...${attrs}>
+    <div class=${['disclosure-head', headClass].filter(Boolean).join(' ')} ...${headAttrs}
+      onClick=${foldOnHead ? headToggleClick(fold) : undefined}>
+      ${before}<${DisclosureToggle} class=${toggleClass} open=${open} onToggle=${fold} title=${title} label=${label}
+        disabled=${disabled} controls=${drawn ? bodyId : undefined}>${toggle}<//>${actions}
+      ${fill && html`<span class=${['disclosure-fill', typeof fill === 'string' ? fill : ''].filter(Boolean).join(' ')} aria-hidden="true" title=${title} onClick=${fold}></span>`}
+    </div>
+    ${drawn && html`<div id=${bodyId} class=${bodyClass || undefined} hidden=${!open} ...${bodyAttrs}>${children}</div>`}
+  </div>`;
 }

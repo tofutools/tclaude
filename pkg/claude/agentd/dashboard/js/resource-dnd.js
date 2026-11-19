@@ -36,7 +36,7 @@ const removerOf = (resource) => (resource ? removers.get(`${resource.kind}:${res
 
 // A box takes a resource when it is one of this node's real groups or the
 // Ungrouped box; another node's (the fused view's group@node) does not.
-const TARGET_SEL = 'details[data-dnd-target-group], details[data-dnd-target-ungrouped]';
+const TARGET_SEL = '.group-box[data-dnd-target-group], .group-box[data-dnd-target-ungrouped]';
 
 // dropGroupOf is the group a box stands for: '' for Ungrouped, null for none.
 export function dropGroupOf(box) {

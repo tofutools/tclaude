@@ -129,8 +129,8 @@ test('a restricted peer takes the clone and retire drops its grants on the agent
 test('a box names its node and the group it lists', async (t) => {
   const { harness, ops } = await setup(t);
   const doc = harness.document;
-  doc.body.innerHTML = `<details id="peer" data-fleet-node="${FORGE}" data-fleet-node-name="forge" data-group-key="ops@forge"><summary id="in">x</summary></details>
-    <details id="local" data-dnd-target-group="ops" data-group-key="ops"></details>`;
+  doc.body.innerHTML = `<div class="group-box" id="peer" data-fleet-node="${FORGE}" data-fleet-node-name="forge" data-group-key="ops@forge"><div class="group-summary" id="in">x</div></div>
+    <div class="group-box" id="local" data-dnd-target-group="ops" data-group-key="ops"></div>`;
   assert.deepEqual(ops.dndNode(doc.getElementById('in')), { node: FORGE, name: 'forge' });
   assert.equal(ops.targetGroupOf(doc.getElementById('peer')), 'ops@forge');
   assert.deepEqual(ops.dndNode(doc.getElementById('local')), { node: '', name: '' });
@@ -141,10 +141,10 @@ test("a group drag acts on the dragged group's node under its own names", async 
   const { harness, ops, toasts } = await setup(t);
   const doc = harness.document;
   doc.body.innerHTML = `<div id="fleetview-fused-groups-root">
-    <details id="peer" data-fleet-node="${FORGE}" data-fleet-node-name="forge" data-group-key="build@forge"><summary id="ph" data-group-reorder="build@forge">b</summary></details>
-    <details id="peer2" data-fleet-node="${FORGE}" data-fleet-node-name="forge" data-group-key="ops@forge"><summary>o</summary></details>
-    <details id="home" data-fleet-node="inst_desk0001" data-fleet-node-name="desk" data-group-key="ops@desk"><summary>o</summary></details></div>
-    <details id="local" data-group-key="ops"><summary id="lh" data-group-reorder="ops">o</summary></details>`;
+    <div class="group-box" id="peer" data-fleet-node="${FORGE}" data-fleet-node-name="forge" data-group-key="build@forge"><div class="group-summary" id="ph" data-group-reorder="build@forge">b</div></div>
+    <div class="group-box" id="peer2" data-fleet-node="${FORGE}" data-fleet-node-name="forge" data-group-key="ops@forge"><div class="group-summary">o</div></div>
+    <div class="group-box" id="home" data-fleet-node="inst_desk0001" data-fleet-node-name="desk" data-group-key="ops@desk"><div class="group-summary">o</div></div></div>
+    <div class="group-box" id="local" data-group-key="ops"><div class="group-summary" id="lh" data-group-reorder="ops">o</div></div>`;
   const calls = []; let refreshed = 0;
   const ctx = ops.groupDragContext(doc.getElementById('ph'), { refresh: () => { refreshed += 1; }, fetchImpl: async (url) => { calls.push(url); return { ok: true }; } });
   assert.deepEqual([ctx.node, ctx.fused, ctx.own('build@forge'), ctx.own('ops')], [FORGE, true, 'build', 'ops']);

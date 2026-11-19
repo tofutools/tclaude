@@ -100,7 +100,7 @@ let groupDragCtx = null;
 // or null when the cursor is over a virtual group (fixed position — not a
 // reorder target) or outside any group.
 function reorderTarget(e) {
-  const details = e.target.closest('details[data-group-key]');
+  const details = e.target.closest('.group-box[data-group-key]');
   if (!details || details.classList.contains('group-virtual')) return null;
   return details;
 }
@@ -383,7 +383,7 @@ function bindGroupReorder() {
     suppressedSummary = null;
   };
   listen(document, 'pointerdown', (e) => {
-    const summary = e.target.closest('summary[data-group-reorder]');
+    const summary = e.target.closest('.group-summary[data-group-reorder]');
     if (!summary) return;
     const ctl = e.target.closest('button, a, input, select, textarea, label, [data-act], [contenteditable], .group-name, .group-federation-marker');
     if (ctl && summary.contains(ctl)) {
@@ -424,7 +424,7 @@ function bindGroupReorder() {
     // name there, for a drop on the dock (dock-save-dnd.js).
     if (ctx.fused) e.dataTransfer.setData(GROUP_NODE_MIME, JSON.stringify({ node: ctx.node, group: ctx.own(name) }));
     e.dataTransfer.effectAllowed = 'copyMove';
-    const details = handle.closest('details[data-group-key]');
+    const details = handle.closest('.group-box[data-group-key]');
     if (details) details.classList.add('group-reorder-source');
     const trash = $('#dnd-trash');
     if (trash) trash.classList.add('show');

@@ -15,7 +15,7 @@ import { ProcessRunBadge } from './process-kit.js';
 import { groupContextEntry, processContext, withRunKind } from './process-context.js';
 import { featureState } from './feature-state-registry.js';
 import { focusRun, groupsRunLocation, showGroupRuns } from './groups-focus.js';
-import { setFusedSectionOpen } from './groups-fused-sections.js';
+import { announceFusedSections, setFusedSectionOpen, setGroupBoxOpen } from './groups-fused-sections.js';
 import { UNGROUPED_VKEY } from './virtual-groups.js';
 import { useProcessScope } from './groups-process-scope.js';
 import { processesAvailable } from './feature-availability.js';
@@ -64,11 +64,12 @@ export function openGroupInProcesses(groupName, filter = 'running', { doc = docu
   if (groups.focusedRun) focusRun(groups, null, { doc });
   showGroupRuns(groups, { announce: true, doc });
   setFusedSectionOpen(groupName, 'processes', true);
+  setGroupBoxOpen(rowKey, true);
+  announceFusedSections();
   groups.rerender?.();
   const reveal = () => {
-    const row = doc.querySelector(`details[data-group-key="${cssString(rowKey)}"]`);
+    const row = doc.querySelector(`.group-box[data-group-key="${cssString(rowKey)}"]`);
     if (!row) return;
-    row.open = true;
     const target = row.querySelector(`[data-fused-processes="${cssString(groupName)}"]`) || row;
     target.scrollIntoView?.({ block: 'start', behavior: 'smooth' });
   };

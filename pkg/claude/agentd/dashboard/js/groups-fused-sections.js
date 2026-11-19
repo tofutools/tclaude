@@ -23,7 +23,15 @@ export function setFusedSectionOpen(group, section, open, prefs = dashPrefs) {
   prefs.setItem(prefKey(group, section), open ? '1' : '0');
 }
 
-// fusedSectionsRevision is read by every drawn section (FusedSection), so
+// setGroupBoxOpen remembers a group box's fold (groups-list.js's GroupBox):
+// `key` is the box's data-group-key, group@node in the fused view. A box
+// set from outside it redraws on announceFusedSections.
+export function setGroupBoxOpen(key, open, prefs = dashPrefs) {
+  prefs.setItem(`tclaude.dash.group.${key}`, open ? '1' : '0');
+}
+
+// fusedSectionsRevision is read by every drawn section (FusedSection) and
+// group box (GroupBox), so
 // announceFusedSections redraws them all at once after a choice was set
 // from outside them (a drop landing, a cross-link jump). Without it a
 // section memoized under an unchanged snapshot kept its old fold until the

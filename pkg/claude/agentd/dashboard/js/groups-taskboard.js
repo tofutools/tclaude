@@ -583,7 +583,7 @@ export function agentDropRow(target, group) {
   // node's group).
   const shown = group.shownName || group.name;
   if (!row || row.dataset.dndSourceGroup !== shown) return null;
-  const card = row.closest('details[data-group-key]');
+  const card = row.closest('.group-box[data-group-key]');
   if (card?.dataset.groupKey !== shown) return null;
   const member = assignableMembers(group).find((m) => m.agent_id === row.dataset.dndAgent);
   return member ? { row, member } : null;

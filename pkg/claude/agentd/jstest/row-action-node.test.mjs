@@ -34,11 +34,11 @@ test("a fused group's ⚙ control names its node, and its requests and refreshes
   const off = nodeApi.onNodeChanged((node) => changed.push(node));
   t.after(off);
 
-  harness.document.body.innerHTML = `<details data-fleet-node="inst_forge7" data-fleet-node-name="forge">
+  harness.document.body.innerHTML = `<div class="group-box" data-fleet-node="inst_forge7" data-fleet-node-name="forge">
     <button id="bell" data-act="toggle-group-notify" data-group="ops@forge" data-enabled="1"></button>
-    <button id="windows" data-act="window-modal-group" data-group="ops@forge"></button></details>
-    <details data-fleet-node="inst_self01" data-fleet-node-name="here" data-fleet-home>
-    <button id="mine" data-act="set-group-remote-control" data-group="ops@here" data-next="deny"></button></details>`;
+    <button id="windows" data-act="window-modal-group" data-group="ops@forge"></button></div>
+    <div class="group-box" data-fleet-node="inst_self01" data-fleet-node-name="here" data-fleet-home>
+    <button id="mine" data-act="set-group-remote-control" data-group="ops@here" data-next="deny"></button></div>`;
   const el = (id) => harness.document.getElementById(id);
   const bell = actionDescriptor(el('bell'));
   assert.equal(bell.fleetNode, 'inst_forge7');

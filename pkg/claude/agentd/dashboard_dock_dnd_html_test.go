@@ -61,18 +61,18 @@ func TestDashboardHTML_DockDnd(t *testing.T) {
 	// Drop-target highlight in BOTH skins, wizard rule SCOPED to this feature's
 	// selectors (the anti-pin invariant — no unscoped body.wizard widening).
 	must("#groups-list.dock-drop-over {", "the empty-space drop target has a highlight rule")
-	must("details[data-dnd-target-group].dock-drop-over,", "the group-box drop target has a highlight rule")
+	must(".group-box[data-dnd-target-group].dock-drop-over,", "the group-box drop target has a highlight rule")
 	must(".dock-card.dock-drag-source { opacity: 0.5; }", "the dragged card fades while in flight")
-	must("body.wizard details[data-dnd-target-group].dock-drop-over,",
+	must("body.wizard .group-box[data-dnd-target-group].dock-drop-over,",
 		"the wizard drop-highlight is scoped under this feature's selectors")
 
 	// The virtual UNGROUPED box is a no-group drop target (a discoverable synonym
 	// for the empty-space drop): dockTarget accepts it as { group: '' }, and it
 	// gets the drop highlight in both skins. Every OTHER virtual box stays inert.
-	must("e.target.closest('details[data-dnd-target-ungrouped]')",
+	must("e.target.closest('.group-box[data-dnd-target-ungrouped]')",
 		"dockTarget accepts the virtual Ungrouped box as a no-group drop target")
-	must("details[data-dnd-target-ungrouped].dock-drop-over,",
+	must(".group-box[data-dnd-target-ungrouped].dock-drop-over,",
 		"the Ungrouped drop target has a highlight rule")
-	must("body.wizard details[data-dnd-target-ungrouped].dock-drop-over,",
+	must("body.wizard .group-box[data-dnd-target-ungrouped].dock-drop-over,",
 		"the wizard Ungrouped drop-highlight is scoped under this feature's selectors")
 }

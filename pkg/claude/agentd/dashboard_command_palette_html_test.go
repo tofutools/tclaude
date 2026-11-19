@@ -135,17 +135,12 @@ func TestDashboardHTML_CommandPalette(t *testing.T) {
 		"create-group reuses the existing group-create modal, no new behaviour")
 
 	// The "last interacted group" memory MUST be stamped from the genuine
-	// group-title click/keyboard fold (bindGroupTitleToggle), NOT from the
-	// `toggle` event — the 2s re-render re-fires `toggle` on every open
-	// <details>, so recording there would let whatever group is open last
-	// win with no operator intent. Pin the record call on the title-toggle
-	// path so a refactor that moves it onto the spurious `toggle` handler
-	// (bindDetailsPersistence) is conspicuous. (A string guard can't prove
-	// the negative; this pins the intended placement.)
-	must("noteGroupDisclosureIntent(key);",
-		"genuine fold/unfold marks the disclosure as intentional on the click path")
-	must("recordGroupInteraction(key)",
-		"genuine fold/unfold records the last-interacted group on the click path")
+	// fold button's click (groups-list.js's GroupBox), never from a render,
+	// so whatever group is drawn open last does not win with no operator
+	// intent. (A string guard can't prove the negative; this pins the
+	// intended placement.)
+	must("if (!el?.closest?.('#fleetview-fused-groups-root')) recordGroupInteraction(boxKey);",
+		"a genuine fold/unfold records the last-interacted group on the click path")
 
 	// The theme toggle (regular ↔ slop) reuses slop.js's toggleSlop,
 	// which had to be exported for the palette to reach it.
@@ -153,11 +148,11 @@ func TestDashboardHTML_CommandPalette(t *testing.T) {
 	must("run: () => toggleSlop(),", "the palette offers a Switch theme command")
 	must("'Switch to slop theme'", "the toggle is labelled by its destination theme")
 
-	// Group fold: collapse / expand the Groups-tab <details> listing.
+	// Group fold: collapse / expand the Groups-tab group boxes.
 	must("Collapse all groups", "the palette can collapse every group")
 	must("Expand all groups", "the palette can expand every group")
-	must("function setGroupOpen(", "per-group collapse/expand toggles the group's <details>")
-	must("data-group-key=", "fold targets the group's <details data-group-key>")
+	must("function setGroupOpen(", "per-group collapse/expand sets the group box's fold")
+	must("setGroupBoxOpen(name, open);", "fold persists the group's pref, which redraws its box")
 
 	// Show / hide the right-side palette dock (js/dock.js, JOH-374): a
 	// directional PAIR of commands that flip the SAME dashPrefs-backed open flag
