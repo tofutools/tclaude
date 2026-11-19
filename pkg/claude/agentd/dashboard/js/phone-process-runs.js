@@ -10,6 +10,7 @@
 // through the run API, so verdicts, notes and the stale-attempt guard are
 // the desktop's.
 
+import { waitShort } from './process-run-wait-words.js';
 import { h } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { signal } from '@preact/signals';
@@ -127,7 +128,11 @@ export function runPosition(run) {
   const steps = runSteps(run);
   const waiting = steps.findIndex((step) => step.state === 'waiting');
   const at = waiting >= 0 ? waiting : steps.findIndex((step) => step.state === 'running' || step.state === 'failed');
-  if (at >= 0) return `step ${at + 1}/${steps.length} · ${steps[at].label}`;
+  if (at >= 0) {
+    // A waiting wait step says how long it has left, or its check.
+    const wait = steps[at].wait || (run?.nodes || []).find((node) => node.id === steps[at].id)?.wait;
+    return `step ${at + 1}/${steps.length} · ${steps[at].label}${wait ? ` · ${waitShort({ wait })}` : ''}`;
+  }
   const status = String(run?.status || '').toLowerCase();
   if (status && status !== 'running') {
     const when = relTime(run.updatedAt);

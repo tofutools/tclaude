@@ -124,6 +124,23 @@ func NextProcessWaitDue() (time.Time, bool, error) {
 	return due.Time(), !due.Time().IsZero(), nil
 }
 
+// BringProcessWaitTimerDue makes a wait's timer due at `at` if it is due
+// later; it reports whether there was such a timer.
+func BringProcessWaitTimerDue(runID, commandID string, at time.Time) (bool, error) {
+	d, err := Open()
+	if err != nil {
+		return false, err
+	}
+	at = at.UTC()
+	result, err := d.Exec(`UPDATE process_wait_timers SET due_at = ? WHERE run_id = ? AND command_id = ? AND due_at > ? AND failure = ''`,
+		dbTime(at), runID, commandID, dbTimeBoundary(at))
+	if err != nil {
+		return false, err
+	}
+	n, err := result.RowsAffected()
+	return n > 0, err
+}
+
 // DeleteProcessWaitTimer drops a wait's timer once the wait has ended.
 func DeleteProcessWaitTimer(runID, commandID string) error {
 	d, err := Open()

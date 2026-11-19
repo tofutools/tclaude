@@ -77,7 +77,7 @@ test('a check wait that times out asks for met and timedOut routes', () => {
   const node = { type: 'wait', wait: { check: { when: 'params.ok == true', every: '5m', maxChecks: 3 } } };
   assert.equal(waitRouteHint(node, ['next']), '');
   setCheckField(node, 'onLimit', 'timedOut');
-  assert.match(waitRouteHint(node, ['met']), /a connector labelled timedOut/);
+  assert.match(waitRouteHint(node, ['met']), /a connector from this wait for the timed-out route/);
   assert.equal(waitRouteHint(node, ['met', 'timedOut']), '');
   assert.equal(waitOutcomeFor(node, []), 'met');
   assert.equal(waitOutcomeFor(node, ['met']), 'timedOut');
@@ -105,7 +105,7 @@ test('describeWait and waitSub say a wait in words', () => {
   assert.equal(describeWait({ wait: { duration: '3d' } }), 'Wait 3 days');
   assert.equal(describeWait({ wait: { duration: '2h', until: '{{ params.at }}' } }), 'Wait 2 hours or until {{ params.at }}');
   assert.equal(describeWait({ wait: { check: { when: 'outputs.state == "ready"', every: '5m', backoff: 'exponential', maxEvery: '1h', maxChecks: 20, within: '1d', onLimit: 'timedOut' } } }),
-    'Check every 5 minutes, backing off ×2 up to 1 hour until outputs.state == "ready"; gives up after 20 checks or 1 day, then takes timedOut');
+    'Check every 5 minutes, backing off ×2 up to 1 hour until outputs.state == "ready"; gives up after 20 checks or 1 day, then takes the timed-out route');
   assert.equal(waitSub({ wait: { check: { every: '10m' } } }), 'checks every 10 minutes');
   assert.equal(waitSub({ wait: { duration: '3 days' } }), '3 days');
 });

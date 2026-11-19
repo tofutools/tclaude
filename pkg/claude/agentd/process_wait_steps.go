@@ -233,6 +233,32 @@ type processRunWaitView struct {
 	// Check is a wait for a criterion's progress: checks made, failed in a
 	// row, the last answer. This timer is its wait for the next check.
 	Check *engine.WaitCheckState `json:"check,omitempty"`
+	// Checking marks a check that is out (its program or agent is answering);
+	// otherwise the wait is waiting for its next check.
+	Checking bool `json:"checking,omitempty"`
+	// MaxChecks, MaxFailedChecks and GivesUpAt are its limits: the checks it
+	// may make, failed checks in a row it allows, and when within runs out.
+	MaxChecks       int        `json:"maxChecks,omitempty"`
+	MaxFailedChecks int        `json:"maxFailedChecks,omitempty"`
+	GivesUpAt       *time.Time `json:"givesUpAt,omitempty"`
+	// TimesOut says it takes a timed-out route at its limit, not failing.
+	TimesOut bool `json:"timesOut,omitempty"`
+}
+
+// withCheckLimits fills in a check wait's limits from its authored spec.
+func (view *processRunWaitView) withCheckLimits(spec model.WaitCheck, ok bool) *processRunWaitView {
+	if view == nil || view.Check == nil || !ok {
+		return view
+	}
+	view.MaxChecks, view.MaxFailedChecks, view.TimesOut = spec.MaxChecks, spec.MaxFailed(), spec.TimesOut()
+	if view.Check.StartedAt != nil && spec.Within != "" {
+		if within, err := model.ParseWaitDuration(spec.Within); err == nil {
+			// To the second, as the engine measures it.
+			at := view.Check.StartedAt.Add(within).UTC().Truncate(time.Second)
+			view.GivesUpAt = &at
+		}
+	}
+	return view
 }
 
 func processRunWaitViewOf(command engine.Command, timers map[string]db.ProcessWaitTimer, checks map[string]engine.WaitCheckState) *processRunWaitView {
@@ -260,6 +286,51 @@ type processRunSkipWaitRequest struct {
 
 // handleProcessRunSkipWait ends a waiting wait step now, as skipped by the
 // caller: the run goes on along the step's route. process.runs.manage only.
+// handleProcessRunCheckNow serves POST /v1/process/runs/{id}/check-now: a
+// wait for a criterion waiting for its next check makes it now. Its count and
+// limits are untouched; only the wait between checks is cut short.
+func handleProcessRunCheckNow(w http.ResponseWriter, r *http.Request) {
+	if _, ok := requirePermission(w, r, PermProcessRunsManage); !ok {
+		return
+	}
+	var request processRunSkipWaitRequest
+	if err := decodeProcessRuntimeRequest(w, r, &request); err != nil {
+		writeError(w, http.StatusBadRequest, "process_run_request", err.Error())
+		return
+	}
+	runID := r.PathValue("id")
+	setAuditDetail(r, "run: "+runID+", check now: "+stripControl(request.NodeID))
+	view, err := loadProcessRunView(runID)
+	if err != nil {
+		writeProcessRuntimeError(w, err)
+		return
+	}
+	commandID := ""
+	for _, command := range view.Commands {
+		if command.NodeID != request.NodeID || command.Wait == nil || command.Wait.Check == nil {
+			continue
+		}
+		if command.Kind != engine.CommandWait {
+			writeError(w, http.StatusConflict, "process_check_running", "its check is being made now")
+			return
+		}
+		commandID = command.CommandID
+	}
+	if commandID == "" {
+		writeProcessRuntimeError(w, fmt.Errorf("%w: %q is not a wait for a condition waiting for its next check", errProcessNoWait, request.NodeID))
+		return
+	}
+	processWaitMu.Lock()
+	_, err = db.BringProcessWaitTimerDue(runID, commandID, processWaitNow())
+	processWaitMu.Unlock()
+	if err != nil {
+		writeProcessRuntimeError(w, err)
+		return
+	}
+	kickProcessWaits()
+	writeProcessJSON(w, http.StatusAccepted, map[string]any{"run": view})
+}
+
 func handleProcessRunSkipWait(w http.ResponseWriter, r *http.Request) {
 	caller, ok := requirePermission(w, r, PermProcessRunsManage)
 	if !ok {

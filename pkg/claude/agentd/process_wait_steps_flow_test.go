@@ -57,6 +57,8 @@ type waitRunView struct {
 				Checks int    `json:"checks"`
 				Last   string `json:"last"`
 			} `json:"check"`
+			MaxChecks int        `json:"maxChecks"`
+			GivesUpAt *time.Time `json:"givesUpAt"`
 		} `json:"wait"`
 	} `json:"commands"`
 }
@@ -385,4 +387,33 @@ func TestProcessCheckWait_AnAgentAnswersNoThenYes(t *testing.T) {
 	clock.Advance(5 * time.Minute)
 	answer("yes")
 	assert.Equal(t, engine.RunCompleted, showWaitRun(t, f, "run_check_agent").Status)
+}
+
+// Scenario: someone who may manage the run makes a waiting check now instead
+// of in an hour. The run view says the check's limits: at most 3 checks, and
+// when it gives up. A time wait has no next check to bring forward.
+func TestProcessCheckWait_CheckNowMakesTheNextCheck(t *testing.T) {
+	f, clock := checkWaitFlow(t, "run_check_now_btn", model.WaitCheck{When: "params.ok == true", Every: "1h", MaxChecks: 3, Within: "1d"},
+		map[string]string{"ok": "false"})
+	agentd.SweepProcessWaitsForTest()
+	view := showWaitRun(t, f, "run_check_now_btn")
+	require.Len(t, view.Commands, 1)
+	wait := view.Commands[0].Wait
+	require.NotNil(t, wait.Check)
+	assert.Equal(t, 1, wait.Check.Checks)
+	assert.Equal(t, 3, wait.MaxChecks)
+	require.NotNil(t, wait.GivesUpAt)
+	assert.True(t, wait.GivesUpAt.Equal(clock.Now().Add(24*time.Hour)), "gives up %v", wait.GivesUpAt)
+	assert.True(t, wait.DueAt.Equal(clock.Now().Add(time.Hour)), "next check %v", wait.DueAt)
+
+	wrong := processRuntimeRequest(t, f, http.MethodPost, "/v1/process/runs/run_check_now_btn/check-now", map[string]any{"nodeId": "done"})
+	assert.NotEqual(t, http.StatusAccepted, wrong.Code, "only a wait for a condition checks now")
+	now := processRuntimeRequest(t, f, http.MethodPost, "/v1/process/runs/run_check_now_btn/check-now", map[string]any{"nodeId": "hold"})
+	require.Equal(t, http.StatusAccepted, now.Code, now.Body.String())
+	agentd.SweepProcessWaitsForTest()
+	view = showWaitRun(t, f, "run_check_now_btn")
+	require.Len(t, view.Commands, 1)
+	wait = view.Commands[0].Wait
+	assert.Equal(t, 2, wait.Check.Checks, "the second check was made now")
+	assert.True(t, wait.DueAt.Equal(clock.Now().Add(time.Hour)), "and the next is an hour from now: %v", wait.DueAt)
 }

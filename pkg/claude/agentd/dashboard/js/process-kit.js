@@ -21,6 +21,7 @@
 // normalizeNodeState fold them. Pure helpers are exported next to the
 // components so callers and tests can reason about a projection without a DOM.
 
+import { waitShort } from './process-run-wait-words.js';
 import { choiceWords, ruleWords } from './process-rules.js';
 import { h } from 'preact';
 import { useId, useState } from 'preact/hooks';
@@ -146,6 +147,8 @@ function nodesOf(run) {
     state: normalizeNodeState(node.state),
     label: String(node.label || node.id),
     performers: nodePerformers(node),
+    // A waiting wait step says how long it has left, or its check.
+    ...(node.wait && !node.sub ? { sub: waitShort({ wait: node.wait }) } : {}),
   }));
 }
 

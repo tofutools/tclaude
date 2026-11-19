@@ -1863,6 +1863,18 @@ func processRunViewWith(record *db.ProcessRun, accounted map[string]struct{}, cl
 	awaitingPerformer := false
 	waiting := false
 	var waitTimers map[string]db.ProcessWaitTimer
+	// checkSpec reads a wait check's authored limits; the definition is
+	// prepared only for a run that has one.
+	var checkSpec func(string) (model.WaitCheck, bool)
+	specOf := func(nodeID string) (model.WaitCheck, bool) {
+		if checkSpec == nil {
+			checkSpec = func(string) (model.WaitCheck, bool) { return model.WaitCheck{}, false }
+			if definition, err := prepareProcessRunDefinition(record); err == nil {
+				checkSpec = definition.WaitCheckSpec
+			}
+		}
+		return checkSpec(nodeID)
+	}
 	for i := range checkpoint.Commands {
 		command := checkpoint.Commands[i]
 		view := processRunCommandView{
@@ -1876,8 +1888,15 @@ func processRunViewWith(record *db.ProcessRun, accounted map[string]struct{}, cl
 			}
 			view.State, waiting = processCommandWaiting, true
 			view.Wait = processRunWaitViewOf(command, waitTimers, checkpoint.WaitChecks)
+			if view.Wait.Check != nil {
+				view.Wait = view.Wait.withCheckLimits(specOf(command.NodeID))
+			}
 			commands = append(commands, view)
 			continue
+		}
+		// A wait's check that is out: its program or agent is answering.
+		if state, ok := checkpoint.WaitChecks[command.NodeID]; ok {
+			view.Wait = (&processRunWaitView{Check: &state, Checking: true}).withCheckLimits(specOf(command.NodeID))
 		}
 		if command.Kind == engine.CommandMessage && command.Message != nil {
 			view.Program = "message to " + strings.Join(command.Message.To, ", ")

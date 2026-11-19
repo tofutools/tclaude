@@ -107,6 +107,9 @@ type processProjectionNode struct {
 	// loop is in, out of that loop's limit (tcl-eu70x9). Absent elsewhere.
 	Round  int `json:"round,omitempty"`
 	Rounds int `json:"rounds,omitempty"`
+	// Wait is a waiting wait step's deadline or check progress, as the run
+	// view carries it, so a run card can say "2h left" or "check 3/20".
+	Wait *processRunWaitView `json:"wait,omitempty"`
 	// Rule is a rule decision's cases and, once it has decided, its last
 	// choice: the case that held (-1 for else) and the values it read.
 	Rule *processProjectionRule `json:"rule,omitempty"`
@@ -888,9 +891,19 @@ func (s *processProjectionSkeleton) project(run processRunView) processRunProjec
 		}
 		bounded[authored] = bounds
 	}
+	waits := map[string]*processRunWaitView{}
+	for _, command := range run.Commands {
+		if command.Wait == nil {
+			continue
+		}
+		if authored, ok := s.authoredID(command.NodeID); ok {
+			waits[authored] = command.Wait
+		}
+	}
 	projection.Nodes = make([]processProjectionNode, len(s.nodes))
 	for i, node := range s.nodes {
 		node.State = states[node.ID]
+		node.Wait = waits[node.ID]
 		if node.State == "" {
 			node.State = string(engine.NodePending)
 		}

@@ -622,6 +622,22 @@ export function createRunDetailApi({ fetchImpl = (...args) => fetch(...args) } =
         method: 'POST', headers: idempotentRequestHeaders('POST', path, body, attemptKey), body,
       }, fetchImpl);
     },
+    // skipWait ends a waiting wait step now, as skipped: the run goes on.
+    async skipWait(runId, { nodeId, attemptKey = randomUUID() }) {
+      const path = `${runPath(runId)}/skip-wait`;
+      const body = JSON.stringify({ nodeId });
+      return processRequest(path, {
+        method: 'POST', headers: idempotentRequestHeaders('POST', path, body, attemptKey), body,
+      }, fetchImpl);
+    },
+    // checkNow makes a wait for a condition's next check now.
+    async checkNow(runId, { nodeId, attemptKey = randomUUID() }) {
+      const path = `${runPath(runId)}/check-now`;
+      const body = JSON.stringify({ nodeId });
+      return processRequest(path, {
+        method: 'POST', headers: idempotentRequestHeaders('POST', path, body, attemptKey), body,
+      }, fetchImpl);
+    },
     // markBlocked parks an agent step that is out, with a reason; it then
     // waits on retry, skip or cancel like a step whose retries ran out.
     async markBlocked(runId, { nodeId, attempt, reason, attemptKey = randomUUID() }) {

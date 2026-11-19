@@ -28,6 +28,24 @@ type processRunWaitJSON struct {
 		Failed int    `json:"failed"`
 		Last   string `json:"last"`
 	} `json:"check,omitempty"`
+	Checking  bool       `json:"checking,omitempty"`
+	MaxChecks int        `json:"maxChecks,omitempty"`
+	GivesUpAt *time.Time `json:"givesUpAt,omitempty"`
+}
+
+// checkProgress is a check wait's progress: "3 of 20 checks made, last: no".
+func (w *processRunWaitJSON) checkProgress() string {
+	progress := fmt.Sprintf("%d checks made", w.Check.Checks)
+	if w.MaxChecks > 0 {
+		progress = fmt.Sprintf("%d of %d checks made", w.Check.Checks, w.MaxChecks)
+	}
+	if w.Check.Last != "" {
+		progress += ", last: " + displayProcessEventField(w.Check.Last)
+	}
+	if w.GivesUpAt != nil {
+		progress += ", gives up " + w.GivesUpAt.Local().Format("2006-01-02 15:04 MST")
+	}
+	return progress
 }
 
 // label is what the wait waits for, as authored: "3 days", "until <time>",
@@ -55,6 +73,8 @@ func (w *processRunWaitJSON) label() string {
 // status is how long the wait has left at now.
 func (w *processRunWaitJSON) status(now time.Time) string {
 	switch {
+	case w != nil && w.Check != nil && w.Checking:
+		return w.checkProgress() + "; checking now"
 	case w == nil || w.DueAt == nil:
 		return "starting"
 	case w.Failure != "":
@@ -63,10 +83,7 @@ func (w *processRunWaitJSON) status(now time.Time) string {
 	left := w.DueAt.Sub(now)
 	due := w.DueAt.Local().Format("2006-01-02 15:04 MST")
 	if w.Check != nil {
-		progress := fmt.Sprintf("%d checks made", w.Check.Checks)
-		if w.Check.Last != "" {
-			progress += ", last: " + displayProcessEventField(w.Check.Last)
-		}
+		progress := w.checkProgress()
 		if left <= 0 {
 			return progress + "; checking now"
 		}
@@ -102,7 +119,29 @@ func processSkipWaitCmd() *cobra.Command {
 	}.ToCobra()
 }
 
+func processCheckNowCmd() *cobra.Command {
+	return boa.CmdT[processSkipWaitParams]{
+		Use:   "check-now",
+		Short: "Make a wait's next check now, instead of when it is due",
+		Long: "A wait step that waits for a condition checks it again and again. This makes its next check now: " +
+			"its count and limits stay as they are. Needs process.runs.manage. To end the wait instead, use skip-wait.",
+		ParamEnrich: common.DefaultParamEnricher(),
+		InitFuncCtx: func(ctx *boa.HookContext, p *processSkipWaitParams, _ *cobra.Command) error {
+			boa.GetParamT(ctx, &p.AskHuman).SetAlternativesFunc(completeAskHumanDurations)
+			return nil
+		},
+		RunFunc: func(p *processSkipWaitParams, _ *cobra.Command, _ []string) {
+			exitProcessRuntime(runProcessWaitAction(p, "check-now", os.Stdout, os.Stderr), os.Stderr)
+		},
+	}.ToCobra()
+}
+
 func runProcessSkipWait(p *processSkipWaitParams, stdout, stderr io.Writer) error {
+	return runProcessWaitAction(p, "skip-wait", stdout, stderr)
+}
+
+// runProcessWaitAction posts skip-wait or check-now for one wait step.
+func runProcessWaitAction(p *processSkipWaitParams, action string, stdout, stderr io.Writer) error {
 	if err := requireProcessRuntime(stderr); err != nil {
 		return err
 	}
@@ -120,13 +159,17 @@ func runProcessSkipWait(p *processSkipWaitParams, stdout, stderr io.Writer) erro
 	var response struct {
 		Run processRunJSON `json:"run"`
 	}
-	path := "/v1/process/runs/" + url.PathEscape(strings.TrimSpace(p.RunID)) + "/skip-wait"
+	path := "/v1/process/runs/" + url.PathEscape(strings.TrimSpace(p.RunID)) + "/" + action
 	if err := processRequest(p.Remote, http.MethodPost, path, request, &response,
 		agent.DaemonOpts{AskHuman: ask, RetryOutput: stderr}); err != nil {
 		return err
 	}
 	printProcessRemoteBanner(stdout, p.Remote)
-	fmt.Fprintf(stdout, "Skipped the wait at %s for process run %s.\n", node, response.Run.ID)
+	if action == "check-now" {
+		fmt.Fprintf(stdout, "The wait at %s checks now, for process run %s.\n", node, response.Run.ID)
+	} else {
+		fmt.Fprintf(stdout, "Skipped the wait at %s for process run %s.\n", node, response.Run.ID)
+	}
 	printProcessRun(stdout, &response.Run)
 	return nil
 }

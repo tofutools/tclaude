@@ -213,7 +213,8 @@ export function waitRouteHint(node, outcomes) {
   const have = new Set(outcomes);
   const missing = [WAIT_MET, WAIT_TIMED_OUT].filter((outcome) => !have.has(outcome));
   if (!missing.length) return '';
-  return `Draw ${missing.length === 2 ? 'two connectors' : 'a connector'} labelled ${missing.join(' and ')}: where to go when it holds, and when it gives up.`;
+  const routes = missing.map((outcome) => (outcome === WAIT_MET ? 'the met route (when it holds)' : 'the timed-out route (when it gives up)'));
+  return `Draw ${missing.length === 2 ? 'two connectors from this wait' : 'a connector from this wait'} for ${routes.join(' and ')}; they are named for you.`;
 }
 
 // waitOutcomeFor names a new connector from a wait step: met, then
@@ -259,7 +260,7 @@ export function describeCheck(check) {
   if (check.maxChecks) limits.push(`${check.maxChecks} check${check.maxChecks === 1 ? '' : 's'}`);
   if (check.within) limits.push(words(check.within));
   const limit = limits.length ? `gives up after ${limits.join(' or ')}` : 'no limit yet';
-  const then = check.onLimit === WAIT_TIMED_OUT ? 'then takes timedOut' : 'then fails';
+  const then = check.onLimit === WAIT_TIMED_OUT ? 'then takes the timed-out route' : 'then fails';
   return `Check ${schedule} ${what}; ${limit}, ${then}`;
 }
 

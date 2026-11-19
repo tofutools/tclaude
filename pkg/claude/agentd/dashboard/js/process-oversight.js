@@ -17,6 +17,7 @@ import { useEffect, useState } from 'preact/hooks';
 import htm from 'htm';
 import { Button } from './ui-components.js';
 import { RunCopyEditor } from './process-run-copy.js';
+import { WaitingSteps } from './process-run-waits.js';
 
 const html = htm.bind(h);
 
@@ -516,6 +517,7 @@ export function RunOversight({ view, runId, api, onChanged, nodeId = '', nodeLab
       send=${(note) => api.cancelRun(runId, { note })}
       onChanged=${onChanged} onClose=${() => setSteering('')} />`}
     ${!terminal && html`<${BlockedSteps} view=${view} runId=${runId} api=${api} labelOf=${labelOf} onChanged=${onChanged} wizard=${wizard} />`}
+    ${!terminal && html`<${WaitingSteps} view=${view} runId=${runId} api=${api} labelOf=${labelOf} onChanged=${onChanged} wizard=${wizard} compact=${compact} />`}
     <${RunAmendments} view=${view} api=${api} onChanged=${onChanged} compact=${compact} />
     ${open.length > 0 && html`<ul class="pov-concerns">${open.map((concern) => html`<${ConcernCard} key=${concern.id}
       concern=${concern} runId=${runId} api=${api} onChanged=${onChanged} compact=${compact} />`)}</ul>`}
