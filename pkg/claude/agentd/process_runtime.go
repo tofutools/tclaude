@@ -860,6 +860,10 @@ func (m *processRunManager) drive(runID string, claim *processRunClaim, dispatch
 			// the two only coincide while a single command is in flight.
 			command := dispatch.Command()
 			authorization, ok := claim.run.AuthorizationFor(command.Program.Profile)
+			if command.Kind == engine.CommandMessage {
+				// A message runs no program: no program profile authorizes it.
+				authorization, ok = executor.Authorization{RunID: runID}, true
+			}
 			if !ok {
 				// Creation refuses this shape, but an old/future malformed row
 				// must still fail closed. Dropping the live permission makes the
@@ -1867,6 +1871,9 @@ func processRunViewWith(record *db.ProcessRun, accounted map[string]struct{}, cl
 			view.Wait = processRunWaitViewOf(command, waitTimers)
 			commands = append(commands, view)
 			continue
+		}
+		if command.Kind == engine.CommandMessage && command.Message != nil {
+			view.Program = "message to " + strings.Join(command.Message.To, ", ")
 		}
 		if command.Kind == engine.CommandAgent {
 			if command.Agent != nil {

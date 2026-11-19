@@ -312,6 +312,19 @@ Every performer starts with `kind` and may use shared `profile`, `timeout`, and
 - `kind: program`: require `run`; optional literal `args` and `timeout`.
   Saving still executes nothing. A later run needs its separate explicit
   program-execution opt-in and security review.
+- `kind: message` (a task only): sends a message and goes on, without
+  waiting for an answer. Require `text` and `to`; optional one-line
+  `subject` (default "<process>: <step name>"). `to` lists 1-8 recipients:
+  `operator` (a Messages card), `lead`, `group` (every member), `role:<role>`
+  or `agent:<name or id>`, all within the run's group. `subject` and `text`
+  read `{{params.x}}` and `{{ outputs.x }}` like a prompt. It passes once
+  everyone has it; a recipient it cannot reach (no member with that role)
+  fails the step and so the run, naming who, unless the step has `mayFail:
+  true`. `retry` resends only to who did not get it. For example:
+  `{type: task, name: Tell the reviewer, performer: {kind: message, to:
+  [role:reviewer], subject: "PR ready", text: "{{ outputs.pr }} is ready for
+  review."}, next: {pass: review}}`. Use it to tell someone something; use
+  an agent or a decision when the process needs an answer back.
 
 For compound task stages, each `plan`, `checks[]`, and `review` entry requires
 an `id` and a `performer`. Only `plan` accepts `approval: human|auto` and

@@ -90,6 +90,9 @@ type Run struct {
 	// explicitly reconcilable case: a cold load, a worker that never reported,
 	// or an observation that failed to commit.
 	dispatches map[string]*Dispatch
+	// abandoned are message commands this owner gave up on (Abandon): they
+	// are resumed by a fresh load, never by this one.
+	abandoned map[string]bool
 	// held is an operator pause. A held run still commits engine-owned
 	// advances and the outcomes of attempts already in flight, but plans no
 	// new task command until it is released.
@@ -242,14 +245,15 @@ func (r *Run) Action() Action {
 	}
 	action := Action{Status: r.checkpoint.Status}
 	for _, state := range r.Commands() {
-		if !state.Executing {
+		// A message nobody is sending is resumed, not reconciled (Prepare).
+		if !state.Executing && state.Command.Kind != engine.CommandMessage {
 			command := state.Command
 			action.Kind, action.Command = ActionNeedsReconcile, &command
 			return action
 		}
 	}
 	for i := range r.checkpoint.Commands {
-		if r.checkpoint.Commands[i].Kind == engine.CommandProgram {
+		if kind := r.checkpoint.Commands[i].Kind; kind == engine.CommandProgram || kind == engine.CommandMessage {
 			command := cloneCommand(r.checkpoint.Commands[i])
 			action.Kind, action.Command = ActionDispatch, &command
 			return action
@@ -312,7 +316,10 @@ func (r *Run) Commands() []CommandState {
 	for i := range r.checkpoint.Commands {
 		command := cloneCommand(r.checkpoint.Commands[i])
 		_, live := r.dispatches[command.NodeID]
-		states = append(states, CommandState{Command: command, Executing: live || command.Kind != engine.CommandProgram})
+		// Only a program or a message runs in a worker: anything else is
+		// with its performer (an agent, a person) whether or not one is live.
+		worker := command.Kind == engine.CommandProgram || command.Kind == engine.CommandMessage
+		states = append(states, CommandState{Command: command, Executing: live || !worker})
 	}
 	return states
 }
@@ -483,6 +490,18 @@ func Prepare(run *Run) (*Dispatch, error) {
 	}
 	if _, ok := run.firstUnaccountedCommand(); ok {
 		return nil, ErrNeedsReconcile
+	}
+	// A message command left unsent (the daemon stopped mid-send, or its
+	// worker reported nothing) is sent again: its sender skips who already
+	// has it, so unlike a program it is never ambiguous.
+	if command, ok := run.unsentMessage(); ok && run.checkpoint.Status == engine.RunRunning {
+		if err := persist(run, run.checkpoint, event("message_resumed", &command, EngineActor,
+			struct {
+				CommandID string `json:"commandId"`
+			}{command.ID})); err != nil {
+			return nil, err
+		}
+		return run.grant(command, nil), nil
 	}
 	for {
 		dispatch, opened, err := prepareOne(run)
@@ -1030,6 +1049,22 @@ func (r *Run) firstUnaccountedCommand() (engine.Command, bool) {
 	return engine.Command{}, false
 }
 
+// unsentMessage names the first message command this process holds no live
+// permission for.
+func (r *Run) unsentMessage() (engine.Command, bool) {
+	for i := range r.checkpoint.Commands {
+		if r.checkpoint.Commands[i].Kind != engine.CommandMessage {
+			continue
+		}
+		// One this owner gave up on (its result would not commit) waits for
+		// a fresh load, so a failure that repeats cannot resend it in a loop.
+		if _, live := r.dispatches[r.checkpoint.Commands[i].NodeID]; !live && !r.abandoned[r.checkpoint.Commands[i].ID] {
+			return cloneCommand(r.checkpoint.Commands[i]), true
+		}
+	}
+	return engine.Command{}, false
+}
+
 // grant records a live permission for one durable command. The caller must
 // already have committed that command.
 func (r *Run) grant(command engine.Command, bounds *ProgramBounds) *Dispatch {
@@ -1052,6 +1087,12 @@ func Abandon(run *Run, dispatch *Dispatch) {
 	if run.dispatches[dispatch.command.NodeID] == dispatch {
 		delete(run.dispatches, dispatch.command.NodeID)
 	}
+	if dispatch.command.Kind == engine.CommandMessage {
+		if run.abandoned == nil {
+			run.abandoned = make(map[string]bool, 1)
+		}
+		run.abandoned[dispatch.command.ID] = true
+	}
 }
 
 // Claim binds a permission to the authorization its owner resolved and marks it
@@ -1070,7 +1111,8 @@ func Claim(run *Run, dispatch *Dispatch, authorization Authorization) error {
 	if _, ok := findCommand(run.checkpoint, dispatch.command.ID, dispatch.command.NodeID); !ok {
 		return ErrStaleDispatch
 	}
-	if authorization.RunID != run.id || authorization.Profile != dispatch.command.Program.Profile {
+	// A message runs no program, so no program profile authorizes it.
+	if authorization.RunID != run.id || (dispatch.command.Kind != engine.CommandMessage && authorization.Profile != dispatch.command.Program.Profile) {
 		return ErrUnauthorized
 	}
 	// Last, and atomically: an unauthorized attempt must leave the permission
@@ -1183,6 +1225,8 @@ func advanceEvidence(command *engine.Command, bounds *ProgramBounds) []db.Proces
 		kind = "human_prepared"
 	case engine.CommandWait:
 		kind = "wait_prepared"
+	case engine.CommandMessage:
+		kind = "message_prepared"
 	}
 	return []db.ProcessRunEvent{event(kind, command, EngineActor,
 		preparedEvidence{Command: cloneCommand(*command), Bounds: bounds})}
@@ -1474,6 +1518,11 @@ func cloneCommand(command engine.Command) engine.Command {
 	if command.Agent != nil {
 		agent := *command.Agent
 		command.Agent = &agent
+	}
+	if command.Message != nil {
+		message := *command.Message
+		message.To = append([]string(nil), command.Message.To...)
+		command.Message = &message
 	}
 	return command
 }

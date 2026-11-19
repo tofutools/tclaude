@@ -21,6 +21,8 @@ func InterpolatePerformer(performer Performer, params map[string]string) Perform
 	performer.Prompt = interpolateParams(performer.Prompt, params)
 	performer.Ask = interpolateParams(performer.Ask, params)
 	performer.Run = interpolateParams(performer.Run, params)
+	performer.Subject = interpolateParams(performer.Subject, params)
+	performer.Text = interpolateParams(performer.Text, params)
 	if performer.Args != nil {
 		args := make([]string, len(performer.Args))
 		for i, arg := range performer.Args {

@@ -105,8 +105,8 @@ func CheckEligibility(tmpl *model.Template) model.Diagnostics {
 				agentTask := node.Type == model.NodeTypeTask && node.Performer != nil &&
 					node.Performer.Kind == model.PerformerAgent
 				if node.Type != model.NodeTypeTask || node.Performer == nil ||
-					(node.Performer.Kind != model.PerformerProgram && !agentTask) {
-					add("unsupported_retry", path+".retry", "only program and agent task retries are executable in this engine yet")
+					(node.Performer.Kind != model.PerformerProgram && node.Performer.Kind != model.PerformerMessage && !agentTask) {
+					add("unsupported_retry", path+".retry", "only program, agent and message task retries are executable in this engine yet")
 				} else {
 					if node.Retry.MaxAttempts <= 0 {
 						add("unsupported_retry", path+".retry.maxAttempts", "an executable retry requires a positive maxAttempts, which includes the first attempt")
@@ -173,14 +173,16 @@ func CheckEligibility(tmpl *model.Template) model.Diagnostics {
 			case model.NodeTypeTask:
 				switch {
 				case node.Performer == nil || (node.Performer.Kind != model.PerformerProgram && node.Performer.Kind != model.PerformerAgent &&
-					node.Performer.Kind != model.PerformerHuman):
-					add("unsupported_performer", path+".performer.kind", "this engine executes only program, agent and person task performers")
+					node.Performer.Kind != model.PerformerHuman && node.Performer.Kind != model.PerformerMessage):
+					add("unsupported_performer", path+".performer.kind", "this engine executes only program, agent, person and message task performers")
 				case node.Performer.Kind == model.PerformerHuman && node.IsCompound():
 					add("unsupported_performer", path+".performer.kind", "a step a person performs cannot have plan, check or review stages in this engine")
 				case node.Performer.Kind == model.PerformerHuman && strings.TrimSpace(node.Performer.Timeout) != "":
 					add("unsupported_timeout", path+".performer.timeout", "a step a person performs has no timeout in this engine")
 				case node.Performer.Kind == model.PerformerHuman && !HumanAssigneeSupported(node.Performer.Assignee):
 					add("unsupported_assignee", path+".performer.assignee", "only the operator performs a person's step today; leave assignee empty or set it to operator")
+				case node.Performer.Kind == model.PerformerMessage && node.IsCompound():
+					add("unsupported_performer", path+".performer.kind", "a message step has no plan, checks or review")
 				case node.Performer.Contact != nil:
 					add("unsupported_contact", path+".performer.contact", "performer contact schedules are not executable in this engine yet")
 				case node.Performer.Kind == model.PerformerAgent && strings.TrimSpace(node.Performer.Timeout) != "":

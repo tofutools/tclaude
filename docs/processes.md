@@ -933,6 +933,9 @@ name and needs the same permission.
   settled. A losing branch that *fails* still fails the run, exactly as under
   `join: all`. If the winner's route reaches a failed or canceled end, the run
   ends there and the losing branches' agent work is withdrawn (see above).
+- **Message steps** (`performer.kind: message`): a task that sends a
+  message and goes on, without waiting for an answer. See
+  [Message steps](#message-steps).
 - **Program performers** (`performer.kind: program`): executed as argv without
   a shell, with a bounded environment and bounded output, inside the run
   scope's bounds (see [Where program steps run](#run-scope)).
@@ -1468,6 +1471,55 @@ stale `--attempt` is refused and records nothing. The person, or anyone with
 Only the operator performs a person's step today: `assignee` may be empty or
 `operator`, and a run naming anyone else is refused when it starts. A person's
 step takes no `timeout` and no plan, check or review stages.
+
+## Message steps
+
+A message step tells someone something and goes on: a reviewer that a PR is
+ready, the operator that a release is out, the whole group that a stall
+reopened. It is a task whose performer is `kind: message`:
+
+```yaml
+tell-reviewer:
+  type: task
+  name: Tell the reviewer
+  performer:
+    kind: message
+    to: [role:reviewer, operator]
+    subject: "PR ready: {{ outputs.pr }}"
+    text: "{{params.task}} is up for review: {{ outputs.pr }}"
+  next: {pass: review}
+```
+
+- **`to`** lists 1-8 recipients: `operator` (a card in the dashboard's
+  Messages, with the desktop and away notifications you have set up),
+  `lead` (the run group's lead: its member with role `lead`, else its
+  owners), `group` (every active member), `role:<role>` (every member with
+  that role) or `agent:<name or id>` (one member). Recipients are looked up
+  in the run's group when the step runs; an agent outside it is not reached.
+  Someone named twice over (the lead, and the whole group) gets it once.
+- **`subject`** (optional, one line) and **`text`** read `{{params.x}}` and
+  `{{ outputs.x }}` like a prompt. An output no step has reported yet reads
+  "(x: none reported yet)". Without a subject, it is "<process>: <step
+  name>". Agents get it in their inbox as `[process <name>] <subject>`.
+- **It passes** once every recipient has it: the Messages card or the inbox
+  message is written. It does not wait for anyone to read or answer it.
+- **It fails** when a recipient cannot be reached: no member with that role,
+  no such agent, a run with no group. The reason names who
+  ("no member of webshop has role reviewer"), and as with any step, an
+  unhandled failure stops the run there and says so. `mayFail: true` goes on
+  instead, with `steps.<id>.result` `failed` for a rule to read. `retry`
+  sends again only to those that did not get it.
+- **Restarts.** Unlike a program, a message is safe to send again, so one
+  the daemon stopped mid-send is resumed (`message_resumed`) rather than
+  left for an operator to reconcile. Each delivery is recorded as it is
+  made, so who already had it is skipped, except in the rare case the
+  daemon stopped between writing a message and recording it.
+- **Length.** Outputs are filled in when it is sent; a text that grows past
+  16 KiB that way is cut, and says so.
+- **Pause and cancel** apply as to any step: a paused run sends nothing new,
+  and a canceled one nothing more. A message already sent is not taken back.
+- Its events are `message_prepared` and `message_sent`, the latter with the
+  subject and text as sent and who got it.
 
 ## Crashes and reconciliation
 

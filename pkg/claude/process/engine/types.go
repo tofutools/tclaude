@@ -79,6 +79,10 @@ const (
 	// in its timer record, and settles it through the observation transition
 	// once the deadline passes or someone skips the wait.
 	CommandWait CommandKind = "wait"
+	// CommandMessage sends a message and settles at once. A worker performs
+	// it like a program, through the daemon's sender; unlike a program it is
+	// safe to perform again, so an interrupted one is resumed, not reconciled.
+	CommandMessage CommandKind = "message"
 )
 
 // External reports whether a command of this kind is accounted for outside
@@ -286,6 +290,8 @@ type Command struct {
 	Agent   *AgentCommand  `json:"agent,omitempty"`
 	Human   *HumanCommand  `json:"human,omitempty"`
 	Wait    *WaitCommand   `json:"wait,omitempty"`
+	// Message is the message a message command sends.
+	Message *MessageCommand `json:"message,omitempty"`
 	// Round and Rounds place a command of a loop body: the round of its
 	// innermost loop and that loop's limit. Zero outside loops.
 	Round  int `json:"round,omitempty"`
@@ -376,6 +382,16 @@ type AgentCommand struct {
 	// RetryMode is the authored on-fail mode for the node's next attempt:
 	// model.RetryModeFreshAttempt or model.RetryModeFeedbackSameSession.
 	RetryMode string `json:"retryMode,omitempty"`
+}
+
+// MessageCommand is the bound message of one message step attempt: its
+// recipients as authored (model.MessageTo*), and its subject and text with
+// the run's params filled in. Step outputs ({{ outputs.x }}) are filled in
+// when it is sent, from what the run's steps reported by then.
+type MessageCommand struct {
+	To      []string `json:"to"`
+	Subject string   `json:"subject,omitempty"`
+	Text    string   `json:"text"`
 }
 
 type ProgramCommand struct {

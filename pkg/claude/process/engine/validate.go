@@ -70,9 +70,10 @@ const (
 type definitionNode struct {
 	id      string
 	kind    definitionNodeKind
-	program ProgramCommand // program task nodes only
-	agent   *AgentCommand  // agent task nodes only
-	human   *HumanCommand  // task nodes a person performs only
+	program ProgramCommand  // program task nodes only
+	agent   *AgentCommand   // agent task nodes only
+	human   *HumanCommand   // task nodes a person performs only
+	message *MessageCommand // message task nodes only
 	// ask is what a person deciding a decision (or casting a gate vote) is
 	// asked, parameters filled in; empty when nobody authored one.
 	ask  humanAsk
@@ -333,6 +334,14 @@ func prepareScope(definition *Definition, tmpl *model.Template, params map[strin
 				}
 				human.Captures = slices.Clone(node.Captures)
 				prepared.human = human
+				break
+			}
+			if node.Performer.Kind == model.PerformerMessage {
+				message, err := bindMessage(id, *node.Performer, params)
+				if err != nil {
+					return err
+				}
+				prepared.message = message
 				break
 			}
 			program, err := bindProgram(id, *node.Performer, params)
@@ -800,6 +809,24 @@ func bindProgram(nodeID string, performer model.Performer, params map[string]str
 		Args:    append([]string(nil), bound.Args...),
 		Timeout: bound.Timeout,
 	}, nil
+}
+
+// bindMessage binds a message performer to its run parameters. Like a
+// prompt, text that names a parameter the run does not supply fails
+// preparation rather than sending a message with a hole in it.
+func bindMessage(nodeID string, performer model.Performer, params map[string]string) (*MessageCommand, error) {
+	for _, field := range []struct{ name, value string }{{"subject", performer.Subject}, {"text", performer.Text}} {
+		for _, reference := range model.ParamReferences(field.value) {
+			if _, ok := params[reference]; !ok {
+				return nil, fmt.Errorf("%w: node %q message %s parameter %q is missing", ErrInvalidProgramBinding, nodeID, field.name, reference)
+			}
+		}
+	}
+	bound := model.InterpolatePerformer(performer, params)
+	if strings.TrimSpace(bound.Text) == "" {
+		return nil, fmt.Errorf("%w: node %q message text is blank after interpolation", ErrInvalidProgramBinding, nodeID)
+	}
+	return &MessageCommand{To: slices.Clone(bound.To), Subject: bound.Subject, Text: bound.Text}, nil
 }
 
 // bindAgent binds one agent performer slot to its run parameters. A prompt that
@@ -1656,6 +1683,10 @@ func commandsEqual(left, right Command) bool {
 		return false
 	}
 	if (left.Wait == nil) != (right.Wait == nil) || (left.Wait != nil && *left.Wait != *right.Wait) {
+		return false
+	}
+	if (left.Message == nil) != (right.Message == nil) || (left.Message != nil &&
+		(!slices.Equal(left.Message.To, right.Message.To) || left.Message.Subject != right.Message.Subject || left.Message.Text != right.Message.Text)) {
 		return false
 	}
 	return left.ID == right.ID && left.Kind == right.Kind && left.NodeID == right.NodeID &&
