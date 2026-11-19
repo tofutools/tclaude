@@ -122,17 +122,20 @@ export function waitReason(run) {
   return WAIT_REASONS[run?.action] || 'It waits on you';
 }
 
+// runWaits are a run's waiting wait steps in a few words each, for its card:
+// "⏳ Cool off: 2h 13m left".
+export function runWaits(run, now = Date.now()) {
+  return (run?.nodes || []).filter((node) => node?.wait)
+    .map((node) => `${node.wait.check ? '↻' : '⏳'} ${node.label || node.id}: ${waitShort({ wait: node.wait }, now)}`);
+}
+
 // runPosition is where a run stands, in words: the step it waits or works on
 // and its place in the run, or how it ended.
 export function runPosition(run) {
   const steps = runSteps(run);
   const waiting = steps.findIndex((step) => step.state === 'waiting');
   const at = waiting >= 0 ? waiting : steps.findIndex((step) => step.state === 'running' || step.state === 'failed');
-  if (at >= 0) {
-    // A waiting wait step says how long it has left, or its check.
-    const wait = steps[at].wait || (run?.nodes || []).find((node) => node.id === steps[at].id)?.wait;
-    return `step ${at + 1}/${steps.length} · ${steps[at].label}${wait ? ` · ${waitShort({ wait })}` : ''}`;
-  }
+  if (at >= 0) return `step ${at + 1}/${steps.length} · ${steps[at].label}`;
   const status = String(run?.status || '').toLowerCase();
   if (status && status !== 'running') {
     const when = relTime(run.updatedAt);
@@ -176,6 +179,7 @@ function RunRow({ item, waiting, onOpen }) {
       <span class="phone-run-text">
         <span class="phone-run-name">${runName(run)}</span>
         <span class="phone-run-sub">${[where, runPosition(run)].filter(Boolean).join(' · ')}</span>
+        ${runWaits(run).map((line) => html`<span key=${line} class="phone-run-wait" data-run-wait-line>${line}</span>`)}
         ${run.scope?.task && html`<span class="phone-run-task" data-run-task=${run.scope.task}>◈ for task: ${run.scope.taskTitle || run.scope.task}</span>`}
         ${run.concerns > 0 && html`<span class="phone-run-concerns" data-run-concerns=${run.concerns}>⚑ ${run.concernsForYou
           ? `${run.concernsForYou === 1 ? 'a concern waits' : `${run.concernsForYou} concerns wait`} on you`
@@ -478,7 +482,9 @@ export function RunPage({ runId, back, active = true, api = runDetailApi, source
         const who = mine ? 'you' : (step.performer?.label || step.performer?.name || '');
         // A finished step says who did it and when.
         const when = step.state === 'done' || step.state === 'failed' ? relTime(lastEvent.get(String(step.id))?.occurredAt) : '';
-        const meta = mine ? 'you' : [who, when].filter(Boolean).join(' · ');
+        // A waiting wait step says how long it has left, or its check.
+        const waits = step.wait ? waitShort({ wait: step.wait }) : '';
+        const meta = mine ? 'you' : waits || [who, when].filter(Boolean).join(' · ');
         return html`<li key=${step.id} class=${`phone-run-step s-${step.state}${mine ? ' mine' : ''}`}>
           <span class="phone-run-dot" aria-hidden="true"></span>
           <span class="phone-run-step-label">${step.label}</span>

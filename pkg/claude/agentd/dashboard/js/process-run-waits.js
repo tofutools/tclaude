@@ -71,8 +71,7 @@ export function WaitingSteps({ view, runId, api, labelOf = (id) => id, onChanged
     const line = waitLine(command, now);
     const between = command.kind === 'wait' && !!command.wait?.check;
     return html`<li key=${command.commandId} class="prw-wait" data-run-wait=${command.nodeId}>
-      <div class="prw-line"><b>${line.check ? '↻' : '⏳'} ${label}</b>
-        <span class=${line.failing ? 'ui-error' : 'prw-status'} data-run-wait-status>${line.check ? (wizard ? 'watches' : 'waits until its condition holds') : (wizard ? 'slumbers' : 'waits')}: ${line.text}</span></div>
+      <div class="prw-line"><b>${line.check ? '↻' : '⏳'} ${label}</b>${' '}<span class=${line.failing ? 'ui-error' : 'prw-status'} data-run-wait-status>${line.check ? (wizard ? 'watches' : 'waits until its condition holds') : (wizard ? 'slumbers' : 'waits')}: ${line.text}</span></div>
       ${(api?.skipWait || api?.checkNow) && html`<div class="prw-actions">
         ${between && api?.checkNow && html`<${Button} size="sm" disabled=${!!busy} data-run-wait-check-now
           title=${`Make ${label}'s next check now; its count and limits stay as they are`}

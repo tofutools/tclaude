@@ -87,6 +87,14 @@ func SweepProcessWaitsForTest() {
 	WaitForProcessDispatchForTest()
 }
 
+// StartProcessWaitLoopForTest runs the daemon's wait loop until the test
+// ends, as serve does: waits get their deadlines and end on time.
+func StartProcessWaitLoopForTest(t interface{ Cleanup(func()) }) {
+	stop := make(chan struct{})
+	go runProcessWaitLoop(stop)
+	t.Cleanup(func() { close(stop) })
+}
+
 // MarkProcessRunCanceledForTest gives a run up in its stored checkpoint alone,
 // as a cancel the daemon stopped in the middle of would leave it: canceled,
 // with its outstanding commands not yet withdrawn.
