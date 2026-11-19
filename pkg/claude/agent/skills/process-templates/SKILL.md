@@ -195,7 +195,7 @@ warns when placed in inert fields such as profile, timeout, or backoff.
   (at least one), `maxFailedChecks` (in a row, default 3), and `onLimit:
   fail` (default: the step fails, naming it) or `timedOut` (then `next` has
   exactly `met` and `timedOut`). The first check is made straight away;
-  `skip-wait` ends it as met.
+  `skip-wait` ends it as met (between checks, not while one is out).
 - `parallel`: fan out to concurrent branches, one `next` outcome per branch,
   which all meet at one node carrying `join: all` (wait for every branch) or
   `join: any` (the first wins):

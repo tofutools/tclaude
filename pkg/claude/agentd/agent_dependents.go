@@ -171,6 +171,14 @@ func pinnedSteps(tmpl *model.Template, visit func(node, slot string, p *model.Pe
 			touch(slot, &checks[i].Performer)
 		}
 		node.Checks = checks
+		if node.Wait != nil && node.Wait.Check != nil && node.Wait.Check.Performer != nil {
+			wait, check := *node.Wait, *node.Wait.Check
+			performer := *check.Performer
+			touch("wait check", &performer)
+			check.Performer = &performer
+			wait.Check = &check
+			node.Wait = &wait
+		}
 		if changed {
 			tmpl.Nodes[id] = node
 		}

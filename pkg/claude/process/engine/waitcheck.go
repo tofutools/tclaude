@@ -163,7 +163,7 @@ func fillWaitCheckCommand(checkpoint Checkpoint, node definitionNode, command *C
 	} else {
 		wait.Duration = node.check.spec.Interval(state.Checks).String()
 		if node.check.within > 0 {
-			wait.Until = state.StartedAt.Add(node.check.within).UTC().Format(time.RFC3339)
+			wait.Until = waitCheckLimit(*state.StartedAt, node.check.within).Format(time.RFC3339)
 		}
 	}
 	command.Wait = wait
@@ -175,6 +175,11 @@ func applyWaitCheckObservation(next *Checkpoint, definition *Definition, index i
 	node := definition.nodes[index]
 	check := node.check
 	state := next.WaitChecks[node.id]
+	if command.Kind == CommandAgent && observation.Outcome == ProgramSucceeded &&
+		!slices.Contains(waitCheckVerdicts, observation.Verdict) {
+		// Refused, state untouched: the agent is told and can answer again.
+		return fmt.Errorf("%w: wait %q is answered yes or no, not %q", ErrInvalidDecisionVerdict, node.id, observation.Verdict)
+	}
 	removeCommand(next, node.id)
 	if command.Kind == CommandWait {
 		if observation.Outcome == ProgramFailed {
@@ -191,7 +196,7 @@ func applyWaitCheckObservation(next *Checkpoint, definition *Definition, index i
 		if state.StartedAt == nil {
 			started := observation.Wait.StartedAt.UTC()
 			state.StartedAt = &started
-		} else if check.within > 0 && !observation.Wait.DueAt.Before(state.StartedAt.Add(check.within)) {
+		} else if check.within > 0 && !observation.Wait.DueAt.Before(waitCheckLimit(*state.StartedAt, check.within)) {
 			return limitWaitCheck(next, definition, index, state, fmt.Sprintf("not met within %s (%d checks)", check.spec.Within, state.Checks))
 		}
 		if check.rule != nil {
@@ -204,7 +209,7 @@ func applyWaitCheckObservation(next *Checkpoint, definition *Definition, index i
 			return afterWaitCheck(next, definition, index, state)
 		}
 		state.Phase = waitPhaseCheck
-		return readyWaitCheck(next, node, state)
+		return readyWaitCheck(next, definition, index, state)
 	}
 	// A check's answer.
 	state.Checks++
@@ -247,12 +252,20 @@ func afterWaitCheck(next *Checkpoint, definition *Definition, index int, state W
 		return limitWaitCheck(next, definition, index, state, fmt.Sprintf("not met after %d checks", state.Checks))
 	}
 	state.Phase = waitPhaseTimer
-	return readyWaitCheck(next, node, state)
+	return readyWaitCheck(next, definition, index, state)
 }
 
-// readyWaitCheck readies the node for its next command.
-func readyWaitCheck(next *Checkpoint, node definitionNode, state WaitCheckState) error {
+// readyWaitCheck readies the node for its next command. In a run another
+// branch doomed, planning is off and a re-readied node would never run: the
+// wait ends failed, as any task's failure there does, so the run can finish.
+func readyWaitCheck(next *Checkpoint, definition *Definition, index int, state WaitCheckState) error {
+	node := definition.nodes[index]
 	putWaitCheckState(next, node.id, state)
+	if doomed(*next) {
+		next.Nodes[node.id] = NodeFailed
+		abandonAfterDoom(next, definition)
+		return nil
+	}
 	next.Nodes[node.id] = NodeReady
 	return nil
 }
@@ -353,4 +366,10 @@ func waitRuleHolds(checkpoint Checkpoint, node definitionNode) bool {
 	ruled := node
 	ruled.rule = node.check.rule
 	return evaluateRule(checkpoint, ruled).Outcome == model.WaitOutcomeMet
+}
+
+// waitCheckLimit is when a within limit runs out, to the second: the timer's
+// until is RFC3339 whole seconds, and the limit test must match what it says.
+func waitCheckLimit(startedAt time.Time, within time.Duration) time.Time {
+	return startedAt.Add(within).UTC().Truncate(time.Second)
 }

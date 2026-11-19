@@ -1094,7 +1094,8 @@ wait_ready:
   met after 20 checks"); `onLimit: timedOut` takes the `timedOut` route
   instead. A wait that holds takes `met` (or its one route).
 - `tclaude process show` says how many checks were made, the last answer, and
-  when the next check is. `skip-wait` ends the wait as met.
+  when the next check is. `skip-wait` ends the wait as met between checks;
+  while a check is out it is refused, so try again once it answers.
 
 ## What does not execute yet
 

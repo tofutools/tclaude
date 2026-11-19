@@ -2,6 +2,7 @@ package engine
 
 import (
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -244,5 +245,83 @@ func TestCheckWaitRuleHoldsAsSoonAsAnotherBranchMakesIt(t *testing.T) {
 	}
 	if len(checkpoint.Commands) != 0 {
 		t.Fatalf("the hour's timer is withdrawn: %#v", checkpoint.Commands)
+	}
+}
+
+// A check that answers "not yet" after another branch doomed the run ends
+// the wait, so the run can finish instead of waiting on a node nothing plans.
+func TestCheckWaitInADoomedRunEnds(t *testing.T) {
+	tmpl := &model.Template{
+		APIVersion: model.APIVersion, Kind: model.Kind, ID: "doomed-wait", Start: "start",
+		Nodes: map[string]model.Node{
+			"start": {Type: model.NodeTypeStart, Next: model.Next{model.DefaultOutcome: "fork"}},
+			"fork":  {Type: model.NodeTypeParallel, Next: model.Next{"work": "work", "hold": "hold"}},
+			"work":  programTask("join", "build"),
+			"hold": {Type: model.NodeTypeWait, Next: model.Next{model.DefaultOutcome: "join"},
+				Wait: &model.WaitConfig{Check: &model.WaitCheck{
+					Performer: &model.Performer{Kind: model.PerformerProgram, Run: "./ready.sh"}, Every: "1m", MaxChecks: 5}}},
+			"join": {Type: model.NodeTypeEnd, Join: model.JoinAll},
+		},
+	}
+	definition := mustPrepare(t, tmpl, nil)
+	checkpoint, err := Initialize("run-doomed-wait", definition)
+	if err != nil {
+		t.Fatal(err)
+	}
+	commands := map[string]*Command{}
+	for range 2 {
+		var command *Command
+		checkpoint, command = advanceAndPlan(t, checkpoint, definition)
+		commands[command.NodeID] = command
+	}
+	checkpoint = mustApplyT(t, checkpoint, definition, timerDue(commands["hold"], checkStart, checkStart))
+	checkpoint, check := advanceAndPlan(t, checkpoint, definition)
+	if check == nil || check.Kind != CommandProgram {
+		t.Fatalf("check = %#v", check)
+	}
+	checkpoint = mustApplyT(t, checkpoint, definition, observed(commands["work"], ProgramFailed, 2))
+	checkpoint = mustApplyT(t, checkpoint, definition, observed(check, ProgramFailed, 1))
+	if checkpoint.Status != RunFailed || checkpoint.Failure == nil || checkpoint.Failure.NodeID != "work" {
+		t.Fatalf("the run finishes failed, naming work: %s %#v %#v", checkpoint.Status, checkpoint.Failure, checkpoint.Nodes)
+	}
+}
+
+// An agent check's answer other than yes or no is refused, the check still
+// out, so the agent can answer again; it is not a failed check.
+func TestCheckWaitRefusesAVerdictOtherThanYesOrNo(t *testing.T) {
+	definition, checkpoint := mustCheckWait(t, model.WaitCheck{
+		Performer: &model.Performer{Kind: model.PerformerAgent, Prompt: "Is it ready?", Anyone: true},
+		Every:     "10m", MaxChecks: 3,
+	})
+	checkpoint, timer := advanceAndPlan(t, checkpoint, definition)
+	checkpoint = mustApplyT(t, checkpoint, definition, timerDue(timer, checkStart, checkStart))
+	checkpoint, check := advanceAndPlan(t, checkpoint, definition)
+	maybe := observed(check, ProgramSucceeded, 0)
+	maybe.Observation.Verdict = "maybe"
+	if _, err := Apply(checkpoint, definition, maybe); !errors.Is(err, ErrInvalidDecisionVerdict) {
+		t.Fatalf("maybe is refused, got %v", err)
+	}
+}
+
+// within is measured to the second the timer's until says: a start with a
+// fraction of a second still ends at the timer that is due at the limit.
+func TestCheckWaitWithinMatchesTheTimersSecond(t *testing.T) {
+	definition, checkpoint := mustCheckWait(t, model.WaitCheck{
+		Performer: &model.Performer{Kind: model.PerformerProgram, Run: "./ready.sh"},
+		Every:     "5m", Within: "5m", OnLimit: model.WaitOnLimitTimedOut,
+	})
+	started := checkStart.Add(400 * time.Millisecond)
+	checkpoint, timer := advanceAndPlan(t, checkpoint, definition)
+	checkpoint = mustApplyT(t, checkpoint, definition, timerDue(timer, started, started))
+	checkpoint, check := advanceAndPlan(t, checkpoint, definition)
+	checkpoint = mustApplyT(t, checkpoint, definition, observed(check, ProgramFailed, 1))
+	checkpoint, timer = advanceAndPlan(t, checkpoint, definition)
+	due, err := time.Parse(time.RFC3339, timer.Wait.Until)
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkpoint = mustApplyT(t, checkpoint, definition, timerDue(timer, started, due))
+	if checkpoint.Nodes["late"] != NodeReady {
+		t.Fatalf("the limit is reached at the timer's until: %#v", checkpoint.Nodes)
 	}
 }
