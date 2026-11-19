@@ -181,6 +181,9 @@ type DecisionInput struct {
 	// CurrentWindow says the caller named no window: an authored decision
 	// then takes its current one. A plan-approval gate still needs Attempt.
 	CurrentWindow bool
+	// Outputs are what a person fills in when they finish a step they
+	// perform (a task node's captures). Refused on a decision.
+	Outputs map[string]string
 }
 
 // ResolutionInput is one attempt at resolving a parked branch. It is bound to
@@ -246,7 +249,7 @@ func (r *Run) Action() Action {
 		}
 	}
 	for i := range r.checkpoint.Commands {
-		if r.checkpoint.Commands[i].Kind != engine.CommandAgent {
+		if r.checkpoint.Commands[i].Kind == engine.CommandProgram {
 			command := cloneCommand(r.checkpoint.Commands[i])
 			action.Kind, action.Command = ActionDispatch, &command
 			return action
@@ -260,6 +263,12 @@ func (r *Run) Action() Action {
 		obligation := r.checkpoint.AwaitingDecisions[0]
 		action.Kind = ActionAwaitDecision
 		action.Decision = &obligation
+		return action
+	}
+	// A step a person performs waits on them exactly as a decision does.
+	if steps := r.HumanCommands(); len(steps) > 0 {
+		action.Kind = ActionAwaitDecision
+		action.Decision = &engine.DecisionObligation{NodeID: steps[0].NodeID}
 		return action
 	}
 	if len(r.checkpoint.Blocked) > 0 {
@@ -303,7 +312,7 @@ func (r *Run) Commands() []CommandState {
 	for i := range r.checkpoint.Commands {
 		command := cloneCommand(r.checkpoint.Commands[i])
 		_, live := r.dispatches[command.NodeID]
-		states = append(states, CommandState{Command: command, Executing: live || command.Kind == engine.CommandAgent})
+		states = append(states, CommandState{Command: command, Executing: live || command.Kind != engine.CommandProgram})
 	}
 	return states
 }
@@ -318,6 +327,21 @@ func (r *Run) AgentCommands() []engine.Command {
 	var commands []engine.Command
 	for i := range r.checkpoint.Commands {
 		if r.checkpoint.Commands[i].Kind == engine.CommandAgent {
+			commands = append(commands, cloneCommand(r.checkpoint.Commands[i]))
+		}
+	}
+	return commands
+}
+
+// HumanCommands reports every open step a person performs. Unlike an agent
+// command, one takes no concurrency slot: nothing runs while it is open.
+func (r *Run) HumanCommands() []engine.Command {
+	if r == nil {
+		return nil
+	}
+	var commands []engine.Command
+	for i := range r.checkpoint.Commands {
+		if r.checkpoint.Commands[i].Kind == engine.CommandHuman {
 			commands = append(commands, cloneCommand(r.checkpoint.Commands[i]))
 		}
 	}
@@ -445,17 +469,30 @@ func Prepare(run *Run) (*Dispatch, error) {
 	if _, ok := run.firstUnaccountedCommand(); ok {
 		return nil, ErrNeedsReconcile
 	}
+	for {
+		dispatch, opened, err := prepareOne(run)
+		// A step a person performs is open once it is committed: there is
+		// nothing to dispatch and it takes no slot, so planning goes on.
+		if err != nil || !opened {
+			return dispatch, err
+		}
+	}
+}
+
+// prepareOne commits one advance or planned command. opened reports a
+// person's step it opened, which needs no dispatch.
+func prepareOne(run *Run) (*Dispatch, bool, error) {
 	if run.checkpoint.Status != engine.RunRunning || run.held {
-		return nil, nil
+		return nil, false, nil
 	}
 	next, command, advanced, err := engine.AdvanceAndPlan(run.checkpoint, run.definition)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	if !advanced {
 		// Quiescent: every live branch is waiting on an external actor, so there
 		// is nothing to commit and a resume must not bump the state version.
-		return nil, nil
+		return nil, false, nil
 	}
 	// An advance has no triggering input of its own: the settlement it commits
 	// is what wins a join, and everything advanceEvidence reports — a parked
@@ -464,12 +501,15 @@ func Prepare(run *Run) (*Dispatch, error) {
 	events := commitEvidence(run.definition, run.checkpoint, next,
 		nil, advanceEvidence(command, bounds), true)
 	if err := persistEvents(run, next, events); err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	if command == nil {
-		return nil, nil
+		return nil, false, nil
 	}
-	return run.grant(*command, bounds), nil
+	if command.Kind == engine.CommandHuman {
+		return nil, true, nil
+	}
+	return run.grant(*command, bounds), false, nil
 }
 
 // Reissue durably records the operator's explicit retry decision before it
@@ -558,6 +598,12 @@ func RecordDecision(run *Run, actor string, input DecisionInput) error {
 	if run == nil || run.definition == nil {
 		return ErrInvalidRun
 	}
+	if command, ok := openHumanCommand(run.checkpoint, input.NodeID); ok {
+		return recordHumanStep(run, actor, command, input)
+	}
+	if len(input.Outputs) > 0 {
+		return fmt.Errorf("%w: a decision takes no outputs", ErrInvalidDecisionInput)
+	}
 	if _, approval := run.definition.ApprovalAttempt(run.checkpoint, input.NodeID); input.CurrentWindow && !approval {
 		input.Attempt = run.definition.RequiredDecisionAttempt(run.checkpoint, input.NodeID)
 	}
@@ -577,6 +623,99 @@ func RecordDecision(run *Run, actor string, input DecisionInput) error {
 	}
 	events := commitEvidence(run.definition, run.checkpoint, next, causal, nil, false)
 	return persistEvents(run, next, events)
+}
+
+// openHumanCommand is the open step a person performs at nodeID, if any.
+func openHumanCommand(checkpoint engine.Checkpoint, nodeID string) (engine.Command, bool) {
+	for i := range checkpoint.Commands {
+		if command := checkpoint.Commands[i]; command.NodeID == nodeID && command.Kind == engine.CommandHuman && command.Human != nil {
+			return cloneCommand(command), true
+		}
+	}
+	return engine.Command{}, false
+}
+
+// MaxHumanStepOutputBytes bounds one output a person fills in, as an agent's.
+const MaxHumanStepOutputBytes = db.MaxProcessDispatchOutputBytes
+
+// HumanReportedEvidence is the payload of a human_reported event: the record of a person finishing a step they
+// perform. Outputs are kept here, where a later step's prompt reads them.
+type HumanReportedEvidence struct {
+	Choice  string                `json:"choice"`
+	Outcome engine.ProgramOutcome `json:"outcome"`
+	Note    string                `json:"note,omitempty"`
+	Attempt int                   `json:"attempt"`
+	Outputs map[string]string     `json:"outputs,omitempty"`
+}
+
+// recordHumanStep settles an open step a person performs with the choice they
+// finished it with. It goes through the same observation transition an agent's
+// report does, so retries, may-fail, parking, and failing the run behave
+// identically. A success must fill in every declared output (with one, the
+// note stands in for it); anything else is refused and nothing is recorded.
+func recordHumanStep(run *Run, actor string, command engine.Command, input DecisionInput) error {
+	if !input.CurrentWindow && input.Attempt != command.Attempt {
+		return fmt.Errorf("%w: step %q is open at attempt %d, not %d", engine.ErrStaleDecision, command.NodeID, command.Attempt, input.Attempt)
+	}
+	outcome, ok := command.Human.Outcome(input.Verdict)
+	if !ok {
+		return fmt.Errorf("%w: %q is not one of step %q's choices: %s", engine.ErrInvalidDecisionVerdict,
+			input.Verdict, command.NodeID, strings.Join(command.Human.Choices, ", "))
+	}
+	outputs, err := humanStepOutputs(command.Human.Captures, outcome, input)
+	if err != nil {
+		return err
+	}
+	observation := engine.ProgramObservation{CommandID: command.ID, NodeID: command.NodeID, Outcome: outcome, Outputs: outputs}
+	if outcome == engine.ProgramFailed {
+		observation.ExitCode = 1
+		observation.Error = strings.TrimSpace(input.Evidence)
+		if observation.Error == "" {
+			observation.Error = fmt.Sprintf("finished as %q", input.Verdict)
+		}
+	}
+	next, err := engine.Apply(run.checkpoint, run.definition, engine.Transition{
+		Kind: engine.TransitionProgramObserved, Observation: &observation,
+	})
+	if err != nil {
+		return err
+	}
+	causal := append([]db.ProcessRunEvent{event("human_reported", &command, actor, HumanReportedEvidence{
+		Choice: input.Verdict, Outcome: outcome, Note: input.Evidence, Attempt: command.Attempt, Outputs: outputs,
+	})}, causedStageReset(run.definition, command.NodeID, run.checkpoint, next)...)
+	events := commitEvidence(run.definition, run.checkpoint, next, causal, nil, false)
+	return persistEvents(run, next, events)
+}
+
+// humanStepOutputs checks the outputs a person filled in against the ones
+// their step declares, as an agent's report is checked.
+func humanStepOutputs(declared []string, outcome engine.ProgramOutcome, input DecisionInput) (map[string]string, error) {
+	for name := range input.Outputs {
+		if !slices.Contains(declared, name) {
+			if len(declared) == 0 {
+				return nil, fmt.Errorf("%w: this step declares no outputs; %q is not one", ErrInvalidDecisionInput, name)
+			}
+			return nil, fmt.Errorf("%w: this step's outputs are %s; %q is not one of them", ErrInvalidDecisionInput, strings.Join(declared, ", "), name)
+		}
+	}
+	if outcome != engine.ProgramSucceeded || len(declared) == 0 {
+		return nil, nil
+	}
+	outputs := make(map[string]string, len(declared))
+	for _, name := range declared {
+		value := strings.TrimSpace(input.Outputs[name])
+		if value == "" && len(declared) == 1 {
+			value = strings.TrimSpace(input.Evidence)
+		}
+		if value == "" {
+			return nil, fmt.Errorf("%w: this step needs its output %q filled in (--output %s=<value>)", ErrInvalidDecisionInput, name, name)
+		}
+		if len(value) > MaxHumanStepOutputBytes || !utf8.ValidString(value) {
+			return nil, fmt.Errorf("%w: output %q must be at most %d bytes of UTF-8", ErrInvalidDecisionInput, name, MaxHumanStepOutputBytes)
+		}
+		outputs[name] = value
+	}
+	return outputs, nil
 }
 
 // verdictEvidence is the evidence one committed verdict leaves, whoever
@@ -840,7 +979,7 @@ func reconcileCommand(run *Run, selector string, includeAgent bool) (engine.Comm
 	}
 	var candidates []engine.Command
 	for _, state := range run.Commands() {
-		if !state.Executing || (includeAgent && state.Command.Kind == engine.CommandAgent) {
+		if !state.Executing || (includeAgent && state.Command.Kind != engine.CommandProgram) {
 			candidates = append(candidates, state.Command)
 		}
 	}
@@ -866,7 +1005,7 @@ func reconcileCommand(run *Run, selector string, includeAgent bool) (engine.Comm
 // process no longer holds a live permission for.
 func (r *Run) firstUnaccountedCommand() (engine.Command, bool) {
 	for i := range r.checkpoint.Commands {
-		if r.checkpoint.Commands[i].Kind == engine.CommandAgent {
+		if r.checkpoint.Commands[i].Kind != engine.CommandProgram {
 			continue
 		}
 		if _, live := r.dispatches[r.checkpoint.Commands[i].NodeID]; !live {
@@ -1022,8 +1161,11 @@ func advanceEvidence(command *engine.Command, bounds *ProgramBounds) []db.Proces
 		return nil
 	}
 	kind := "program_prepared"
-	if command.Kind == engine.CommandAgent {
+	switch command.Kind {
+	case engine.CommandAgent:
 		kind = "agent_prepared"
+	case engine.CommandHuman:
+		kind = "human_prepared"
 	}
 	return []db.ProcessRunEvent{event(kind, command, EngineActor,
 		preparedEvidence{Command: cloneCommand(*command), Bounds: bounds})}
@@ -1107,7 +1249,7 @@ func commitEvidence(definition *engine.Definition, before, after engine.Checkpoi
 	// what the advance went on from.
 	input = append(slices.Clone(input), gateEvidence(definition, before, after)...)
 	input = append(input, ruleEvidence(definition, before, after)...)
-	blocked := blockedEvidence(before, after)
+	blocked := append(blockedEvidence(before, after), withdrawnHumanEvidence(before, after, input)...)
 	awaited := awaitedEvidence(definition, before, after)
 	joins := joinEvidence(definition, before, after,
 		db.MaxProcessRunEventsPerTransition-len(input)-len(blocked)-len(awaited)-len(advance))
@@ -1134,6 +1276,27 @@ func commitEvidence(definition *engine.Definition, before, after engine.Checkpoi
 		if events[index].OccurredAt.Before(events[index-1].OccurredAt) {
 			events[index].OccurredAt = events[index-1].OccurredAt
 		}
+	}
+	return events
+}
+
+// withdrawnHumanEvidence records each open step a person performs that this
+// transition withdrew because the run is ending (engine abandonAfterDoom). A
+// step the input itself settled is the input's own evidence.
+func withdrawnHumanEvidence(before, after engine.Checkpoint, input []db.ProcessRunEvent) []db.ProcessRunEvent {
+	if !engine.Draining(after) {
+		return nil
+	}
+	var events []db.ProcessRunEvent
+	for _, command := range before.Commands {
+		if command.Kind != engine.CommandHuman || slices.ContainsFunc(after.Commands, func(c engine.Command) bool { return c.ID == command.ID }) ||
+			slices.ContainsFunc(input, func(e db.ProcessRunEvent) bool { return e.NodeID == command.NodeID }) {
+			continue
+		}
+		events = append(events, event("human_withdrawn", &command, EngineActor, struct {
+			Attempt int    `json:"attempt"`
+			Reason  string `json:"reason"`
+		}{Attempt: command.Attempt, Reason: "the run is ending"}))
 	}
 	return events
 }

@@ -85,6 +85,14 @@ type processRunPauseJSON struct {
 type processRunDecisionJSON struct {
 	NodeID   string   `json:"nodeId"`
 	Verdicts []string `json:"verdicts"`
+	// Kind is "decision" or "task" (a step a person performs); Ask and
+	// Prompt are what the person is asked and told, and Outputs what a
+	// passing choice fills in. All omitted as the daemon omits them.
+	Kind    string   `json:"kind,omitempty"`
+	Ask     string   `json:"ask,omitempty"`
+	Prompt  string   `json:"prompt,omitempty"`
+	Passing []string `json:"passing,omitempty"`
+	Outputs []string `json:"outputs,omitempty"`
 	// omitempty mirrors the daemon's own tag deliberately: --json decodes this
 	// view and re-encodes it, so a plain tag would put "attempt":0 back onto every
 	// ordinary authored decision the daemon had omitted it from.
@@ -720,12 +728,13 @@ func runProcessRecordOutcome(p *processRecordOutcomeParams, stdout, stderr io.Wr
 }
 
 type processDecideParams struct {
-	RunID    string `pos:"true" help:"Process run id"`
-	Node     string `long:"node" help:"Awaited decision node id"`
-	Verdict  string `long:"verdict" help:"Authored outcome label to select"`
-	Evidence string `long:"evidence" optional:"true" help:"Human-facing evidence recorded with the decision"`
-	Attempt  int    `long:"attempt" optional:"true" help:"Exact decision window from tclaude process show: a plan-approval gate's, or a loop decision's from round two on; omitted, a loop decision takes its current window"`
-	AskHuman string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout"`
+	RunID    string   `pos:"true" help:"Process run id"`
+	Node     string   `long:"node" help:"Awaited decision node id, or an open step a person performs"`
+	Verdict  string   `long:"verdict" help:"Authored outcome label to select; for a person's step, the choice to finish it with (done or failed unless the step names its own)"`
+	Evidence string   `long:"evidence" optional:"true" help:"Human-facing evidence recorded with the decision; for a person's step, the note (and the reason, when it fails)"`
+	Output   []string `long:"output" optional:"true" help:"For a person's step: an output it asks for, as name=value; repeat for each. With one output, --evidence stands in for it"`
+	Attempt  int      `long:"attempt" optional:"true" help:"Exact decision window from tclaude process show: a plan-approval gate's, or a loop decision's from round two on; omitted, a loop decision takes its current window"`
+	AskHuman string   `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout"`
 	// attemptSet records that --attempt was given, so --attempt 0 pins a
 	// loop decision's first window instead of meaning "current".
 	attemptSet bool
@@ -740,7 +749,9 @@ func processDecideCmd() *cobra.Command {
 			"A compound's plan-approval gate is decided the same way, with approve readying the do stage and rework " +
 			"sending the plan back for one more run; because that window reopens, its verdict must also name the exact " +
 			"--attempt tclaude process show reports. A decision in a bounded loop reopens every round; --attempt pins the " +
-			"verdict to one round's window. Duplicate, stale, wrong-node, and wrong-attempt input is refused.",
+			"verdict to one round's window. Duplicate, stale, wrong-node, and wrong-attempt input is refused. " +
+			"It also finishes an open step a person performs: --verdict is the choice it is finished with, --output " +
+			"fills in what it asks for, and a failing choice fails the step like a failed agent report.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *processDecideParams, cmd *cobra.Command, _ []string) {
 			p.attemptSet = cmd.Flags().Changed("attempt")
@@ -764,12 +775,17 @@ func runProcessDecide(p *processDecideParams, stdout, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
+	outputs, err := parseProcessReportOutputs(p.Output)
+	if err != nil {
+		return err
+	}
 	request := struct {
-		NodeID   string `json:"nodeId"`
-		Verdict  string `json:"verdict"`
-		Evidence string `json:"evidence,omitempty"`
-		Attempt  *int   `json:"attempt,omitempty"`
-	}{NodeID: node, Verdict: p.Verdict, Evidence: p.Evidence}
+		NodeID   string            `json:"nodeId"`
+		Verdict  string            `json:"verdict"`
+		Evidence string            `json:"evidence,omitempty"`
+		Attempt  *int              `json:"attempt,omitempty"`
+		Outputs  map[string]string `json:"outputs,omitempty"`
+	}{NodeID: node, Verdict: p.Verdict, Evidence: p.Evidence, Outputs: outputs}
 	if p.attemptSet || p.Attempt != 0 {
 		attempt := p.Attempt
 		request.Attempt = &attempt
@@ -983,6 +999,9 @@ func printProcessRun(out io.Writer, run *processRunJSON) {
 			if command.Kind == engine.CommandAgent {
 				program = command.performerLabel()
 			}
+			if command.Kind == engine.CommandHuman {
+				program = "a person (operator)"
+			}
 			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", command.NodeID, command.State,
 				displayProcessEventField(command.Profile), displayProcessEventField(program), command.CommandID)
 		}
@@ -1015,11 +1034,24 @@ func printProcessRun(out io.Writer, run *processRunJSON) {
 	if len(run.AwaitingDecisions) > 0 {
 		fmt.Fprintln(out, "awaitingDecisions:")
 		tw := newTable(out)
-		fmt.Fprintln(tw, "NODE\tVERDICTS")
+		fmt.Fprintln(tw, "NODE\tKIND\tVERDICTS\tOUTPUTS")
 		for _, decision := range run.AwaitingDecisions {
-			fmt.Fprintf(tw, "%s\t%s\n", decision.NodeID, strings.Join(decision.Verdicts, ", "))
+			kind := decision.Kind
+			if kind == "" {
+				kind = "decision"
+			}
+			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", decision.NodeID, kind, strings.Join(decision.Verdicts, ", "),
+				displayProcessEventField(strings.Join(decision.Outputs, ", ")))
 		}
 		_ = tw.Flush()
+		for _, decision := range run.AwaitingDecisions {
+			if text := strings.TrimSpace(decision.Ask); text != "" {
+				fmt.Fprintf(out, "%s asks: %s\n", decision.NodeID, displayProcessEventField(text))
+			}
+			if text := strings.TrimSpace(decision.Prompt); text != "" {
+				fmt.Fprintf(out, "%s instructions: %s\n", decision.NodeID, displayProcessEventField(text))
+			}
+		}
 	}
 	printProcessRunNextSteps(out, run)
 }
@@ -1047,6 +1079,16 @@ func printProcessRunNextSteps(out io.Writer, run *processRunJSON) {
 	// stale. An authored decision opens once, reports zero, and keeps the command
 	// it has always had.
 	for _, decision := range run.AwaitingDecisions {
+		if decision.Kind == "task" {
+			// A person's step takes its open attempt; only its outputs need naming.
+			hint := ""
+			for _, name := range decision.Outputs {
+				hint += " --output " + name + "=<value>"
+			}
+			fmt.Fprintf(out, "Next: tclaude process decide %s --node %s --verdict <%s>%s\n",
+				run.ID, decision.NodeID, strings.Join(decision.Verdicts, "|"), hint)
+			continue
+		}
 		if decision.Attempt > 0 {
 			fmt.Fprintf(out, "Next: tclaude process decide %s --node %s --attempt %d --verdict <verdict>\n",
 				run.ID, decision.NodeID, decision.Attempt)

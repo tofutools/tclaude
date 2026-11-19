@@ -155,11 +155,11 @@ func CheckEligibility(tmpl *model.Template) model.Diagnostics {
 			if node.Wait != nil && node.Type != model.NodeTypeWait {
 				add("unsupported_wait", path+".wait", "wait configuration is not executable in this engine yet")
 			}
-			// An output is what an agent reports, so only a plain agent task
-			// publishes one.
+			// An output is what an agent reports or a person fills in, so only a
+			// plain agent or person's task publishes one.
 			if len(node.Captures) > 0 && (node.Type != model.NodeTypeTask || node.IsCompound() ||
-				node.Performer == nil || node.Performer.Kind != model.PerformerAgent) {
-				add("unsupported_captures", path+".captures", "only a plain agent task can declare outputs in this engine")
+				node.Performer == nil || (node.Performer.Kind != model.PerformerAgent && node.Performer.Kind != model.PerformerHuman)) {
+				add("unsupported_captures", path+".captures", "only a plain agent or person's task can declare outputs in this engine")
 			}
 			if node.Performer != nil && node.Type != model.NodeTypeTask && node.Type != model.NodeTypeDecision {
 				add("unsupported_performer", path+".performer", "only task and decision nodes may declare performers in this engine")
@@ -172,8 +172,15 @@ func CheckEligibility(tmpl *model.Template) model.Diagnostics {
 				}
 			case model.NodeTypeTask:
 				switch {
-				case node.Performer == nil || (node.Performer.Kind != model.PerformerProgram && node.Performer.Kind != model.PerformerAgent):
-					add("unsupported_performer", path+".performer.kind", "this engine executes only program and agent task performers")
+				case node.Performer == nil || (node.Performer.Kind != model.PerformerProgram && node.Performer.Kind != model.PerformerAgent &&
+					node.Performer.Kind != model.PerformerHuman):
+					add("unsupported_performer", path+".performer.kind", "this engine executes only program, agent and person task performers")
+				case node.Performer.Kind == model.PerformerHuman && node.IsCompound():
+					add("unsupported_performer", path+".performer.kind", "a step a person performs cannot have plan, check or review stages in this engine")
+				case node.Performer.Kind == model.PerformerHuman && strings.TrimSpace(node.Performer.Timeout) != "":
+					add("unsupported_timeout", path+".performer.timeout", "a step a person performs has no timeout in this engine")
+				case node.Performer.Kind == model.PerformerHuman && !HumanAssigneeSupported(node.Performer.Assignee):
+					add("unsupported_assignee", path+".performer.assignee", "only the operator performs a person's step today; leave assignee empty or set it to operator")
 				case node.Performer.Contact != nil:
 					add("unsupported_contact", path+".performer.contact", "performer contact schedules are not executable in this engine yet")
 				case node.Performer.Kind == model.PerformerAgent && strings.TrimSpace(node.Performer.Timeout) != "":
@@ -354,4 +361,14 @@ func sortedNodeIDs(tmpl *model.Template) []string {
 	}
 	sort.Strings(ids)
 	return ids
+}
+
+// HumanAssignee is the one person who performs steps today.
+const HumanAssignee = "operator"
+
+// HumanAssigneeSupported reports whether a person's step names someone this
+// engine can hand it to: nobody in particular, or the operator.
+func HumanAssigneeSupported(assignee string) bool {
+	assignee = strings.TrimSpace(assignee)
+	return assignee == "" || assignee == HumanAssignee
 }

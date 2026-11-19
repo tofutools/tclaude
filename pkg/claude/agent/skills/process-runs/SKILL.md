@@ -78,6 +78,8 @@ tclaude process pause <run-id>          # nothing new dispatched; in-flight work
 tclaude process resume <run-id>
 tclaude process decide <run-id> --node <node> --verdict <outcome> [--evidence "why"] [--attempt N]
 #   at an agreement gate a person votes as --node <gate>.vote.<k>; `show` prints the gate's tally
+#   a step a person performs (KIND task in `show`) is finished the same way:
+#   --verdict done|failed (or its own choices) [--output name=value ...]
 tclaude process assign <run-id> --node <node> --agent <agent>   # hand an unreported agent attempt over
 tclaude process resolve-blocked <run-id> --node <node> --attempt <n> --action retry|skip|cancel [--note "why"]
 tclaude process block <run-id> --node <node> --reason "why"   # park an agent step that is out (overseer too)
@@ -95,7 +97,9 @@ at once; as the run's overseer it is proposed to the operator. If the run moves
 on before the operator decides, it is refused; print again and re-propose.
 
 Copy `--node` and `--attempt` from `show`; stale or wrong-attempt input is
-refused. An agent decider's decision cannot be made with `decide`.
+refused. An agent decider's decision cannot be made with `decide`. A person's
+step is the operator's to finish: finish one for them only when they asked
+you to. A failing choice fails the step like a failed agent report.
 
 **After a daemon crash** an outstanding program command shows as
 `needs_reconcile`; tclaude never re-runs it silently:

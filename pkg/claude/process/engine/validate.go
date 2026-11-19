@@ -2,6 +2,7 @@ package engine
 
 import (
 	"fmt"
+	"maps"
 	"slices"
 	"sort"
 	"strings"
@@ -71,6 +72,10 @@ type definitionNode struct {
 	kind    definitionNodeKind
 	program ProgramCommand // program task nodes only
 	agent   *AgentCommand  // agent task nodes only
+	human   *HumanCommand  // task nodes a person performs only
+	// ask is what a person deciding a decision (or casting a gate vote) is
+	// asked, parameters filled in; empty when nobody authored one.
+	ask humanAsk
 	// maxAttempts is the authored retry budget of a task node, first attempt
 	// included, and 1 for a task with no authored retry. It is the ONLY thing
 	// preparation carries about retry: the reducer needs a ceiling to compare
@@ -320,6 +325,15 @@ func prepareScope(definition *Definition, tmpl *model.Template, params map[strin
 				prepared.agent = agent
 				break
 			}
+			if node.Performer.Kind == model.PerformerHuman {
+				human, err := bindHuman(id, *node.Performer, params)
+				if err != nil {
+					return err
+				}
+				human.Captures = slices.Clone(node.Captures)
+				prepared.human = human
+				break
+			}
 			program, err := bindProgram(id, *node.Performer, params)
 			if err != nil {
 				return err
@@ -343,6 +357,9 @@ func prepareScope(definition *Definition, tmpl *model.Template, params map[strin
 				constrainAgent(agent, *node.Performer, prefix)
 				prepared.agent = agent
 				prepared.maxAttempts = 1
+			}
+			if node.Performer != nil && node.Performer.Kind == model.PerformerHuman {
+				prepared.ask = humanAskOf(*node.Performer, params)
 			}
 			if node.Performer.IsRule() {
 				rule, err := prepareRule(id, *node.Performer, tmpl, params, prefix)
@@ -623,6 +640,24 @@ func sortedOutcomes(next model.Next) []string {
 	return outcomes
 }
 
+// humanAsk is the text a person is shown with a decision they make.
+type humanAsk struct{ ask, prompt string }
+
+func humanAskOf(performer model.Performer, params map[string]string) humanAsk {
+	bound := model.InterpolatePerformer(performer, params)
+	return humanAsk{ask: strings.TrimSpace(bound.Ask), prompt: strings.TrimSpace(bound.Prompt)}
+}
+
+// DecisionAsk returns what a person deciding nodeID is asked, and its longer
+// instructions, as authored with the run's parameters filled in.
+func (d *Definition) DecisionAsk(nodeID string) (ask, prompt string) {
+	node, ok := definitionNodeByID(d, nodeID)
+	if !ok || node.kind != definitionDecision {
+		return "", ""
+	}
+	return node.ask.ask, node.ask.prompt
+}
+
 // DecisionVerdicts returns the authored verdict vocabulary of one prepared
 // decision node. Views derive selectable verdicts from here so the durable
 // checkpoint never copies definition state.
@@ -779,6 +814,34 @@ func bindAgent(nodeID string, performer model.Performer, retry *model.RetryPolic
 	command := AgentCommandFor(bound, processFallback)
 	command.RetryMode = model.RetryMode(retry)
 	return command, nil
+}
+
+// bindHuman binds a person's step: its ask and instructions with the run's
+// parameters filled in, and its choices, done / failed when none are
+// authored.
+func bindHuman(nodeID string, performer model.Performer, params map[string]string) (*HumanCommand, error) {
+	for _, reference := range append(model.ParamReferences(performer.Ask), model.ParamReferences(performer.Prompt)...) {
+		if _, ok := params[reference]; !ok {
+			return nil, fmt.Errorf("%w: node %q ask parameter %q is missing", ErrInvalidProgramBinding, nodeID, reference)
+		}
+	}
+	bound := model.InterpolatePerformer(performer, params)
+	human := &HumanCommand{Ask: strings.TrimSpace(bound.Ask), Prompt: strings.TrimSpace(bound.Prompt)}
+	if human.Ask == "" && human.Prompt == "" {
+		return nil, fmt.Errorf("%w: node %q ask is blank after interpolation", ErrInvalidProgramBinding, nodeID)
+	}
+	if len(performer.Choices) == 0 {
+		human.Choices = []string{HumanChoiceDone, HumanChoiceFailed}
+		human.ChoiceOutcomes = map[string]string{HumanChoiceDone: "pass", HumanChoiceFailed: "fail"}
+		return human, nil
+	}
+	human.ChoiceOutcomes = map[string]string{}
+	for _, choice := range performer.Choices {
+		choice = strings.TrimSpace(choice)
+		human.Choices = append(human.Choices, choice)
+		human.ChoiceOutcomes[choice] = strings.TrimSpace(performer.ChoiceOutcomes[choice])
+	}
+	return human, nil
 }
 
 // constrainAgent binds a performer's lead selector and constraints onto its
@@ -1572,8 +1635,16 @@ func agentCommandsEqual(left, right AgentCommand) bool {
 		left.RetryMode == right.RetryMode
 }
 
+func humanCommandsEqual(left, right HumanCommand) bool {
+	return left.Ask == right.Ask && left.Prompt == right.Prompt && slices.Equal(left.Choices, right.Choices) &&
+		maps.Equal(left.ChoiceOutcomes, right.ChoiceOutcomes) && slices.Equal(left.Captures, right.Captures)
+}
+
 func commandsEqual(left, right Command) bool {
 	if (left.Agent == nil) != (right.Agent == nil) || (left.Agent != nil && !agentCommandsEqual(*left.Agent, *right.Agent)) {
+		return false
+	}
+	if (left.Human == nil) != (right.Human == nil) || (left.Human != nil && !humanCommandsEqual(*left.Human, *right.Human)) {
 		return false
 	}
 	return left.ID == right.ID && left.Kind == right.Kind && left.NodeID == right.NodeID &&

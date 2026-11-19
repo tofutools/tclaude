@@ -35,6 +35,9 @@ func prepareGate(definition *Definition, index int, node model.Node, params map[
 			parent: -1, doAnchor: -1, planAnchor: -1, approvalGate: -1,
 			scope: scope, scopeEnd: -1, entry: -1,
 		}
+		if decider.Kind == model.PerformerHuman {
+			vote.ask = humanAskOf(decider, params)
+		}
 		if decider.Kind == model.PerformerAgent {
 			agent, err := bindAgent(voteID, decider, nil, params, definition.fallback)
 			if err != nil {

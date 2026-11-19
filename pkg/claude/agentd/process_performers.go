@@ -1383,6 +1383,10 @@ func processCommandCaptures(row db.ProcessAgentDispatch) []string {
 // processCaptureValue is the latest value a run's performers reported for a
 // step output, and whether one was.
 func processCaptureValues(runID, nodeID string) func(name string) (string, bool) {
+	return processCaptureValuesFor(runID, nodeID, true)
+}
+
+func processCaptureValuesFor(runID, nodeID string, marked bool) func(name string) (string, bool) {
 	rows, err := db.ListProcessAgentDispatchesForRun(runID)
 	if err != nil {
 		rows = nil
@@ -1391,6 +1395,10 @@ func processCaptureValues(runID, nodeID string) func(name string) (string, bool)
 	// outputs of its own scope: the run's top level, or one subprocess body.
 	scope := processNodeScope(nodeID)
 	rewound := processRunRewoundAt(runID)
+	// Outputs a person filled in live on their report's evidence, not on a
+	// dispatch row: they become rows of their own here, so both are read
+	// alike.
+	rows = append(rows, processHumanReportRows(runID)...)
 	return func(name string) (string, bool) {
 		var latest *db.ProcessAgentDispatch
 		for i := range rows {
@@ -1411,11 +1419,42 @@ func processCaptureValues(runID, nodeID string) func(name string) (string, bool)
 		if latest == nil {
 			return fmt.Sprintf("[output %s: none reported yet]", name), true
 		}
+		if !marked {
+			return latest.ReportOutputs[name], true
+		}
 		// Marked as reported content: the value is another agent's words, not
 		// the template author's instructions.
 		return fmt.Sprintf("[output %s, reported by an earlier step:]\n%s\n[end of output %s]",
 			name, latest.ReportOutputs[name], name), true
 	}
+}
+
+// processPlainCaptureValues is processCaptureValues for a person to read:
+// the value itself, without the markers that tell an agent it is data.
+func processPlainCaptureValues(runID, nodeID string) func(name string) (string, bool) {
+	return processCaptureValuesFor(runID, nodeID, false)
+}
+
+// processHumanReportRows are the latest successful report of each step a
+// person performed in the run, shaped as dispatch rows for the output reader.
+func processHumanReportRows(runID string) []db.ProcessAgentDispatch {
+	events, err := db.ListLatestProcessRunNodeEvents(runID, "human_reported")
+
+	if err != nil {
+		return nil
+	}
+	var rows []db.ProcessAgentDispatch
+	for _, event := range events {
+		var payload executor.HumanReportedEvidence
+		if event.DecodePayload(&payload) != nil || len(payload.Outputs) == 0 {
+			continue
+		}
+		rows = append(rows, db.ProcessAgentDispatch{
+			RunID: runID, NodeID: event.NodeID, ReportOutcome: string(payload.Outcome),
+			ReportOutputs: payload.Outputs, ReportedAt: event.OccurredAt,
+		})
+	}
+	return rows
 }
 
 // processRunRewoundAt is, per node, when the run was last sent back over it
