@@ -107,8 +107,14 @@ func Amend(run *Run, actor string, input AmendInput) error {
 	if err != nil {
 		return err
 	}
+	waited := waitsOnPerson(run.checkpoint)
 	run.stateVersion = version
 	run.checkpoint = next
 	run.definition = definition
+	// An amendment can change, remove or add what the run waits on a person
+	// for, and a run parked on a person may make no other commit soon.
+	if waited || waitsOnPerson(next) {
+		fireWaitingHook(run.id)
+	}
 	return nil
 }

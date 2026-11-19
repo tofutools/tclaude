@@ -843,6 +843,17 @@ type dashboardHumanMessage struct {
 	// ProcessRun is the run a process decision is about: a run concern's
 	// card has no agent sender, the daemon answers it (process_oversight_card.go).
 	ProcessRun string `json:"process_run,omitempty"`
+	// ProcessCard is set on a card for what a run waits on you for
+	// (process_waiting_cards.go).
+	ProcessCard *dashboardProcessCard `json:"process_card,omitempty"`
+}
+
+// dashboardProcessCard is what the dashboard needs of a waiting card beyond
+// its message: the options that finish a person's step as done and the
+// outputs they need, which are filled in in the run instead.
+type dashboardProcessCard struct {
+	Outputs []string `json:"outputs,omitempty"`
+	Passing []string `json:"passing,omitempty"`
 }
 
 // dashboardHumanMessageAttachment is one downloadable file on a notification.
@@ -1275,6 +1286,18 @@ func humanMessageViews(rows []*db.HumanMessage) ([]dashboardHumanMessage, int) {
 		pendingNames = map[string]string{}
 	}
 
+	var processMessages []int64
+	for _, m := range rows {
+		if m.ProcessRunID != "" {
+			processMessages = append(processMessages, m.ID)
+		}
+	}
+	processCards, err := db.ProcessWaitingCardsForMessages(processMessages)
+	if err != nil {
+		slog.Warn("dashboard: load process waiting cards failed", "error", err)
+		processCards = nil
+	}
+
 	actionDirs := map[string]string{}
 	out := make([]dashboardHumanMessage, 0, len(rows))
 	unread := 0
@@ -1307,6 +1330,9 @@ func humanMessageViews(rows []*db.HumanMessage) ([]dashboardHumanMessage, int) {
 			view.Options, view.Recommended = m.Options, m.Recommended
 		}
 		view.Action = humanActionView(m, actionDirs)
+		if card, ok := processCards[m.ID]; ok {
+			view.ProcessCard = &dashboardProcessCard{Outputs: card.Outputs, Passing: card.Passing}
+		}
 		if !m.DismissedAt.IsZero() {
 			view.DismissedAt = m.DismissedAt.Format(time.RFC3339)
 			view.DismissedBy, view.DismissReason = m.DismissedBy, m.DismissReason
@@ -1686,6 +1712,12 @@ func replyHumanMessage(ctx context.Context, body humanMessageReply) (map[string]
 		return nil, replyFail(http.StatusInternalServerError, "io", "load amendment: "+err.Error())
 	} else if ok {
 		return answerProcessAmendmentCard(orig, amendment, decision, body)
+	}
+	// So is a card for what a run waits on the operator for.
+	if card, ok, err := db.GetProcessWaitingCardForHumanMessage(orig.ID); err != nil {
+		return nil, replyFail(http.StatusInternalServerError, "io", "load process card: "+err.Error())
+	} else if ok {
+		return answerProcessWaitingCard(orig, card, decision, body)
 	}
 	if orig.ProcessCommandID != "" {
 		if body.AttachmentToken != "" {
