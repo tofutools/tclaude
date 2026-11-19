@@ -1863,17 +1863,24 @@ func processRunViewWith(record *db.ProcessRun, accounted map[string]struct{}, cl
 	awaitingPerformer := false
 	waiting := false
 	var waitTimers map[string]db.ProcessWaitTimer
-	// checkSpec reads a wait check's authored limits; the definition is
-	// prepared only for a run that has one.
-	var checkSpec func(string) (model.WaitCheck, bool)
-	specOf := func(nodeID string) (model.WaitCheck, bool) {
-		if checkSpec == nil {
-			checkSpec = func(string) (model.WaitCheck, bool) { return model.WaitCheck{}, false }
-			if definition, err := prepareProcessRunDefinition(record); err == nil {
-				checkSpec = definition.WaitCheckSpec
-			}
+	// definitionOf prepares the run's definition at most once per view, and
+	// only when something needs it.
+	var (
+		prepared     *engine.Definition
+		prepareErr   error
+		preparedOnce bool
+	)
+	definitionOf := func() (*engine.Definition, error) {
+		if !preparedOnce {
+			preparedOnce = true
+			prepared, prepareErr = prepareProcessRunDefinition(record)
 		}
-		return checkSpec(nodeID)
+		return prepared, prepareErr
+	}
+	// specOf reads a wait check's authored limits, cached per run snapshot so
+	// a refresh of a waiting run does not prepare its definition again.
+	specOf := func(nodeID string) (model.WaitCheck, bool) {
+		return processWaitCheckSpec(record, nodeID, definitionOf)
 	}
 	for i := range checkpoint.Commands {
 		command := checkpoint.Commands[i]
@@ -1911,7 +1918,7 @@ func processRunViewWith(record *db.ProcessRun, accounted map[string]struct{}, cl
 				if !strings.Contains(command.NodeID, ".") {
 					view.Parkable = true
 				} else if parkable == nil {
-					if definition, err := prepareProcessRunDefinition(record); err == nil {
+					if definition, err := definitionOf(); err == nil {
 						parkable = definition.Parkable
 					}
 				}
@@ -1950,7 +1957,7 @@ func processRunViewWith(record *db.ProcessRun, accounted map[string]struct{}, cl
 	var loops []engine.LoopEdge
 	var gates []processRunGateView
 	if len(checkpoint.AwaitingDecisions) > 0 || len(checkpoint.Iterations) > 0 || processRunMayHaveGates(checkpoint) {
-		definition, err := prepareProcessRunDefinition(record)
+		definition, err := definitionOf()
 		if err != nil {
 			return processRunView{}, err
 		}

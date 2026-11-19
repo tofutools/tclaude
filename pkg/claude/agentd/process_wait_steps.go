@@ -1,6 +1,8 @@
 package agentd
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -284,8 +286,6 @@ type processRunSkipWaitRequest struct {
 	NodeID string `json:"nodeId"`
 }
 
-// handleProcessRunSkipWait ends a waiting wait step now, as skipped by the
-// caller: the run goes on along the step's route. process.runs.manage only.
 // handleProcessRunCheckNow serves POST /v1/process/runs/{id}/check-now: a
 // wait for a criterion waiting for its next check makes it now. Its count and
 // limits are untouched; only the wait between checks is cut short.
@@ -321,16 +321,27 @@ func handleProcessRunCheckNow(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	processWaitMu.Lock()
-	_, err = db.BringProcessWaitTimerDue(runID, commandID, processWaitNow())
+	brought, err := db.BringProcessWaitTimerDue(runID, commandID, processWaitNow())
 	processWaitMu.Unlock()
 	if err != nil {
 		writeProcessRuntimeError(w, err)
 		return
 	}
+	if !brought {
+		// The timer fired meanwhile, is not set yet, or cannot be worked out:
+		// nothing was brought forward.
+		writeError(w, http.StatusConflict, "process_check_running", "its next check is being made or timed now; try again in a moment")
+		return
+	}
 	kickProcessWaits()
+	if fresh, err := loadProcessRunView(runID); err == nil {
+		view = fresh
+	}
 	writeProcessJSON(w, http.StatusAccepted, map[string]any{"run": view})
 }
 
+// handleProcessRunSkipWait ends a waiting wait step now, as skipped by the
+// caller: the run goes on along the step's route. process.runs.manage only.
 func handleProcessRunSkipWait(w http.ResponseWriter, r *http.Request) {
 	caller, ok := requirePermission(w, r, PermProcessRunsManage)
 	if !ok {
@@ -381,4 +392,43 @@ func handleProcessRunSkipWait(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeProcessJSON(w, http.StatusAccepted, map[string]any{"run": view})
+}
+
+// processWaitCheckSpecs caches each run's wait checks' authored limits by run
+// and snapshot: a run view or projection refresh of a run waiting on a check
+// reads them without preparing its definition again. An amend changes the
+// snapshot, and with it the key.
+var processWaitCheckSpecs = struct {
+	sync.Mutex
+	byRun map[string]processWaitCheckSpecEntry
+}{byRun: map[string]processWaitCheckSpecEntry{}}
+
+type processWaitCheckSpecEntry struct {
+	key   string
+	specs map[string]model.WaitCheck
+}
+
+const processWaitCheckSpecCacheSize = 512
+
+func processWaitCheckSpec(record *db.ProcessRun, nodeID string, definitionOf func() (*engine.Definition, error)) (model.WaitCheck, bool) {
+	sum := sha256.Sum256(append(append([]byte(record.TemplateRef+"\x00"), record.TemplateSnapshotJSON...), record.ParamsJSON...))
+	key := hex.EncodeToString(sum[:])
+	processWaitCheckSpecs.Lock()
+	entry, ok := processWaitCheckSpecs.byRun[record.ID]
+	processWaitCheckSpecs.Unlock()
+	if !ok || entry.key != key {
+		definition, err := definitionOf()
+		if err != nil {
+			return model.WaitCheck{}, false
+		}
+		entry = processWaitCheckSpecEntry{key: key, specs: definition.WaitCheckSpecs()}
+		processWaitCheckSpecs.Lock()
+		if len(processWaitCheckSpecs.byRun) >= processWaitCheckSpecCacheSize {
+			clear(processWaitCheckSpecs.byRun)
+		}
+		processWaitCheckSpecs.byRun[record.ID] = entry
+		processWaitCheckSpecs.Unlock()
+	}
+	spec, ok := entry.specs[nodeID]
+	return spec, ok
 }
