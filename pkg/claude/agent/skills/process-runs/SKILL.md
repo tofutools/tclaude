@@ -82,7 +82,7 @@ tclaude process decide <run-id> --node <node> --verdict <outcome> [--evidence "w
 #   --verdict done|failed (or its own choices) [--output name=value ...]
 tclaude process assign <run-id> --node <node> --agent <agent>   # hand an unreported agent attempt over
 tclaude process resolve-blocked <run-id> --node <node> --attempt <n> --action retry|skip|cancel [--note "why"]
-tclaude process skip-wait <run-id> --node <node>              # end a waiting wait step now; the run goes on
+tclaude process skip-wait <run-id> --node <node>              # end a waiting wait step now (a check wait ends as met); the run goes on
 tclaude process block <run-id> --node <node> --reason "why"   # park an agent step that is out (overseer too)
 tclaude process cancel <run-id> [--note "why"]                # give the whole run up
 tclaude process send-back <run-id> --node <step> [--note "why"]  # run a finished step again; everything after it resets

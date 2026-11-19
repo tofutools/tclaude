@@ -121,6 +121,15 @@ func sweepProcessWaits() time.Time {
 		}
 		_ = finishProcessWait(timer, processWaitActor, how, reason)
 	}
+	if len(due) > 0 {
+		// Ending a wait for a criterion plans its next timer: fix its deadline
+		// now, so the run says when the next check is.
+		if untimed, err := db.ListProcessUntimedWaits(); err == nil {
+			for _, wait := range untimed {
+				startProcessWaitTimer(wait)
+			}
+		}
+	}
 	next, ok, err := db.NextProcessWaitDue()
 	if err != nil || !ok {
 		return time.Time{}

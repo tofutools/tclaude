@@ -231,7 +231,6 @@ func CheckEligibility(tmpl *model.Template) model.Diagnostics {
 							add("unsupported_contact", path+".wait.check.performer.contact", "performer contact schedules are not executable in this engine yet")
 						}
 					}
-					break
 				case node.Wait == nil || (strings.TrimSpace(node.Wait.Duration) == "" && strings.TrimSpace(node.Wait.Until) == ""):
 					add("unsupported_wait", path+".wait", "a wait step needs a duration or an until time")
 				}

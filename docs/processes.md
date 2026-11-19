@@ -1055,6 +1055,47 @@ cool_off:
 - A wait whose time cannot be worked out (an output that is not a time, say)
   fails the step, and the run fails naming the step and why.
 
+A wait can also wait for a criterion, checked again and again until it holds
+or a limit is reached:
+
+```yaml
+wait_ready:
+  type: wait
+  wait:
+    check:
+      when: outputs.deploy_state == "ready"    # a rule condition, or:
+      # performer: {kind: program, profile: safe, run: ./is-ready.sh}
+      # performer: {kind: agent, prompt: "Is the release ready?", role: dev}
+      every: 5m               # between checks
+      backoff: exponential    # or fixed (the default)
+      factor: 2               # exponential only (default 2)
+      maxEvery: 1h            # the longest interval backoff reaches
+      timeout: 2m             # per check, program checks only
+      maxChecks: 20           # maxChecks and/or within
+      within: 1d
+      maxFailedChecks: 3      # failed checks in a row (default 3)
+      onLimit: timedOut       # or fail (the default)
+  next:
+    met: deploy
+    timedOut: page_someone
+```
+
+- The first check is made as soon as the step starts, then one every
+  interval. `within` counts from that first check.
+- A `when` condition reads like a rule case (params, outputs and step
+  results). It is checked at each interval, and also as soon as something the
+  run does makes it hold, such as a step on another branch finishing.
+- A program check answers by exit code: 0 is yes, 1 is not yet, and any other
+  exit or its `timeout` is a failed check. An agent check answers with the
+  verdict `yes` or `no`; an agent that fails is a failed check.
+- `maxFailedChecks` failed checks in a row fail the step; a "not yet" in
+  between starts the count again.
+- At `maxChecks` or `within`, `onLimit: fail` fails the step ("wait 'x': not
+  met after 20 checks"); `onLimit: timedOut` takes the `timedOut` route
+  instead. A wait that holds takes `met` (or its one route).
+- `tclaude process show` says how many checks were made, the last answer, and
+  when the next check is. `skip-wait` ends the wait as met.
+
 ## What does not execute yet
 
 These CLI verbs are stubs that return a "process runtime is temporarily

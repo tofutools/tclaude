@@ -116,6 +116,12 @@ func prepareWaitCheck(definition *Definition, id string, check model.WaitCheck, 
 	return prepared, nil
 }
 
+// IsWaitCheck reports whether nodeID is a wait for a criterion.
+func (d *Definition) IsWaitCheck(nodeID string) bool {
+	index, ok := d.index[nodeID]
+	return ok && d.nodes[index].check != nil
+}
+
 // waitCheckAttempts is a check wait's attempt budget: every timer and every
 // check is an attempt of the node, and its own limits, not attempts, bound it.
 const waitCheckAttempts = math.MaxInt32
@@ -190,7 +196,7 @@ func applyWaitCheckObservation(next *Checkpoint, definition *Definition, index i
 		}
 		if check.rule != nil {
 			state.Checks++
-			if evaluateRule(*next, node).Outcome == model.WaitOutcomeMet {
+			if waitRuleHolds(*next, node) {
 				state.Last = model.WaitCheckYes
 				return metWaitCheck(next, definition, index, state)
 			}
@@ -314,7 +320,7 @@ func waitMetTransition(checkpoint Checkpoint, definition *Definition) (Transitio
 		if checkpoint.WaitChecks[node.id].StartedAt == nil {
 			continue
 		}
-		if evaluateRule(checkpoint, node).Outcome == model.WaitOutcomeMet {
+		if waitRuleHolds(checkpoint, node) {
 			return Transition{Kind: TransitionWaitMet, NodeID: node.id}, true
 		}
 	}
@@ -332,7 +338,7 @@ func applyWaitMet(next *Checkpoint, definition *Definition, nodeID string) error
 	if node.check == nil || node.check.rule == nil || next.Nodes[nodeID] != NodeRunning {
 		return fmt.Errorf("%w: %q is not a rule-checked wait that is waiting", ErrInvalidTransition, nodeID)
 	}
-	if evaluateRule(*next, node).Outcome != model.WaitOutcomeMet {
+	if !waitRuleHolds(*next, node) {
 		return fmt.Errorf("%w: %q: its condition does not hold", ErrInvalidTransition, nodeID)
 	}
 	state := next.WaitChecks[nodeID]
@@ -340,4 +346,11 @@ func applyWaitMet(next *Checkpoint, definition *Definition, nodeID string) error
 	state.Last = model.WaitCheckYes
 	removeCommand(next, nodeID)
 	return metWaitCheck(next, definition, index, state)
+}
+
+// waitRuleHolds reports whether a rule-checked wait's condition holds now.
+func waitRuleHolds(checkpoint Checkpoint, node definitionNode) bool {
+	ruled := node
+	ruled.rule = node.check.rule
+	return evaluateRule(checkpoint, ruled).Outcome == model.WaitOutcomeMet
 }
