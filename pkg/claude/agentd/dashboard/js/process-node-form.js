@@ -104,7 +104,7 @@ export function setPerformerKind(performer, kind) {
   for (const field of PERFORMER_FIELDS) {
     if (!field.kinds.includes(kind) && field.key in performer) delete performer[field.key];
   }
-  if (kind === RULE_KIND) delete performer.contact;
+  if (kind === RULE_KIND || kind === MESSAGE_KIND) delete performer.contact;
   else for (const key of RULE_KEYS) delete performer[key];
 }
 

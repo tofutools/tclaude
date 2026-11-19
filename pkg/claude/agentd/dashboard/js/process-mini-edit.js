@@ -857,6 +857,7 @@ export function changeKind(view, id, kind) {
   if (from === kind) return { view, id };
   // A decision waits for an answer; a message only tells, and goes on.
   if (kind === 'message' && node.type === 'decision') throw new Error('a decision cannot become a message: add one after it');
+  if (kind === 'message' && (node.plan || node.checks?.length || node.review)) throw new Error('a step with a plan, checks or review cannot become a message');
   const next = copyView(view);
   const who = kind === 'you' ? { mode: 'you' } : kind === 'command' ? { mode: 'command' }
     : kind === 'message' ? { mode: 'message', to: ['operator'] } : { mode: 'nobody' };

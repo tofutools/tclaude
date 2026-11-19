@@ -40,8 +40,10 @@ test('recipients: each at most once, at most eight, and in words', () => {
 });
 
 test('an agent step becomes a message and back, keeping its text', () => {
-  const agent = newStep(empty, { kind: 'agent', text: 'Build it' });
+  const agent = { ...newStep(empty, { kind: 'agent', text: 'Build it' }) };
+  agent.node = { ...agent.node, captures: ['pr'] };
   const message = setStepWho(agent, { mode: 'message' });
+  assert.equal(message.node.captures, undefined, 'a message reports no outputs');
   assert.deepEqual(message.node.performer, { kind: 'message', to: ['operator'], text: 'Build it' });
   assert.equal(setStepText(message, 'Built').node.performer.text, 'Built');
   const back = setStepWho(message, { mode: 'role', role: 'reviewer' });
@@ -73,6 +75,8 @@ test('the inline editor: a message is its own kind, a decision never becomes one
   assert.deepEqual(changed.performer.to, ['operator']);
   assert.equal(changed.captures, undefined, 'a message reports no outputs');
   assert.throws(() => changeKind(view, 'choose', 'message'), /decision cannot become a message/);
+  view.template.nodes.build.review = { performer: { kind: 'agent', prompt: 'look' } };
+  assert.throws(() => changeKind(view, 'build', 'message'), /plan, checks or review/);
 });
 
 test('the run log says what a message sent, and to whom', async (t) => {

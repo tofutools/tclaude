@@ -153,7 +153,9 @@ export function WhoPicker({ step, roster, roles, label = 'Who does this step', s
   const who = stepWho(step);
   const value = whoValue(who);
   // Only a task can send a message: a decision waits for an answer.
-  const options = whoOptions(roster, { roles, spawn, rule, message: step?.node?.type === 'task' });
+  // nor a staged one: a message has no plan, checks or review.
+  const node = step?.node;
+  const options = whoOptions(roster, { roles, spawn, rule, message: node?.type === 'task' && !node.plan && !node.checks?.length && !node.review });
   const known = options.some((option) => option.value === value);
   const groups = [['agent', 'Specific agent'], ['role', 'By role'], ['spawn', 'New agent'], ['other', 'Not an agent']];
   const unknown = { agent: `${who.agent} (not in this group)`, role: `any ${who.role}`, spawn: 'a new agent' }[who.mode] || 'nobody yet';

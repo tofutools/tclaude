@@ -151,7 +151,11 @@ function performerText(node, nameOf, wizard) {
   if (kind === 'human') return wizard ? 'any keeper' : 'any operator';
   if (kind === 'program' || kind === 'command') return wizard ? 'an incantation' : 'program';
   if (kind === 'rule') return wizard ? 'its own law' : 'its rule, nobody is asked';
-  if (kind === 'message') return `${wizard ? 'a sending' : 'a message'} to ${(performer.to || []).map(messageRecipientWords).join(', ') || 'nobody yet'}`;
+  if (kind === 'message') {
+    // A run's projection names no recipients; a draft's node does.
+    const to = (performer.to || []).map(messageRecipientWords).join(', ');
+    return `${wizard ? 'a sending' : 'a message'}${to ? ` to ${to}` : ''}`;
+  }
   const ref = performer.ref && performer.ref !== 'unassigned' ? performer.ref : '';
   if (!ref) return kind === 'agent' ? 'unassigned' : '—';
   return nameOf(ref) || performer.name || performer.label || ref;

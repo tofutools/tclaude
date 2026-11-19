@@ -413,6 +413,8 @@ export function setStepWho(step, who, { legacyRoles = false } = {}) {
     if (old.kind === 'message' && old.subject) performer.subject = old.subject;
     if (text) performer.text = text;
     if (!performer.to.length) delete performer.to;
+    // A message reports no outputs.
+    delete node.captures;
   } else if (who.mode === 'command') {
     performer = { kind: 'program', ...shared, run: old.kind === 'program' ? old.run || '' : '' };
     if (old.kind === 'program' && old.args) performer.args = old.args;

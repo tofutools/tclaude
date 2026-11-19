@@ -502,7 +502,7 @@ function StructureMenu({ view, menu, onRun, onWrap, onClose }) {
     ${item('duplicate', 'Duplicate', step ? '' : 'only a step can be duplicated here', () => onRun(() => duplicate(view, id)))}
     ${item('wrap', 'Wrap in a subprocess… (full editor)', step ? '' : 'only a step can be wrapped', onWrap)}
     ${step && html`<div class="gm-menu-kinds" data-mini-menu="kind"><span>Change to</span>
-      <${KindChips} label="Change to" choices=${node.type === 'decision' ? KIND_CHOICES.filter(([kind]) => kind !== 'message') : KIND_CHOICES} onPick=${(kind) => onRun(() => changeKind(view, id, kind))} /></div>`}
+      <${KindChips} label="Change to" choices=${node.type === 'decision' || node.plan || node.checks?.length || node.review ? KIND_CHOICES.filter(([kind]) => kind !== 'message') : KIND_CHOICES} onPick=${(kind) => onRun(() => changeKind(view, id, kind))} /></div>`}
     <hr />
     ${item('delete', orphans.length ? `Delete step (and ${orphans.join(', ')}, only reached through it)` : 'Delete step',
     canDelete(view, id), () => onRun(() => deleteStep(view, id)))}
