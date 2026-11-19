@@ -94,6 +94,19 @@ test('opening a node docks the inspector beside the canvas with the label focuse
   assert.equal(host.querySelector('[data-node-inspector]'), null);
 });
 
+test('a person\'s step shows no profile field unless the template set one', async (t) => {
+  const view = editView();
+  view.template.nodes.legacy = { type: 'decision', name: 'Old', performer: { kind: 'human', ask: 'Ok?', profile: 'reviewer' } };
+  const { open, field } = await openEditor(t, view);
+  await open('gate');
+  assert.equal(field('performer.profile'), null);
+  assert.ok(field('performer.assignee'));
+  await open('build');
+  assert.ok(field('performer.profile'), 'an agent keeps its spawn profile');
+  await open('legacy');
+  assert.equal(field('performer.profile').value, 'reviewer', 'a set profile stays visible to clear');
+});
+
 test('each node kind gets its required blocks, present optional ones, and only valid additions', async (t) => {
   const { open, blocks, dock } = await openEditor(t);
   const addable = () => [...dock().querySelectorAll('[data-add-block]')].map((el) => el.dataset.addBlock);

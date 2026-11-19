@@ -104,7 +104,10 @@ export function PerformerEditor({
   const known = KNOWN_KINDS.includes(kind);
   const mutate = (key, value, operation) => commit(`${path}.${key}`, (draft) => operation(locate(draft), value, draft));
   const skip = new Set(omit);
+  // A person has no spawn profile: their profile field shows only to clear
+  // one a template already set.
   const fields = (known ? performerFieldsFor(kind) : [])
+    .filter((field) => !(field.key === 'profile' && kind === 'human' && !performer?.profile))
     .filter((field) => (only ? only.includes(field.key) : !skip.has(field.key)));
   const schedule = performer?.contact || {};
   return html`<div class="process-performer-editor">
