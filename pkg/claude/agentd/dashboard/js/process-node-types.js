@@ -6,9 +6,7 @@ export const PROCESS_NODE_TYPES = [
   { type: 'decision', label: 'Decision', wizardLabel: 'Forking rune', hint: 'Branch on an explicit outcome', requiresConfiguration: true },
   { type: 'parallel', label: 'Parallel', wizardLabel: 'Splitting rune', hint: 'Fan out through every outgoing branch' },
   { type: 'subprocess', label: 'Subprocess', wizardLabel: 'Nested circle', hint: 'Run a nested graph as one node; double-click to enter' },
-  // A wait step is stored but cannot run yet (the engine refuses it at run
-  // creation): offered, dimmed, so the planned feature stays visible.
-  { type: 'wait', label: 'Wait / timer', wizardLabel: 'Waiting rune', hint: "Pause for a duration or signal. Can't run yet: a process with one can't start a run", requiresConfiguration: true, cantRunYet: true },
+  { type: 'wait', label: 'Wait / timer', wizardLabel: 'Waiting rune', hint: 'Pause for a time, or until a condition holds, checked again and again', requiresConfiguration: true },
   { type: 'start', label: 'Start', wizardLabel: 'Opening rune', hint: 'Entry marker' },
   { type: 'end', label: 'End', wizardLabel: 'Closing rune', hint: 'Terminal node with a result' },
 ];

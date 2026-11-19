@@ -16462,6 +16462,17 @@ body.wizard .process-param-check { color: #f3e6c0; }
 .pni-block-title { font-weight: 600; font-size: 12.5px; color: #e6edf3; }
 .pni-block-body { display: flex; flex-direction: column; gap: 8px; padding: 8px 10px 10px; }
 .pni-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 8px; }
+/* Wait step (process-wait-step.js): for a time, or until a condition. */
+.pni-wait-mode { display: inline-flex; align-self: flex-start; border: 1px solid #30363d; border-radius: 6px; overflow: hidden; }
+.pni-wait-mode .pni-wait-mode-option { border: 0; border-radius: 0; }
+.pni-wait-mode .pni-wait-mode-option.is-selected { background: #1f6feb33; color: #a5d6ff; }
+.pni-wait-duration { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.pni-wait-feedback { font-size: 11px; color: #7ee787; }
+.pni-wait-feedback.is-error { color: #ff7b72; }
+.pni-wait-summary { margin: 0; font-size: 12px; color: #c9d1d9; }
+.pni-wait-route-hint { margin: 0; }
+.pni-wait-more { align-self: flex-start; font-size: 12px; }
+body.wizard .pni-wait-mode { border-color: #4a3d6b; }
 .pni-stage-chips { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; }
 .pni-stage-chip.pni-stage-work { border-color: #58a6ff; color: #a5d6ff; }
 .pni-stage-arrow { color: #6e7681; font-size: 11px; }
@@ -19839,3 +19850,15 @@ body.wizard .md-ed .tok-heading { color: var(--ui-wizard-gold, #d9b45a); }
 /* A parked step, with its reason, where the operator looks (BlockedSteps). */
 .pov-blocked { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
 .pov-blocked-item { border: 1px solid #30363d; border-left: 3px solid #f0883e; border-radius: 6px; padding: 8px 10px; background: #1c1610; display: flex; flex-direction: column; gap: 6px; }
+/* Inline editor wait step (groups-mini-editor.js MiniWait). */
+.gm-wait-mode { display: inline-flex; flex-wrap: wrap; gap: 4px; }
+.gm-wait-mode .gm-wait-mode-option.is-selected { border-color: #58a6ff; color: #a5d6ff; background: #1f6feb22; }
+.gm-wait-row { display: flex; flex-wrap: wrap; gap: 8px; padding-left: 78px; }
+.gm-wait-field { display: flex; flex-direction: column; gap: 2px; font-size: 12px; color: #8b949e; min-width: 0; flex: 1 1 90px; }
+.gm-wait-field input, .gm-wait-field select { min-width: 0; width: 100%; }
+.gm-wait-feedback { color: #7ee787; }
+.gm-wait-feedback.is-error, .gm-wait-problem { color: #ff7b72; }
+.gm-wait-problem { margin: 0; font-size: 12px; }
+.gm-wait-summary { margin: 0; padding-left: 78px; }
+.gm-wait-more { align-self: flex-start; margin-left: 78px; }
+@media (max-width: 600px) { .gm-wait-row, .gm-wait-summary { padding-left: 0; } .gm-wait-more { margin-left: 0; } }

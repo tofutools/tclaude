@@ -33,6 +33,11 @@ import {
 } from './process-node-blocks.js';
 import { NodeField, NodeSelect, PerformerEditor } from './process-node-fields.js';
 import { Button, Select } from './ui-components.js';
+import {
+  CHECK_SOURCES, WAIT_MET, WAIT_TIMED_OUT, DEFAULT_BACKOFF_FACTOR, DEFAULT_MAX_FAILED_CHECKS,
+  waitMode, setWaitMode, checkSource, setCheckSource, setCheckField, checkMoreSet,
+  describeCheck, durationFeedback, waitRouteHint,
+} from './process-wait-step.js';
 
 const html = htm.bind(h);
 
@@ -218,10 +223,107 @@ function OutputsBlock({ node, commit, readOnly }) {
     apply=${(key, raw) => commit(key, (draft) => setCaptures(draft, raw))} />`;
 }
 
-function WaitBlock({ node, commit, readOnly }) {
-  return html`<div class="pni-row">${[['duration', '30m'], ['until', ''], ['signal', '']].map(([key, placeholder]) => html`<${NodeField}
-    key=${key} fieldKey=${`wait.${key}`} label=${key} placeholder=${placeholder} value=${node.wait?.[key] || ''} readOnly=${readOnly}
-    apply=${(fieldKey, raw) => commit(fieldKey, (draft) => setWaitField(draft, key, raw))} />`)}</div>`;
+// ChoiceSelect is a select whose options say what they mean.
+function ChoiceSelect({ fieldKey, label, options, value, apply, readOnly, title = '' }) {
+  return html`<label class="field process-node-field" title=${title || undefined}><span class="process-node-field-label">${label}</span>
+    <select name="process-node-select" data-ui-exempt class="process-node-select" aria-label=${label} disabled=${readOnly} data-node-field=${fieldKey}
+      value=${value} onChange=${(event) => apply(fieldKey, event.currentTarget.value)}>
+      ${options.map(([key, text]) => html`<option key=${key} value=${key}>${text}</option>`)}
+    </select>
+  </label>`;
+}
+
+// WaitDuration is a duration field that says what it read: "= 3 days".
+function WaitDuration({ fieldKey, label, value, placeholder, apply, readOnly, hint = '' }) {
+  const feedback = durationFeedback(value);
+  return html`<div class="pni-wait-duration">
+    <${NodeField} fieldKey=${fieldKey} label=${label} value=${value || ''} placeholder=${placeholder} hint=${hint}
+      invalid=${!!feedback.error} readOnly=${readOnly} apply=${apply} />
+    ${feedback.text && html`<span class=${`pni-wait-feedback${feedback.error ? ' is-error' : ''}`} data-wait-feedback=${fieldKey}>${feedback.text}</span>`}
+  </div>`;
+}
+
+const CHECK_PERFORMER_FIELDS = { program: ['profile', 'run', 'args'], agent: ['prompt', 'role', 'anyone', 'sameAs', 'differentFrom', 'fallback'] };
+
+// WaitBlock edits a wait step: for a time, or until a criterion holds,
+// checked again and again (process-wait-step.js).
+function WaitBlock({ node, nodeId, controller, commit, readOnly, edges }) {
+  const mode = waitMode(node);
+  const [more, setMore] = useState(() => checkMoreSet(node.wait?.check));
+  const check = node.wait?.check;
+  // A bad value is refused with its reason, and the field snaps back.
+  const field = (fieldKey, raw) => {
+    const key = fieldKey.slice('wait.check.'.length);
+    return commit(fieldKey, (draft) => { const problem = setCheckField(draft, key, raw); if (problem) throw new Error(problem); });
+  };
+  const toggle = html`<div class="pni-wait-mode" role="radiogroup" aria-label="How it waits">
+    ${[['time', 'For a time'], ['check', 'Until a condition']].map(([key, text]) => html`<${Button} size="sm" key=${key}
+      class=${`pni-wait-mode-option${mode === key ? ' is-selected' : ''}`} role="radio" aria-checked=${mode === key ? 'true' : 'false'}
+      data-wait-mode=${key} disabled=${readOnly}
+      onClick=${() => { if (mode !== key) commit('wait.mode', (draft) => setWaitMode(draft, key)); }}>${text}<//>`)}
+  </div>`;
+  if (mode === 'time') {
+    return html`${toggle}<div class="pni-row">
+      <${WaitDuration} fieldKey="wait.duration" label="wait for" value=${node.wait?.duration} placeholder="3 days, 2h, 90m" readOnly=${readOnly}
+        hint="How long from when the step starts; {{ params.x }} or {{ outputs.x }} work too"
+        apply=${(fieldKey, raw) => commit(fieldKey, (draft) => setWaitField(draft, 'duration', raw))} />
+      <${NodeField} fieldKey="wait.until" label="or until" value=${node.wait?.until || ''} placeholder="2026-12-01T09:00:00Z or {{ params.at }}" readOnly=${readOnly}
+        hint="An RFC3339 time; with both, the wait ends at whichever comes first"
+        apply=${(fieldKey, raw) => commit(fieldKey, (draft) => setWaitField(draft, 'until', raw))} />
+    </div>
+    ${node.wait?.signal && html`<p class="process-node-empty ui-empty">This wait also names a signal (${node.wait.signal}), which does not run yet.</p>`}`;
+  }
+  const source = checkSource(check);
+  const routeHint = waitRouteHint(node, (edges || []).map((edge) => edge.outcome));
+  return html`${toggle}
+    <p class="pni-wait-summary" data-wait-summary>${describeCheck(check)}</p>
+    <div class="pni-row">
+      <${ChoiceSelect} fieldKey="wait.check.source" label="check that" value=${source} readOnly=${readOnly}
+        options=${CHECK_SOURCES.map((item) => [item.key, item.label])} title=${CHECK_SOURCES.find((item) => item.key === source)?.hint}
+        apply=${(fieldKey, raw) => commit(fieldKey, (draft) => setCheckSource(draft, raw))} />
+      <${WaitDuration} fieldKey="wait.check.every" label="every" value=${check.every} placeholder="5m" readOnly=${readOnly}
+        hint="The first check is made straight away, then one every interval" apply=${field} />
+    </div>
+    ${source === 'condition' && html`<${NodeField} fieldKey="wait.check.when" label="condition" value=${check.when || ''} readOnly=${readOnly}
+      placeholder='outputs.state == "ready"' hint="Like a rule case: params, outputs and steps.<id>.result; checked at each interval and as soon as the run changes"
+      apply=${field} />`}
+    ${source !== 'condition' && html`<${PerformerEditor} performer=${check.performer} path="wait.check.performer" readOnly=${readOnly}
+      showKind=${false} only=${CHECK_PERFORMER_FIELDS[source]} choiceRouting=${false}
+      locate=${(draft) => draft.wait.check.performer} commit=${commit} />`}
+    <div class="pni-row">
+      <${NodeField} fieldKey="wait.check.maxChecks" label="give up after (checks)" value=${check.maxChecks === undefined ? '' : String(check.maxChecks)}
+        placeholder="12" readOnly=${readOnly} apply=${field} />
+      <${WaitDuration} fieldKey="wait.check.within" label="or after (time)" value=${check.within} placeholder="1d" readOnly=${readOnly}
+        hint="Counted from the first check" apply=${field} />
+      <${ChoiceSelect} fieldKey="wait.check.onLimit" label="then" value=${check.onLimit || 'fail'} readOnly=${readOnly}
+        options=${[['fail', 'fail the step'], [WAIT_TIMED_OUT, 'take the timed-out route']]}
+        apply=${(fieldKey, raw) => {
+          const result = commit(fieldKey, (draft) => { setCheckField(draft, 'onLimit', raw); });
+          // Its one route becomes the met route; the timed-out one is drawn next.
+          const only = edges?.length === 1 ? edges[0] : null;
+          if (result.accepted && raw === WAIT_TIMED_OUT && only && only.outcome !== WAIT_MET) {
+            controller.renameEdgeOutcome?.(nodeId, only.outcome, WAIT_MET);
+          }
+          return result;
+        }} />
+    </div>
+    ${routeHint && html`<p class="ui-hint pni-wait-route-hint" role="status" data-wait-route-hint>${routeHint}</p>`}
+    <${Button} size="sm" variant="link" class="pni-wait-more" aria-expanded=${more ? 'true' : 'false'} data-wait-more
+      onClick=${() => setMore(!more)}>${more ? '▾' : '▸'} more: backoff, timeout, failed checks<//>
+    ${more && html`<div class="pni-row" data-wait-more-fields>
+      <${ChoiceSelect} fieldKey="wait.check.backoff" label="backoff" value=${check.backoff || 'fixed'} readOnly=${readOnly}
+        options=${[['fixed', 'fixed interval'], ['exponential', 'back off']]}
+        apply=${(fieldKey, raw) => commit(fieldKey, (draft) => { setCheckField(draft, 'backoff', raw); })} />
+      ${check.backoff === 'exponential' && html`<${NodeField} fieldKey="wait.check.factor" label="×" value=${check.factor === undefined ? '' : String(check.factor)}
+        placeholder=${String(DEFAULT_BACKOFF_FACTOR)} readOnly=${readOnly} hint="Each interval is the last one times this" apply=${field} />`}
+      ${check.backoff === 'exponential' && html`<${WaitDuration} fieldKey="wait.check.maxEvery" label="up to" value=${check.maxEvery} placeholder="1h"
+        readOnly=${readOnly} hint="The longest interval backing off reaches" apply=${field} />`}
+      ${source === 'program' && html`<${WaitDuration} fieldKey="wait.check.timeout" label="each check at most" value=${check.timeout} placeholder="2m"
+        readOnly=${readOnly} hint="A check that runs longer is a failed check" apply=${field} />`}
+      <${NodeField} fieldKey="wait.check.maxFailedChecks" label="fail after failed checks in a row"
+        value=${check.maxFailedChecks === undefined ? '' : String(check.maxFailedChecks)} placeholder=${String(DEFAULT_MAX_FAILED_CHECKS)}
+        readOnly=${readOnly} hint="A check that errors (not a plain no); a no in between starts the count again" apply=${field} />
+    </div>`}`;
 }
 
 function OutcomesBlock({ edges, nameOf }) {

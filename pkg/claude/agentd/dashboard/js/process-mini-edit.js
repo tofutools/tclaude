@@ -8,12 +8,13 @@
 //
 // A step here is what the step list edits: a task or decision done by an
 // agent, by you (a decision, as the runtime requires) or by a command.
-// Parallel, wait and subprocess nodes are drawn but edited in the full
-// editor.
+// A wait step (for a time, or until a condition) is edited here too.
+// Parallel and subprocess nodes are drawn but edited in the full editor.
 
 import { setStepWho } from './process-step-list.js';
 import { keepLifetime, pinLifetime } from './process-spawn-lifetime.js';
 import { ruleOperands, seedRule } from './process-rules.js';
+import { WAIT_MET, WAIT_TIMED_OUT, setWaitMode, setCheckField, waitCheckTimesOut, waitSub } from './process-wait-step.js';
 
 export { ruleOperands };
 import { LOOP_DEFAULT_ROUNDS, edgeGoesBack, exhaustionChoices, loopBound, loopableEdge, setLoopBound } from './process-loops.js';
@@ -24,7 +25,7 @@ const PASS_LABELS = ['pass', 'done', 'success', 'next'];
 // A new step's continuing outcome: every task passes on by next. A "you"
 // step is a task a person performs; YOU_DECISION
 // is the answer an older "you" step (a decision with one answer) went on by.
-const CONTINUE = { agent: 'next', command: 'next', message: 'next', you: 'next' };
+const CONTINUE = { agent: 'next', command: 'next', message: 'next', you: 'next', wait: 'next' };
 const YOU_DECISION = 'continue';
 // DECISION_KINDS are the kinds that insert a decision with named answers:
 // 'decide' is decided by an agent (pick who), 'decide-you' by you. Both
@@ -65,6 +66,8 @@ function copyView(view) {
 export function miniKind(node) {
   const type = node?.type || 'task';
   if (type === 'start' || type === 'end') return type;
+  // A wait is edited here, but is not a step someone does.
+  if (type === 'wait') return 'wait';
   if (type !== 'task' && type !== 'decision') return 'advanced';
   if (type === 'decision' && node.deciders?.length) return 'gate';
   const kind = node.performer?.kind;
@@ -109,6 +112,9 @@ export function mainEdge(view, id) {
     if (first) return pool.find((edge) => edge.outcome === first);
     return pool[0];
   }
+  // A wait that can time out goes on along met.
+  const met = node?.type === 'wait' && out.find((edge) => edge.outcome === WAIT_MET);
+  if (met) return met;
   return PASS_LABELS.map((label) => out.find((edge) => edge.outcome === label)).find(Boolean) || out[0];
 }
 
@@ -128,7 +134,8 @@ function uniqueOutcome(view, id, base) {
 
 // newStepNode is a fresh step of `kind`.
 export function newStepNode(kind, name = '') {
-  const label = name || { agent: 'New step', you: 'Your step', command: 'Command', message: 'Tell', decide: 'Decision', 'decide-you': 'Decision' }[kind] || 'New step';
+  const label = name || { agent: 'New step', you: 'Your step', command: 'Command', message: 'Tell', decide: 'Decision', 'decide-you': 'Decision', wait: 'Wait' }[kind] || 'New step';
+  if (kind === 'wait') return { type: 'wait', name: label, wait: { duration: '1h' } };
   if (kind === 'decide') return { type: 'decision', name: label, performer: { kind: 'agent', prompt: '' } };
   if (kind === 'decide-you') return { type: 'decision', name: label, performer: { kind: 'human', ask: '', choices: [...DECISION_OUTCOMES] } };
   if (kind === 'you') return { type: 'task', name: label, performer: { kind: 'human', ask: '' } };
@@ -1289,6 +1296,7 @@ export function draftProjection(view, { whoOf = () => '', noteOf = () => '', nam
     if (node.type === 'task' && node.performer) projected.performer = { kind: node.performer.kind };
     else projected.kind = node.type === 'task' ? 'agent' : node.type;
     if (kind === 'advanced') projected.sub = 'full editor';
+    if (kind === 'wait') projected.sub = waitSub(node);
     if (node.type === 'decision' && node.deciders?.length) projected.caption = whoOf(id, node);
     // A step that retries if it fails wears ↻N (its "If it fails").
     const retries = node.type === 'task' && node.retry ? (Number(node.retry.maxAttempts) || 0) - 1 : 0;
@@ -1531,4 +1539,47 @@ export function setRule(view, id, { cases, else: otherwise }) {
   const next = copyView(view);
   next.template.nodes[id].performer = { ...next.template.nodes[id].performer, cases: cases.map((c) => ({ when: c.when, then: c.then })), else: otherwise };
   return { view: next, id };
+}
+
+// setWaitLimit sets what a check wait does at its limit, and its routes with
+// it: timedOut gives it a met route (its way on) and a timedOut one, to a
+// failed end if there is one, else the same place; fail leaves one way on.
+export function setWaitLimit(view, id, onLimit) {
+  const next = copyView(view);
+  const node = next.template.nodes[id];
+  if (!node?.wait?.check) throw new Error('only a wait for a condition has a limit');
+  setCheckField(node, 'onLimit', onLimit);
+  syncWaitRoutes(next, id);
+  return { view: next, id };
+}
+
+// setMiniWaitMode switches a wait between a time and a condition, keeping
+// its routes right: a time has one way on.
+export function setMiniWaitMode(view, id, mode) {
+  const next = copyView(view);
+  const node = next.template.nodes[id];
+  if (node?.type !== 'wait') throw new Error('only a wait step waits');
+  setWaitMode(node, mode);
+  syncWaitRoutes(next, id);
+  return { view: next, id };
+}
+
+// syncWaitRoutes gives a wait the routes its limit needs.
+function syncWaitRoutes(view, id) {
+  const node = view.template.nodes[id];
+  const main = mainEdge(view, id);
+  if (!main) return;
+  if (waitCheckTimesOut(node)) {
+    main.outcome = WAIT_MET;
+    if (!outgoing(view, id).some((edge) => edge.outcome === WAIT_TIMED_OUT)) {
+      // Giving up goes to a failed end if the process has one.
+      const failed = Object.keys(view.template.nodes).find((nodeID) => isFailedEnd(view.template.nodes[nodeID]));
+      view.edges.push({ from: id, outcome: WAIT_TIMED_OUT, to: failed || main.to });
+    }
+    view.edges = view.edges.filter((edge) => edge.from !== id || edge === main || edge.outcome === WAIT_TIMED_OUT);
+  } else {
+    main.outcome = 'next';
+    view.edges = view.edges.filter((edge) => edge.from !== id || edge === main);
+  }
+  dropStaleJoins(view);
 }

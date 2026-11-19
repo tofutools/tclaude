@@ -20,6 +20,7 @@
 // assume template-only editing beyond the defaults.
 
 import { PROCESS_NODE_TYPES } from './process-node-types.js';
+import { waitOutcomeFor } from './process-wait-step.js';
 import { layoutProcessGraph, normalizeLayoutDirection } from './process-layout.js';
 import {
   cycleFixEdge, edgeGoesBack, exhaustionChoices, loopBound, loopableEdge, setLoopBound,
@@ -648,6 +649,9 @@ export class ProcessEditModel {
 
   freeOutcome(from, base = 'pass') {
     const taken = new Set(this.outgoingEdges(from).map((edge) => edge.outcome));
+    // A wait that can time out routes by met and timedOut.
+    const routed = waitOutcomeFor(this.template.nodes[from], taken);
+    if (routed) return routed;
     let candidate = base;
     for (let n = 2; taken.has(candidate); n += 1) candidate = `${base}-${n}`;
     return candidate;

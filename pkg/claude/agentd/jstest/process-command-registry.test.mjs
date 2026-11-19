@@ -121,12 +121,12 @@ test('feature providers contribute live context and unregister cleanly', () => {
   assert.deepEqual(buildRegisteredCommands({ snapshot: { prefix: 'Edit' } }), []);
 });
 
-test('the wait / timer node type is offered but says it cannot run yet', () => {
+test('the wait / timer node type is offered like any other: it runs', () => {
   const commands = buildProcessNodeTypeCommands({ onCreate: () => {} });
   const wait = commands.find((command) => command.id === 'process.create.wait');
-  assert.ok(wait, 'still offered: the feature is planned');
-  assert.match(String(wait.label), /can't run yet/);
-  assert.match(wait.hint, /can't start a run/);
+  assert.ok(wait, 'offered');
+  assert.doesNotMatch(String(wait.label), /can't run yet/);
+  assert.match(wait.hint, /until a condition holds/);
   const task = commands.find((command) => command.id === 'process.create.task');
   assert.doesNotMatch(String(task.label), /can't run yet/);
 });
