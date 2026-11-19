@@ -2,8 +2,10 @@ package db
 
 import (
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -16,18 +18,25 @@ type ProcessWaitingCard struct {
 	Attempt        int
 	Kind           string
 	HumanMessageID int64
-	CreatedAt      time.Time
+	// Outputs are a person's step's outputs; Passing the card's option labels
+	// that finish it as done, which need them filled in.
+	Outputs   []string
+	Passing   []string
+	CreatedAt time.Time
 	// Closed says the card was settled or withdrawn.
 	Closed bool
 }
 
-const processWaitingCardColumns = `run_id, node_id, attempt, kind, human_message_id, created_at, closed_at IS NOT NULL`
+const processWaitingCardColumns = `run_id, node_id, attempt, kind, human_message_id, outputs_json, passing_json, created_at, closed_at IS NOT NULL`
 
 func scanProcessWaitingCard(row interface{ Scan(...any) error }) (ProcessWaitingCard, error) {
 	var c ProcessWaitingCard
 	var created int64
-	err := row.Scan(&c.RunID, &c.NodeID, &c.Attempt, &c.Kind, &c.HumanMessageID, &created, &c.Closed)
+	var outputs, passing string
+	err := row.Scan(&c.RunID, &c.NodeID, &c.Attempt, &c.Kind, &c.HumanMessageID, &outputs, &passing, &created, &c.Closed)
 	c.CreatedAt = time.Unix(0, created)
+	_ = json.Unmarshal([]byte(outputs), &c.Outputs)
+	_ = json.Unmarshal([]byte(passing), &c.Passing)
 	return c, err
 }
 
@@ -57,9 +66,11 @@ func InsertProcessWaitingCardWithMessage(card ProcessWaitingCard, m *HumanMessag
 	if err != nil {
 		return 0, false, err
 	}
+	outputs, _ := json.Marshal(nonNilStrings(card.Outputs))
+	passing, _ := json.Marshal(nonNilStrings(card.Passing))
 	if _, err := tx.Exec(`INSERT INTO process_waiting_cards
-		(run_id, node_id, attempt, kind, human_message_id, created_at) VALUES (?, ?, ?, ?, ?, ?)`,
-		card.RunID, card.NodeID, card.Attempt, card.Kind, id, time.Now().UnixNano()); err != nil {
+		(run_id, node_id, attempt, kind, human_message_id, outputs_json, passing_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		card.RunID, card.NodeID, card.Attempt, card.Kind, id, string(outputs), string(passing), time.Now().UnixNano()); err != nil {
 		return 0, false, fmt.Errorf("insert process waiting card: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
@@ -161,4 +172,50 @@ func ListProcessRunIDsWaitingOnPerson() ([]string, error) {
 		out = append(out, id)
 	}
 	return out, rows.Err()
+}
+
+func nonNilStrings(values []string) []string {
+	if values == nil {
+		return []string{}
+	}
+	return values
+}
+
+// ProcessWaitingCardsForMessages returns the cards whose messages are ids,
+// by message id; a message that is no card's is absent.
+func ProcessWaitingCardsForMessages(ids []int64) (map[int64]ProcessWaitingCard, error) {
+	out := map[int64]ProcessWaitingCard{}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	d, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	for start := 0; start < len(ids); start += 500 {
+		chunk := ids[start:min(start+500, len(ids))]
+		args := make([]any, len(chunk))
+		for i, id := range chunk {
+			args[i] = id
+		}
+		rows, err := d.Query(`SELECT `+processWaitingCardColumns+` FROM process_waiting_cards
+			WHERE human_message_id IN (?`+strings.Repeat(",?", len(chunk)-1)+`)`, args...)
+		if err != nil {
+			return nil, fmt.Errorf("find process waiting cards: %w", err)
+		}
+		for rows.Next() {
+			c, err := scanProcessWaitingCard(rows)
+			if err != nil {
+				_ = rows.Close()
+				return nil, fmt.Errorf("find process waiting cards: %w", err)
+			}
+			out[c.HumanMessageID] = c
+		}
+		err = rows.Err()
+		_ = rows.Close()
+		if err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
 }

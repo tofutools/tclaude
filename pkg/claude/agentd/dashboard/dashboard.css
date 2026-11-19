@@ -943,6 +943,7 @@ button.tool:where(:hover) { background: var(--ui-bg-hover); }
 .mail-decision.decided { border-color: #2a3340; background: #161b22; }
 .mail-decision.dismissed .mail-decision-label { font-style: italic; }
 .mail-decision-label { color: #8b949e; font-size: 12px; }
+.mail-process-run { margin-left: auto; color: #8b949e; font-size: 12px; display: inline-flex; align-items: center; gap: 4px; }
 /* The button an agent put on a message (notify-human --action). */
 .message-action { margin-top: 14px; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; }
 .message-action-detail { color: #d4d4d4; font-size: 12px; overflow-wrap: anywhere; }

@@ -29,6 +29,10 @@ type waitingCardRow struct {
 	DismissedBy   string   `json:"dismissed_by"`
 	DismissReason string   `json:"dismiss_reason"`
 	ProcessRun    string   `json:"process_run"`
+	ProcessCard   *struct {
+		Outputs []string `json:"outputs"`
+		Passing []string `json:"passing"`
+	} `json:"process_card"`
 }
 
 // waitingCards reads the operator's Messages as the dashboard does, after
@@ -70,7 +74,8 @@ func TestProcessWaitingCard_PersonStepAnsweredFromTheCard(t *testing.T) {
 	cards := waitingCards(t, mux, "run_card_person")
 	require.Len(t, cards, 1, "the step waiting on the operator puts up one card")
 	card := cards[0]
-	assert.Contains(t, card.Subject, "Waiting on you: pack")
+	assert.Equal(t, "Waiting on you: pack · card-person", card.Subject)
+	assert.NotContains(t, card.Body, "run_card_person", "the card spells out no run id")
 	assert.Contains(t, card.Body, "Pack the order for Ada.")
 	assert.Equal(t, []string{"Done", "Couldn't do it"}, card.Options)
 	assert.Empty(t, card.Decision)
@@ -130,7 +135,10 @@ func TestProcessWaitingCard_ClosedWhenSettledElsewhereOrWithdrawn(t *testing.T) 
 	}
 	assert.Equal(t, "yes", decision.Decision, "decided in the run view, the card shows the verdict")
 	assert.Contains(t, step.Subject, "Waiting on you: check")
-	assert.Contains(t, step.Body, "fills in weight", "a step with outputs says where to fill them in")
+	require.NotNil(t, step.ProcessCard, "a waiting card says what the dashboard needs of it")
+	assert.Equal(t, []string{"weight"}, step.ProcessCard.Outputs, "the card sends Done to the run, where weight is filled in")
+	assert.Equal(t, []string{"Done"}, step.ProcessCard.Passing)
+	assert.NotContains(t, step.Subject, "run_card_decide", "the card spells out no run id")
 
 	// Done from the card needs the output it asks for.
 	doneAt := 0

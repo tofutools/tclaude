@@ -91,27 +91,26 @@ func reconcileProcessWaitingCards(runID string) {
 // postProcessWaitingCard puts up the card for one thing the run waits on a
 // person for, unless it already has one.
 func postProcessWaitingCard(view processRunView, d processRunDecisionView) {
+	// The card names the step and its process as their authors did; the
+	// dashboard links the process to the run, so no ids are spelled out.
 	name, step := processRunNames(view.ID, d.NodeID)
-	var b strings.Builder
-	var subject string
+	step = strings.TrimSuffix(step, " ("+d.NodeID+")")
+	subject := fmt.Sprintf("Your decision: %s · %s", step, name)
 	if d.Kind == processAwaitingTask {
-		subject = fmt.Sprintf("Waiting on you: %s (%s)", step, name)
-		fmt.Fprintf(&b, "%s (run %s) waits on you to do its step %s.\n", name, view.ID, step)
-	} else {
-		subject = fmt.Sprintf("Your decision: %s (%s)", step, name)
-		fmt.Fprintf(&b, "%s (run %s) waits on your decision at %s.\n", name, view.ID, step)
+		subject = fmt.Sprintf("Waiting on you: %s · %s", step, name)
 	}
-	if ask := sanitizeProcessText(d.Ask); ask != "" {
-		fmt.Fprintf(&b, "\n%s\n", ask)
+	var b strings.Builder
+	ask, prompt := sanitizeProcessText(d.Ask), sanitizeProcessText(d.Prompt)
+	if ask != "" {
+		fmt.Fprintf(&b, "%s\n\n", ask)
 	}
-	if prompt := sanitizeProcessText(d.Prompt); prompt != "" {
-		fmt.Fprintf(&b, "\n%s\n", prompt)
+	if prompt != "" {
+		fmt.Fprintf(&b, "%s\n\n", prompt)
 	}
-	if d.Kind == processAwaitingTask && len(d.Outputs) > 0 {
-		fmt.Fprintf(&b, "\nFinishing it as done fills in %s: do that in the run view (Groups, or the run on the phone).\n",
-			strings.Join(d.Outputs, ", "))
+	if ask == "" && prompt == "" {
+		fmt.Fprintf(&b, "%s waits on you.\n\n", step)
 	}
-	b.WriteString("\nYour pick is applied to the run. This card closes when the step is settled, here or anywhere else.")
+	b.WriteString("Answer here or in the run; this updates when it's settled.")
 	options := make([]string, 0, len(d.Verdicts))
 	for _, choice := range d.Verdicts {
 		options = append(options, processPersonChoiceLabel(d.Kind, choice))
@@ -122,9 +121,14 @@ func postProcessWaitingCard(view processRunView, d processRunDecisionView) {
 		ProcessRunID: view.ID, ProcessNodeID: d.NodeID,
 		Options: options,
 	}
-	id, inserted, err := db.InsertProcessWaitingCardWithMessage(db.ProcessWaitingCard{
-		RunID: view.ID, NodeID: d.NodeID, Attempt: d.Attempt, Kind: d.Kind,
-	}, m)
+	card := db.ProcessWaitingCard{RunID: view.ID, NodeID: d.NodeID, Attempt: d.Attempt, Kind: d.Kind}
+	if d.Kind == processAwaitingTask && len(d.Outputs) > 0 {
+		card.Outputs = slices.Clone(d.Outputs)
+		for _, choice := range d.Passing {
+			card.Passing = append(card.Passing, processPersonChoiceLabel(d.Kind, choice))
+		}
+	}
+	id, inserted, err := db.InsertProcessWaitingCardWithMessage(card, m)
 	if err != nil {
 		slog.Warn("process waiting cards: put up", "run", view.ID, "node", d.NodeID, "error", err)
 		return

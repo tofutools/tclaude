@@ -357,6 +357,20 @@ export function MessageBody({ message, agentMail = false }) {
 // SAFE_AGENT admits only a plain agent ID into a terminal request.
 const SAFE_AGENT = /^agt_[A-Za-z0-9]{4,64}$/;
 
+// openProcessCardRun opens a waiting card's run in Groups.
+export async function openProcessCardRun(message, { doc = globalThis.document } = {}) {
+  doc?.querySelector?.('nav [data-tab="groups"]')?.click();
+  const { openRunInProcesses } = await import('./groups-process-indicators.js');
+  openRunInProcesses(message.group, message.process_run, { doc });
+}
+
+// ProcessCardRun names a waiting card's process as a link to its run.
+export function ProcessCardRun({ message }) {
+  if (!message?.process_card || !message.process_run) return null;
+  return html`<div class="mail-process-run">In <${Button} size="sm" variant="link" data-process-run-link=${message.process_run}
+    title="Open the run in Groups" onClick=${() => openProcessCardRun(message)}>${message.from_title || 'its run'}<//></div>`;
+}
+
 // DecisionChoices shows a decision an agent put to the operator (notify-human
 // --option): one button per option, the agent's recommendation marked, or
 // the pick once made. Answering posts the choice through the reply route, so
@@ -371,14 +385,15 @@ export function DecisionChoices({ message, toast, onDone, remote = false, fetchI
   // run and tells the run's overseer.
   const process = !!message.process_run && !message.from_conv && !message.from_agent;
   if (options.length < 2 || (!process && !message.from_conv && !message.from_agent && !message.decision && !message.dismissed_at)) return null;
+  const runLink = html`<${ProcessCardRun} message=${message} />`;
   if (message.dismissed_at) {
     return html`<div class="mail-decision decided dismissed" role="group" aria-label="Decision">
-      <span class="mail-decision-label">${dismissedNote(message)}</span>
+      <span class="mail-decision-label">${dismissedNote(message)}</span>${runLink}
     </div>`;
   }
   if (message.decision) {
     return html`<div class="mail-decision decided" role="group" aria-label="Decision">
-      <span class="mail-decision-label">Decided:</span> <b>${message.decision}</b>
+      <span class="mail-decision-label">Decided:</span> <b>${message.decision}</b>${runLink}
     </div>`;
   }
   const choose = async (choice) => {
@@ -412,9 +427,18 @@ export function DecisionChoices({ message, toast, onDone, remote = false, fetchI
       toast?.(`Dismiss failed: ${e?.message || e}`, true);
     }
   };
+  // A step a person performs that fills in outputs is finished as done in
+  // its run, where the fields are, not from the card.
+  const card = message.process_card;
+  const needsRun = (option) => !!card && (card.outputs || []).length > 0 && (card.passing || []).includes(option);
   return html`<div class="mail-decision" role="group" aria-label="Decide">
     <span class="mail-decision-label">Decide:</span>
     ${options.map((option, i) => {
+      if (needsRun(option)) {
+        return html`<${Button} key=${option} size="sm" data-process-open-run=${message.process_run}
+          title=${`Finishing it as ${option} fills in ${card.outputs.join(', ')}`}
+          onClick=${() => openProcessCardRun(message)}>Open in run to fill in ${card.outputs.join(', ')}<//>`;
+      }
       const recommended = i + 1 === message.recommended;
       return html`<${Button} key=${option} size="sm" variant=${recommended ? 'primary' : ''} disabled=${!!busy || remote}
         title=${remote ? 'Answer this decision on the node it came from'
@@ -424,6 +448,7 @@ export function DecisionChoices({ message, toast, onDone, remote = false, fetchI
     })}
     ${!remote && !process && html`<${Button} size="sm" disabled=${!!busy} title="No longer relevant: dismiss without answering; the agent is told"
       onClick=${dismiss}>${busy === 'dismiss' ? 'Dismissing…' : 'Dismiss'}<//>`}
+    ${runLink}
   </div>`;
 }
 

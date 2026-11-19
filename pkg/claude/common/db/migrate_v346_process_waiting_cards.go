@@ -23,6 +23,10 @@ func migrateV345toV346(d *sql.DB) error {
 			attempt          INTEGER NOT NULL,
 			kind             TEXT NOT NULL CHECK(kind IN ('decision', 'task')),
 			human_message_id INTEGER NOT NULL,
+			-- A person's step's outputs, and the choice labels that finish it as
+			-- done (which need them filled in, so the card sends you to the run).
+			outputs_json     TEXT NOT NULL DEFAULT '[]',
+			passing_json     TEXT NOT NULL DEFAULT '[]',
 			created_at       INTEGER NOT NULL,
 			closed_at        INTEGER,
 			PRIMARY KEY (run_id, node_id, attempt, kind)

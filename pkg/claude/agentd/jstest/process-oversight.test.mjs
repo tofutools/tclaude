@@ -126,6 +126,29 @@ test('Messages: a run concern\'s card has no agent sender, offers its choices an
   assert.equal(plain.container.textContent, '', 'a decision with neither a sender nor a run has nobody to answer');
 });
 
+test("Messages: a card for a person's step names its process as a link to the run, and sends a Done that needs outputs to the run", async (t) => {
+  const harness = await createPreactHarness(t);
+  const { DecisionChoices } = await harness.importDashboardModule('js/mail-parts.js');
+  const requests = [];
+  const fetchImpl = async (url, init) => { requests.push({ url, body: JSON.parse(init.body) }); return { ok: true, status: 200, json: async () => ({}) }; };
+  const message = { id: 42, from_title: 'Fruit stall order', group: 'webshop', process_run: 'run_stall', options: ['Done', "Couldn't do it"],
+    process_card: { outputs: ['weight'], passing: ['Done'] } };
+  const view = await harness.mount(harness.html`<${DecisionChoices} message=${message} fetchImpl=${fetchImpl} />`);
+  const buttons = [...view.container.querySelectorAll('button')].map((b) => b.textContent.trim());
+  assert.deepEqual(buttons, ['Open in run to fill in weight', "Couldn't do it", 'Fruit stall order']);
+  assert.ok(view.container.querySelector('[data-process-open-run="run_stall"]'));
+  assert.match(view.container.querySelector('.mail-process-run').textContent, /In\s*Fruit stall order/);
+  await harness.act(async () => { harness.getByRole(view.container, 'button', { name: "Couldn't do it" }).click(); await tick(); });
+  assert.deepEqual(requests, [{ url: '/api/human-messages/reply', body: { id: 42, choice: 2 } }], 'only the choice that needs no outputs is sent from the card');
+
+  // Settled, the card keeps its link to the run.
+  const settled = await harness.mount(harness.html`<${DecisionChoices} message=${{ ...message, decision: 'Done' }} />`);
+  assert.match(settled.container.textContent, /Decided:\s*Done/);
+  assert.ok(settled.container.querySelector('[data-process-run-link="run_stall"]'));
+  const withdrawn = await harness.mount(harness.html`<${DecisionChoices} message=${{ ...message, dismissed_at: 'x', dismissed_by: 'process', dismiss_reason: 'the run was canceled' }} />`);
+  assert.match(withdrawn.container.textContent, /Withdrawn: the run was canceled/);
+});
+
 test('the strip parks the selected step that is out, and gives the run up, each with its why', async (t) => {
   const harness = await createPreactHarness(t);
   const { RunOversight, eventSentence } = await harness.importDashboardModule('js/process-oversight.js');
