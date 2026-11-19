@@ -5,6 +5,7 @@
 // groups-quickstart.js.
 
 import { stepWho } from './process-step-list.js';
+import { keepLifetime, withLifetime } from './process-spawn-lifetime.js';
 
 export function rosterMember(member) {
   return {
@@ -111,9 +112,20 @@ export function stepFallbackValue(step) {
 export function setStepFallback(step, fallback) {
   const node = JSON.parse(JSON.stringify(step.node));
   const performer = node.performer || {};
+  const before = performer.fallback;
   delete performer.fallback;
   if (fallback || performer.spawn === 'allowed') delete performer.spawn;
-  if (fallback) performer.fallback = fallback;
+  if (fallback) performer.fallback = keepLifetime(before, fallback);
+  return { ...step, node };
+}
+
+// setStepLifetime sets the lifetime of a step's own spawn fallback, as
+// picked: the default clears it (withLifetime), which keepLifetime must not
+// undo.
+export function setStepLifetime(step, lifetime) {
+  const node = JSON.parse(JSON.stringify(step.node));
+  if (node.performer?.fallback?.action !== 'spawn') return step;
+  node.performer.fallback = withLifetime(node.performer.fallback, lifetime);
   return { ...step, node };
 }
 

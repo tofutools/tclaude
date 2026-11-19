@@ -7,7 +7,8 @@
 
 import { firstSpawn } from './process-quickstart.js';
 import { expandParamShorthand } from './process-step-list.js';
-import { addDecider, gateDeciders } from './process-mini-edit.js';
+import { addDecider, deciderWho, gateDeciders } from './process-mini-edit.js';
+import { keepLifetime, withLifetime } from './process-spawn-lifetime.js';
 
 function clone(value) {
   return JSON.parse(JSON.stringify(value));
@@ -79,9 +80,20 @@ export function setDeciderFallback(view, id, index, fallback) {
   return edit(view, id, (node) => {
     const decider = node.deciders[index];
     if (decider?.kind !== 'agent') return;
+    const before = decider.fallback;
     delete decider.fallback;
     if (fallback || decider.spawn === 'allowed') delete decider.spawn;
-    if (fallback) decider.fallback = fallback;
+    if (fallback) decider.fallback = keepLifetime(before, fallback);
+  });
+}
+
+// setDeciderLifetime sets the lifetime of decider index's spawn fallback, as
+// picked (the decider default clears it).
+export function setDeciderLifetime(view, id, index, lifetime) {
+  return edit(view, id, (node) => {
+    const decider = node.deciders[index];
+    if (decider?.fallback?.action !== 'spawn') return;
+    decider.fallback = withLifetime(decider.fallback, lifetime, { decider: true });
   });
 }
 
@@ -164,8 +176,11 @@ export function deciderSummary(view, id, index, shared = null) {
     if (decider.differentFrom?.length) parts.push(`not ${decider.differentFrom.map(name).join(', ')}`);
     if (decider.sameAs) parts.push(`same as ${name(decider.sameAs)}`);
     const action = decider.fallback?.action || (decider.spawn === 'allowed' ? 'spawn' : '');
-    if (action === 'spawn') parts.push(decider.fallback?.profile ? `if nobody: spawn ${decider.fallback.profile}` : 'if nobody: spawn');
-    else if (action) parts.push(`if nobody: ${action}`);
+    // A new agent's spawn is its Who, shown in the row already.
+    const newAgent = deciderWho(decider).mode === 'spawn';
+    if (action === 'spawn') {
+      if (!newAgent) parts.push(decider.fallback?.profile ? `if nobody: spawn ${decider.fallback.profile}` : 'if nobody: spawn');
+    } else if (action) parts.push(`if nobody: ${action}`);
   }
   return parts.join(' · ');
 }

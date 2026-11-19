@@ -35,6 +35,9 @@ export const PLAN_APPROVAL_MODES = ['auto', 'human'];
 // What an agent step does when nobody in the run's scope can take it
 // (model.PerformerFallback). Blank inherits the process default.
 export const FALLBACK_ACTIONS = ['spawn', 'wait', 'fail'];
+// SPAWN_LIFETIMES are how long a spawned agent stays (process-spawn-lifetime.js).
+import { SPAWN_LIFETIMES } from './process-spawn-lifetime.js';
+export { SPAWN_LIFETIMES };
 
 // One descriptor per performer field. `kinds` scopes a field; a field on
 // every kind is common. `list` fields hold string arrays (edited one item
@@ -178,9 +181,10 @@ export function setChoiceOutcome(performer, label, outcome) {
 
 // setFallbackField edits an agent fallback held by `holder` (a performer, or
 // the template for the process default). A blank action removes it; a
-// profile is kept only for a spawn.
+// profile and a lifetime are kept only for a spawn; a blank lifetime is the
+// default.
 export function setFallbackField(holder, key, value) {
-  if (!['action', 'profile'].includes(key)) throw new Error(`unknown fallback field ${key}`);
+  if (!['action', 'profile', 'lifetime'].includes(key)) throw new Error(`unknown fallback field ${key}`);
   const text = (value || '').trim();
   if (key === 'action') {
     if (!text) {
@@ -191,14 +195,15 @@ export function setFallbackField(holder, key, value) {
     holder.fallback = { ...(holder.fallback || {}), action: text };
   } else {
     if (!holder.fallback) throw new Error('pick a fallback action first');
-    if (text) holder.fallback = { ...holder.fallback, profile: text };
+    if (key === 'lifetime' && text && !SPAWN_LIFETIMES.includes(text)) throw new Error(`invalid lifetime ${text}`);
+    if (text) holder.fallback = { ...holder.fallback, [key]: text };
     else {
-      const { profile: _profile, ...rest } = holder.fallback;
+      const { [key]: _gone, ...rest } = holder.fallback;
       holder.fallback = rest;
     }
   }
-  if (holder.fallback.action !== 'spawn' && 'profile' in holder.fallback) {
-    const { profile: _profile, ...rest } = holder.fallback;
+  if (holder.fallback.action !== 'spawn') {
+    const { profile: _profile, lifetime: _lifetime, ...rest } = holder.fallback;
     holder.fallback = rest;
   }
 }

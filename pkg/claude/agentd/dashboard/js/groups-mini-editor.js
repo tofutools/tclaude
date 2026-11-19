@@ -37,13 +37,13 @@ import {
 import { openProcessDraft } from './process-draft-handoff.js';
 import { followName } from './process-step-ids.js';
 import {
-  deciderOwnAsk, deciderSummary, gateAsk, setDeciderAsk, setDeciderFallback, setDeciderNot, setGateAsk, spawnIfNobody,
+  deciderOwnAsk, deciderSummary, gateAsk, setDeciderAsk, setDeciderFallback, setDeciderLifetime, setDeciderNot, setGateAsk, spawnIfNobody,
   addReviewer, stuckGate, withReviewerDefault,
 } from './process-gate-deciders.js';
 import {
-  AUTOSAVE_DELAY_MS, DRAFT_DESCRIPTION_MAX, FallbackPicker, TypedField, UNTITLED_PROCESS, WhoPicker, defaultNotify, inheritLabel, useSpawnProfiles,
+  AUTOSAVE_DELAY_MS, DRAFT_DESCRIPTION_MAX, FallbackPicker, LifetimePicker, TypedField, UNTITLED_PROCESS, WhoPicker, defaultNotify, inheritLabel, useSpawnProfiles,
 } from './groups-quickstart.js';
-import { fallbackNote, groupRoles, setStepFallback, stepFallbackValue } from './process-quickstart.js';
+import { fallbackNote, groupRoles, setStepFallback, setStepLifetime, stepFallbackValue } from './process-quickstart.js';
 import { withShortcut } from './keybindings.js';
 import { nodesInMarquee } from './process-selection.js';
 import { Button, Select } from './ui-components.js';
@@ -202,7 +202,8 @@ function DeciderRow({ view, id, index, decider, shared, open, onToggle, roster, 
       <${Button} size="sm" icon=${true} variant="ghost" class="gm-decider-toggle" data-mini-decider-toggle=${index}
         aria-expanded=${open ? 'true' : 'false'} aria-controls=${panel}
         aria-label=${`${open ? 'Close' : 'Open'} decider ${index + 1}'s settings`} onClick=${onToggle}>${open ? '▾' : '▸'}<//>
-      <${WhoPicker} step=${{ id: `${id}.vote.${index + 1}`, node: { type: 'decision', performer: decider } }} roster=${roster} roles=${roles} spawn=${false}
+      <${WhoPicker} step=${{ id: `${id}.vote.${index + 1}`, node: { type: 'decision', performer: decider } }} roster=${roster} roles=${roles}
+        profiles=${fallbackInfo.profiles} defaultSpawnProfile=${fallbackInfo.defaultSpawnProfile}
         label=${`Who casts vote ${index + 1}`}
         onChange=${(who) => {
     if (who.mode === 'command') return;
@@ -213,6 +214,9 @@ function DeciderRow({ view, id, index, decider, shared, open, onToggle, roster, 
       <${Button} size="sm" icon=${true} variant="ghost danger" aria-label=${`Remove decider ${index + 1}`}
         onClick=${() => onApply(removeDecider(view, id, index))}>✕<//>
     </div>
+    ${agent && decider.fallback?.action === 'spawn' && html`<div class="gm-decider-life" data-mini-decider-lifetime=${index}><span class="gq-dim">afterwards</span>
+      <${LifetimePicker} fallback=${decider.fallback} decider=${true} label=${`Afterwards, vote ${index + 1}'s agent`}
+        onChange=${(lifetime) => onApply(setDeciderLifetime(view, id, index, lifetime))} /></div>`}
     ${open && html`<div class="gm-decider-panel" id=${panel} data-mini-decider-panel=${index}>
       <label class="gm-field"><span>Its own ask</span><${TypedField} as="textarea" name="gm-decider-ask" rows="2" data-mini-decider-ask=${index}
         value=${collapseParamShorthand(deciderOwnAsk(node, index, shared))} placeholder="the same as Asks"
@@ -330,6 +334,8 @@ function Inspector({ view, id, roster, roles, fallbackInfo, onApply, onRename, o
   const stepName = (stepID) => view.template.nodes[stepID]?.name || stepID;
   // Which agent: the same as, or not the one of, another agent step.
   const spawns = kind === 'agent' && stepWho(step).mode === 'spawn';
+  // spawnsAgent: that step always gets a new agent, which this one can reuse.
+  const spawnsAgent = (other) => view.template.nodes[other]?.performer?.kind === 'agent' && stepWho({ id: other, node: view.template.nodes[other] }).mode === 'spawn';
   const others = kind === 'agent' && !spawns && stepWho(step).mode !== 'agent' ? agentStepIDs(view.template, id) : [];
   const constraint = constraintValue(stepConstraint(step));
   const constraintKnown = !constraint || others.some((other) => constraint === `same:${other}` || constraint === `different:${other}`);
@@ -365,14 +371,17 @@ function Inspector({ view, id, roster, roles, fallbackInfo, onApply, onRename, o
     ${others.length > 0 && html`<div class="gm-field" data-mini-constraint=${id}><span>Which agent</span><${Select} size="sm" aria-label="Which agent does this step"
       value=${constraint} onChange=${(event) => onApply(updateStep(view, id, (s) => setStepConstraint(s, constraintFromValue(event.currentTarget.value))))}>
       <option value="">whoever fits</option>
-      ${!constraintKnown && html`<option value=${constraint}>${constraint.startsWith('same:') ? `same as ${stepName(constraint.slice(5))}` : `not the agent of ${constraint.slice(10).split(',').map(stepName).join(', ')}`}</option>`}
-      <optgroup label="The same agent as">${others.filter((other) => !view.template.nodes[other]?.deciders?.length).map((other) => html`<option key=${`same:${other}`} value=${`same:${other}`}>same as ${stepName(other)}</option>`)}</optgroup>
+      ${!constraintKnown && html`<option value=${constraint}>${constraint.startsWith('same:') ? (spawnsAgent(constraint.slice(5)) ? `the new agent from ${stepName(constraint.slice(5))}` : `same as ${stepName(constraint.slice(5))}`) : `not the agent of ${constraint.slice(10).split(',').map(stepName).join(', ')}`}</option>`}
+      <optgroup label="The same agent as">${others.filter((other) => !view.template.nodes[other]?.deciders?.length).map((other) => html`<option key=${`same:${other}`} value=${`same:${other}`}>${spawnsAgent(other) ? `the new agent from ${stepName(other)}` : `same as ${stepName(other)}`}</option>`)}</optgroup>
       <optgroup label="Not the agent of">${others.map((other) => html`<option key=${`different:${other}`} value=${`different:${other}`}>not ${stepName(other)}</option>`)}</optgroup>
     <//></div>`}
     ${kind === 'agent' && !spawns && html`<div class="gm-field" data-mini-fallback=${id}><span>If nobody</span><${FallbackPicker} value=${stepFallbackValue(step)}
       label="If no member can take this step" inherit=${inheritLabel(fallbackInfo.fallback, fallbackInfo.defaultSpawnProfile)}
       defaultSpawnProfile=${fallbackInfo.defaultSpawnProfile} profiles=${fallbackInfo.profiles}
       onChange=${(next) => onApply(updateStep(view, id, (s) => setStepFallback(s, next)))} /></div>`}
+    ${kind === 'agent' && !gate && node.performer?.fallback?.action === 'spawn' && html`<div class="gm-field" data-mini-lifetime=${id}><span>Afterwards</span>
+      <${LifetimePicker} fallback=${node.performer.fallback} label=${`Afterwards, ${spawns ? 'the new agent' : 'an agent spawned for this step'}`}
+        onChange=${(lifetime) => onApply(updateStep(view, id, (s) => setStepLifetime(s, lifetime)))} /></div>`}
     ${(kind === 'agent' || kind === 'command') && node.type === 'task' && html`<${FailureRow} id=${id} failure=${stepFailure(step)} staged=${!!(node.plan || node.checks?.length || node.review)}
       onChange=${(next) => onApply(updateStep(view, id, (s) => setStepFailure(s, next)))} />`}
     ${kind === 'agent' && node.type === 'task' && html`<label class="gm-field" data-mini-outputs=${id}><span>Outputs</span><${TypedField} name="none-e-g-pr" type="text"

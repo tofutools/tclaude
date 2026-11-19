@@ -12,7 +12,7 @@ import { useLayoutEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import {
   DECISION_KINDS, PERFORMER_KINDS, performerFieldsFor, setPerformerKind, setPerformerField,
-  setChoiceOutcome, setContactField, setFallbackField, formatLines, FALLBACK_ACTIONS,
+  setChoiceOutcome, setContactField, setFallbackField, formatLines, FALLBACK_ACTIONS, SPAWN_LIFETIMES,
 } from './process-node-form.js';
 
 const html = htm.bind(h);
@@ -114,6 +114,10 @@ export function PerformerEditor({
           ${fallback.action === 'spawn' && html`<${NodeField} fieldKey=${`${path}.fallback.profile`} label="spawn profile"
             value=${fallback.profile || ''} placeholder="group default" readOnly=${readOnly}
             apply=${(key, next) => mutate('fallback.profile', next, (slot, raw) => setFallbackField(slot, 'profile', raw))} />`}
+          ${fallback.action === 'spawn' && html`<${NodeSelect} fieldKey=${`${path}.fallback.lifetime`} label="afterwards"
+            options=${SPAWN_LIFETIMES} value=${fallback.lifetime || ''} blankLabel="default" readOnly=${readOnly}
+            title="step: retired once this step is done · run: kept for later steps, retired when the run ends · keep: never retired by the run"
+            apply=${(key, next) => mutate('fallback.lifetime', next, (slot, raw) => setFallbackField(slot, 'lifetime', raw))} />`}
         </div>`;
       }
       const value = field.list ? formatLines(performer?.[field.key]) : performer?.[field.key];
