@@ -209,8 +209,11 @@ export function setNodePatience(node, raw) {
 }
 
 function OutputsBlock({ node, commit, readOnly }) {
-  // An agent reports each with --output <name>=<value>; later prompts read {{ outputs.<name> }}.
-  return html`<${NodeField} fieldKey="captures" label="published outputs" multiline=${true} placeholder="one-name-per-line"
+  // An agent reports each with --output <name>=<value>; a person fills each in
+  // when they finish the step as done. Later prompts read {{ outputs.<name> }}.
+  const person = node.performer?.kind === 'human';
+  return html`<${NodeField} fieldKey="captures" label="published outputs" multiline=${true} placeholder=${person ? 'one name per line, e.g. weight' : 'one-name-per-line'}
+    hint=${person ? 'The person fills each in when they finish this step as done' : ''}
     value=${formatLines(node.captures)} readOnly=${readOnly}
     apply=${(key, raw) => commit(key, (draft) => setCaptures(draft, raw))} />`;
 }

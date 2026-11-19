@@ -672,16 +672,15 @@ export function setStepLinks(step, links) {
 
 // newStep builds a step of the given kind with a fresh id.
 export function newStep(list, { kind = 'agent', name = '', text = '', who = null } = {}) {
-  const fallbackName = { agent: 'Step', you: 'Approve', command: 'Command', message: 'Tell' }[kind] || 'Step';
+  const fallbackName = { agent: 'Step', you: 'Your step', command: 'Command', message: 'Tell' }[kind] || 'Step';
   const id = uniqueID(name || fallbackName, listNodeIDs(list));
   const base = { id, node: { type: 'task', name: name || fallbackName, performer: { kind: 'agent' } }, cont: STEP_CONTINUE_OUTCOME, links: [] };
   const mode = who || (kind === 'you' ? { mode: 'you' } : kind === 'command' ? { mode: 'command', run: text }
     : kind === 'message' ? { mode: 'message', to: [MESSAGE_TO_OPERATOR] } : { mode: 'nobody' });
   let step = setStepWho(base, mode);
   if (text && mode.mode !== 'command') step = setStepText(step, text);
-  // A human performs only decisions today, so a "you" step is a decision
-  // whose one answer continues.
-  if (mode.mode === 'you') step = setStepChoices({ ...step, cont: YOU_CONTINUE }, [YOU_CONTINUE], '');
+  // A "you" step is a task the person performs, finished as done or failed;
+  // its text is what they are asked to do.
   return step;
 }
 

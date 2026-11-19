@@ -734,8 +734,12 @@ with the group's default spawn profile or another profile you pick beside it,
 or fail: the template's
 `fallback`), and an agent step can override that with its own choice under
 its Who picker, or follow the process; a step that does not simply wait shows
-its fallback (`↯ spawn opus-lead`, `↯ fail`) on its node; your answers to a *you* step branch to
-later steps, and `{{name}}` in a prompt becomes a start input. A preview, the
+its fallback (`↯ spawn opus-lead`, `↯ fail`) on its node. A *you* step is
+one you perform: its text is what you are asked to do, you finish it as done
+or failed, and in the graph's inspector it can name outputs you fill in (see
+[Steps done by a person](#steps-done-by-a-person)). *◇ you decide* makes it
+your decision instead, whose answers branch to later steps. `{{name}}` in a
+prompt becomes a start input. A preview, the
 start inputs and who each step would use now (the daemon's resolve-preview,
 a dry run of the group rules) update as you edit. A command
 step runs on this host only after you tick *Allow step N to run* for its
@@ -1441,6 +1445,11 @@ an agent's prompt. With no `choices` the step finishes as `done` or
 `failed`. Own choices map each to `pass` or `fail`, and a passing choice
 must fill in every output the step declares (with one output, the note
 stands in for it), which a later prompt reads as `{{ outputs.<name> }}`.
+
+In the dashboard, a *you* step in the step list or the small graph is one of
+these, and the full editor's palette has *Step done by a person*. Its
+outputs are the step's *Outputs*, and its choices, when left empty, are done
+and failed.
 
 Finish it with `decide`:
 

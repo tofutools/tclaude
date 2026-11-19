@@ -21,9 +21,11 @@ import { LOOP_DEFAULT_ROUNDS, edgeGoesBack, exhaustionChoices, loopBound, loopab
 // PASS_LABELS mirrors model.PassOutcomeLabels: the edge a task's pass
 // verdict follows.
 const PASS_LABELS = ['pass', 'done', 'success', 'next'];
-// A new step's continuing outcome: a task passes on, a "you" decision
-// continues.
-const CONTINUE = { agent: 'next', command: 'next', message: 'next', you: 'continue' };
+// A new step's continuing outcome: every task passes on by next. A "you"
+// step is a task a person performs; YOU_DECISION
+// is the answer an older "you" step (a decision with one answer) went on by.
+const CONTINUE = { agent: 'next', command: 'next', message: 'next', you: 'next' };
+const YOU_DECISION = 'continue';
 // DECISION_KINDS are the kinds that insert a decision with named answers:
 // 'decide' is decided by an agent (pick who), 'decide-you' by you. Both
 // start with yes and no, each going on to what came next; the answers are
@@ -126,10 +128,10 @@ function uniqueOutcome(view, id, base) {
 
 // newStepNode is a fresh step of `kind`.
 export function newStepNode(kind, name = '') {
-  const label = name || { agent: 'New step', you: 'Decide', command: 'Command', message: 'Tell', decide: 'Decision', 'decide-you': 'Decision' }[kind] || 'New step';
+  const label = name || { agent: 'New step', you: 'Your step', command: 'Command', message: 'Tell', decide: 'Decision', 'decide-you': 'Decision' }[kind] || 'New step';
   if (kind === 'decide') return { type: 'decision', name: label, performer: { kind: 'agent', prompt: '' } };
   if (kind === 'decide-you') return { type: 'decision', name: label, performer: { kind: 'human', ask: '', choices: [...DECISION_OUTCOMES] } };
-  if (kind === 'you') return { type: 'decision', name: label, performer: { kind: 'human', ask: '', choices: [CONTINUE.you] } };
+  if (kind === 'you') return { type: 'task', name: label, performer: { kind: 'human', ask: '' } };
   if (kind === 'command') return { type: 'task', name: label, performer: { kind: 'program', run: '' } };
   // A new message goes to you until the operator picks who else.
   if (kind === 'message') return { type: 'task', name: label, performer: { kind: 'message', to: ['operator'], text: '' } };
@@ -840,14 +842,16 @@ export function duplicate(view, id) {
   if (main) {
     main.to = added;
   } else {
-    next.edges.push({ from: id, outcome: CONTINUE[miniKind(node)] || 'next', to: added });
+    const cont = node.type === 'decision' && miniKind(node) === 'you' ? YOU_DECISION : CONTINUE[miniKind(node)];
+    next.edges.push({ from: id, outcome: cont || 'next', to: added });
   }
   dropStaleJoins(next);
   return { view: syncLoops(next), id: added };
 }
 
 // changeKind turns a step into an agent, "you" or command step, keeping its
-// name and text. A "you" step is a decision whose answers are its outcomes;
+// name and text. A task stays a task: a "you" task is a step a person
+// performs. A decision becoming yours keeps its answers as your choices;
 // leaving a decision keeps only its main path.
 export function changeKind(view, id, kind) {
   const node = view.template.nodes[id];
@@ -867,21 +871,16 @@ export function changeKind(view, id, kind) {
   if (kind === 'you' && node.type === 'decision') {
     // An agent's decision becomes yours with the same answers.
     changed.performer.choices = outgoing(next, id).map((edge) => edge.outcome);
-  } else if (kind === 'you') {
-    changed.type = 'decision';
-    if (main) main.outcome = CONTINUE.you;
-    const answers = outgoing(next, id).map((edge) => edge.outcome);
-    changed.performer.choices = answers.length ? [CONTINUE.you, ...answers.filter((a) => a !== CONTINUE.you)] : [CONTINUE.you];
   }
   next.template.nodes[id] = changed;
   // Only a task reports outputs, and a message reports none.
   if (changed.type !== 'task' || kind === 'message') delete changed.captures;
-  // A retry runs only on agent and command tasks, and only an agent can be
-  // handed its own failure back: what the new kind cannot run goes.
+  // A retry runs on any task, and only an agent can be handed its own
+  // failure back: what the new kind cannot run goes.
   if (changed.type !== 'task') delete changed.retry;
   // Only a task may fail and go on; a decision with mayFail is refused.
   if (changed.type !== 'task') delete changed.mayFail;
-  else if ((kind === 'command' || kind === 'message') && changed.retry?.onFail && changed.retry.onFail !== 'fresh-attempt') delete changed.retry.onFail;
+  else if (kind !== 'agent' && changed.retry?.onFail && changed.retry.onFail !== 'fresh-attempt') delete changed.retry.onFail;
   let orphans = [];
   if (node.type === 'decision' && kind !== 'you') {
     // A task continues one way: only the main answer's path stays, and the

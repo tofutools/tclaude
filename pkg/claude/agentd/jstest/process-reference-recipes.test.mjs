@@ -194,7 +194,7 @@ test('⑂ on an answer puts a new step on that answer, before where it went', ()
   const { view } = built.simple;
   const out = m.insertOnAnswer(view, 'merge', 'leave', 'you');
   assert.equal(to(out.view, 'merge', 'leave'), out.id);
-  assert.equal(to(out.view, out.id, 'continue'), 'end');
+  assert.equal(to(out.view, out.id, 'next'), 'end', 'your step goes on to where the answer went');
   assert.equal(to(out.view, 'merge', 'merge'), 'merge-the-pr', 'the other answers stay');
   assert.throws(() => m.insertOnAnswer(view, 'iterate-or-move-on', 'iterate', 'agent'), /goes back/);
   assert.throws(() => m.insertOnAnswer(view, 'ready-the-pr', 'next', 'agent'), /decision/);
@@ -229,7 +229,11 @@ test('a step that may fail stops being one when it becomes a decision (the serve
   const { view } = e;
   assert.equal(view.template.nodes.ci.mayFail, true);
   const yours = m.changeKind(view, 'ci', 'you').view.template.nodes.ci;
-  assert.equal(yours.type, 'decision');
-  assert.equal(yours.mayFail, undefined);
+  assert.equal(yours.type, 'task', 'a step you perform is still a task');
+  assert.equal(yours.mayFail, true, 'and may still fail and go on');
   assert.equal(m.changeKind(view, 'ci', 'agent').view.template.nodes.ci.mayFail, true, 'still a task: kept');
+  const decided = structuredClone(view);
+  decided.template.nodes.ci.type = 'decision';
+  decided.template.nodes.ci.performer = { kind: 'agent', prompt: 'Pass?' };
+  assert.equal(m.changeKind(decided, 'ci', 'you').view.template.nodes.ci.mayFail, undefined, 'a decision may not fail and go on');
 });

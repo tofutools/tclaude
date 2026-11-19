@@ -392,8 +392,9 @@ function Inspector({ view, id, roster, roles, fallbackInfo, onApply, onRename, o
         onChange=${(lifetime) => onApply(updateStep(view, id, (s) => setStepLifetime(s, lifetime)))} /></div>`}
     ${(kind === 'agent' || kind === 'command' || message) && node.type === 'task' && html`<${FailureRow} id=${id} failure=${stepFailure(step)} staged=${!!(node.plan || node.checks?.length || node.review)}
       onChange=${(next) => onApply(updateStep(view, id, (s) => setStepFailure(s, next)))} />`}
-    ${kind === 'agent' && node.type === 'task' && html`<label class="gm-field" data-mini-outputs=${id}><span>Outputs</span><${TypedField} name="none-e-g-pr" type="text"
-      value=${outputs.join(', ')} placeholder="none (e.g. pr)" title="Names this step reports, which later steps read as {{ outputs.<name> }}"
+    ${(kind === 'agent' || kind === 'you') && node.type === 'task' && html`<label class="gm-field" data-mini-outputs=${id}><span>Outputs</span><${TypedField} name="none-e-g-pr" type="text"
+      value=${outputs.join(', ')} placeholder=${kind === 'you' ? 'none (e.g. weight)' : 'none (e.g. pr)'}
+      title=${kind === 'you' ? 'Names you fill in when you finish this step as done, which later steps read as {{ outputs.<name> }}' : 'Names this step reports, which later steps read as {{ outputs.<name> }}'}
       onChange=${(event) => onApply(updateStep(view, id, (s) => setStepOutputs(s, event.currentTarget.value)))} /></label>`}
     <div class="gm-field"><span>${node.type === 'decision' ? 'Outcomes' : 'Then'}</span><div class="gm-outcomes">
       ${outcomes.map(({ outcome, to }) => html`<span key=${outcome} class="gm-outcome" data-mini-outcome=${outcome}>

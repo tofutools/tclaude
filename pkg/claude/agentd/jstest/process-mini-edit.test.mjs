@@ -6,7 +6,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import * as m from '../dashboard/js/process-mini-edit.js';
 import { AGENT_VERDICTS, replaceStep, setStepChoices, setStepLoop, setStepText, stepListToView, viewToStepList } from '../dashboard/js/process-step-list.js';
 
@@ -119,6 +119,12 @@ function trackCases() {
 const edge = (view, from, outcome) => view.edges.find((e) => e.from === from && e.outcome === outcome)?.to;
 
 test('every operation builds exactly the fixture the Go test proves runnable', () => {
+  // TCLAUDE_UPDATE_EDIT_CASES=1 rewrites the fixture after an intended change;
+  // TestMiniEditCasesAreRunnable then proves the new one runnable.
+  if (process.env.TCLAUDE_UPDATE_EDIT_CASES) {
+    writeFileSync(new URL('./process-mini-edit-cases.json', import.meta.url), `${JSON.stringify({ ...fixture, cases: cases() }, null, 1)}\n`);
+    return;
+  }
   assert.deepEqual(cases(), fixture.cases);
 });
 
@@ -302,11 +308,15 @@ test('deleteSteps removes several as one edit, each the way one delete does', ()
   assert.equal(m.deleteSteps(named, ['implement', 'review']).note, undefined);
 });
 
-test('change kind: a "you" step is a decision, a task keeps one route', () => {
+test('change kind: a task becomes a step you perform, a decision keeps one route', () => {
   const you = m.changeKind(ship, 'implement', 'you').view;
-  assert.equal(you.template.nodes.implement.type, 'decision');
-  assert.deepEqual(you.template.nodes.implement.performer.choices, ['continue']);
-  assert.equal(edge(you, 'implement', 'continue'), 'review');
+  assert.equal(you.template.nodes.implement.type, 'task', 'a step you perform is a task, done or failed');
+  assert.equal(you.template.nodes.implement.performer.kind, 'human');
+  assert.equal(you.template.nodes.implement.performer.choices, undefined);
+  assert.equal(edge(you, 'implement', 'next'), 'review');
+  const back = m.changeKind(you, 'implement', 'agent').view;
+  assert.equal(back.template.nodes.implement.type, 'task');
+  assert.equal(edge(back, 'implement', 'next'), 'review');
   assert.equal(you.template.nodes.implement.performer.ask, 'Implement {{params.issue}} on a branch and open a PR. When it comes back for changes, address the notes on the same PR.', 'the text moves along');
   const cmd = m.changeKind(ship, 'approve', 'command');
   assert.equal(cmd.view.template.nodes.approve.type, 'task');
@@ -356,7 +366,9 @@ test('changing a step\'s kind drops a retry the new kind cannot run', () => {
   const retrying = structuredClone(ship);
   retrying.template.nodes.implement.retry = { maxAttempts: 3, onFail: 'feedback-same-session' };
   const asked = m.changeKind(retrying, 'implement', 'you').view;
-  assert.equal(asked.template.nodes.implement.retry, undefined, 'a question has no retries');
+  assert.deepEqual(asked.template.nodes.implement.retry, { maxAttempts: 3 }, 'your step keeps its budget, not a session to hand back');
+  const decided = m.changeKind(retrying, 'implement', 'agent').view;
+  assert.deepEqual(decided.template.nodes.implement.retry, retrying.template.nodes.implement.retry);
   const command = m.changeKind(retrying, 'implement', 'command').view;
   assert.deepEqual(command.template.nodes.implement.retry, { maxAttempts: 3 }, 'a command keeps its budget, not a session to hand back');
 });
@@ -507,11 +519,14 @@ test('a gate stays valid as its outcomes change', () => {
   assert.match(m.canRemoveOutcome(small, 'approve', 'ship') || m.canRemoveOutcome(small, 'approve', 'changes'), /gate needs/);
 });
 
-test('outputs belong to one task: not kept by a "you" step or a duplicate', async () => {
+test('outputs belong to one task: kept by a step you perform, not by a decision or a duplicate', async () => {
   const { setStepOutputs } = await import('../dashboard/js/process-step-list.js');
   const withOut = m.updateStep(ship, 'review', (s) => setStepOutputs(s, 'notes')).view;
   assert.deepEqual(withOut.template.nodes.review.captures, ['notes']);
-  assert.equal(m.changeKind(withOut, 'review', 'you').view.template.nodes.review.captures, undefined);
+  assert.deepEqual(m.changeKind(withOut, 'review', 'you').view.template.nodes.review.captures, ['notes'], 'the person fills them in');
+  const decision = structuredClone(withOut);
+  decision.template.nodes.review.type = 'decision';
+  assert.equal(m.changeKind(decision, 'review', 'you').view.template.nodes.review.captures, undefined, 'a decision reports no outputs');
   const dup = m.duplicate(withOut, 'review');
   assert.equal(dup.view.template.nodes[dup.id].captures, undefined);
   assert.deepEqual(dup.view.template.nodes.review.captures, ['notes']);
@@ -602,9 +617,8 @@ test('inside a parallel branch "fail the run" is offered: a failed end there end
 test('a gate inside a parallel branch gives up into a failed end, never its agree', () => {
   const fan = steps['plan-fan-out-merge'];
   const part = Object.keys(fan.template.nodes).find((id) => /part/.test(id));
-  let { view, id } = m.insertAfter(fan, part, 'you');
-  ({ view } = m.addOutcome(view, id, edge(view, id, 'continue')));
-  const redo = m.outcomesOf(view, id).map((o) => o.outcome).find((o) => o !== 'continue');
+  let { view, id } = m.insertAfter(fan, part, 'decide-you');
+  const redo = 'no';
   ({ view } = m.setOutcomeTarget(view, id, redo, part));
   assert.ok(m.inParallelBranch(view, id), 'the fixture: a decision on a branch');
   ({ view } = m.addDecider(view, id, { mode: 'anyone' }));
