@@ -16,6 +16,23 @@ import (
 
 var programPerform = performProgram
 
+// messagePerform sends a message command. The daemon installs its sender
+// (SetMessageSender); until then a message step fails, visibly.
+var messagePerform = func(_ context.Context, _ string, command engine.Command) (Result, error) {
+	now := time.Now().UTC()
+	return Result{StartedAt: now, FinishedAt: now, Observation: engine.ProgramObservation{
+		CommandID: command.ID, NodeID: command.NodeID, Outcome: engine.ProgramFailed, ExitCode: -1,
+		Error: "no message sender is installed in this daemon",
+	}}, nil
+}
+
+// SetMessageSender installs how message commands are sent. send returns the
+// outcome as a Result whose Observation names the command; it is called from
+// a worker goroutine, with the claimed command only.
+func SetMessageSender(send func(ctx context.Context, runID string, command engine.Command) (Result, error)) {
+	messagePerform = send
+}
+
 const (
 	DefaultProgramTimeout     = 10 * time.Minute
 	MaxProgramTimeout         = time.Hour
@@ -44,6 +61,29 @@ type Result struct {
 	StdoutTruncated bool                      `json:"stdoutTruncated,omitempty"`
 	StderrTruncated bool                      `json:"stderrTruncated,omitempty"`
 	CleanupError    string                    `json:"cleanupError,omitempty"`
+	// Message is what a message command sent, and to whom.
+	Message *MessageReport `json:"message,omitempty"`
+}
+
+// MessageReport is what one message attempt sent: its subject and text as
+// sent (step outputs filled in) and every delivery it made. A failed attempt
+// reports the deliveries it made before it failed, so a retry skips them.
+type MessageReport struct {
+	Subject   string            `json:"subject,omitempty"`
+	Text      string            `json:"text"`
+	Delivered []MessageDelivery `json:"delivered,omitempty"`
+	// Round is the loop round the attempt sent in (0 outside loops): a
+	// retry in the same round skips who already has it, a new round does not.
+	Round int `json:"round,omitempty"`
+}
+
+// MessageDelivery is one recipient a message reached: To is the authored
+// recipient it came from (role:reviewer), Key who it reached (operator, or
+// an agent id) and Name that one for a person to read.
+type MessageDelivery struct {
+	To   string `json:"to"`
+	Key  string `json:"key"`
+	Name string `json:"name,omitempty"`
 }
 
 // Perform runs one claimed permission's program: argv without a shell, waited
@@ -66,6 +106,9 @@ func Perform(ctx context.Context, dispatch *Dispatch) (Result, error) {
 	// then fails, times out, or is cancelled does not hand the permission back.
 	if !dispatch.spent.CompareAndSwap(false, true) {
 		return Result{}, ErrStaleDispatch
+	}
+	if dispatch.command.Kind == engine.CommandMessage {
+		return messagePerform(ctx, dispatch.runID, dispatch.command)
 	}
 	return programPerform(ctx, dispatch.runID, dispatch.command, dispatch.bounds)
 }
@@ -194,7 +237,11 @@ func Observe(run *Run, dispatch *Dispatch, result Result) (*Dispatch, error) {
 	if err != nil {
 		return nil, err
 	}
-	observed := event("program_observed", &command, EngineActor, result)
+	observedKind := "program_observed"
+	if command.Kind == engine.CommandMessage {
+		observedKind = "message_sent"
+	}
+	observed := event(observedKind, &command, EngineActor, result)
 	// Settling this observation can activate more than one branch; the follow-on
 	// advance plans one of them. The branches it did not plan stay ready until
 	// the owner has capacity for them.

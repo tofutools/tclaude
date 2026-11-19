@@ -1402,6 +1402,9 @@ func taskCommand(checkpoint Checkpoint, definition *Definition, node definitionN
 	case node.wait != nil:
 		wait := *node.wait
 		command.Wait = &wait
+	case node.message != nil:
+		message := cloneMessageCommand(*node.message)
+		command.Message = &message
 	default:
 		command.Program = cloneProgramCommand(node.program)
 	}
@@ -1429,6 +1432,9 @@ func (node definitionNode) commandKind() CommandKind {
 		return CommandAgent
 	case node.human != nil:
 		return CommandHuman
+	}
+	if node.message != nil {
+		return CommandMessage
 	}
 	return CommandProgram
 }
@@ -1552,6 +1558,10 @@ func cloneCommand(command Command) Command {
 		wait := *command.Wait
 		clone.Wait = &wait
 	}
+	if command.Message != nil {
+		message := cloneMessageCommand(*command.Message)
+		clone.Message = &message
+	}
 	clone.Verdicts = slices.Clone(command.Verdicts)
 	return clone
 }
@@ -1565,6 +1575,12 @@ func cloneHumanCommand(human *HumanCommand) *HumanCommand {
 	clone.ChoiceOutcomes = maps.Clone(human.ChoiceOutcomes)
 	clone.Captures = slices.Clone(human.Captures)
 	return &clone
+}
+
+func cloneMessageCommand(message MessageCommand) MessageCommand {
+	clone := message
+	clone.To = slices.Clone(message.To)
+	return clone
 }
 
 func cloneProgramCommand(program ProgramCommand) ProgramCommand {

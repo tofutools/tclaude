@@ -12,7 +12,7 @@ var (
 	paramFields      = stringSet("type", "name", "description", "doc", "required", "default")
 	nodeFields       = stringSet("type", "join", "name", "description", "doc", "performer", "plan", "checks", "review", "retry", "patience", "wait", "next", "loops", "result", "captures", "deciders", "agree", "subprocess", "metadata", "mayFail")
 	stepFields       = stringSet("id", "name", "description", "doc", "performer", "approval", "approvalRetry", "retry")
-	performerFields  = stringSet("kind", "profile", "prompt", "ask", "choices", "choiceOutcomes", "assignee", "role", "anyone", "lead", "sameAs", "differentFrom", "fallback", "spawn", "model", "effort", "run", "args", "timeout", "contact", "cases", "else")
+	performerFields  = stringSet("kind", "profile", "prompt", "ask", "choices", "choiceOutcomes", "assignee", "role", "anyone", "lead", "sameAs", "differentFrom", "fallback", "spawn", "model", "effort", "run", "args", "timeout", "contact", "cases", "else", "to", "subject", "text")
 	ruleCaseFields   = stringSet("when", "then")
 	fallbackFields   = stringSet("action", "profile", "lifetime")
 	contactFields    = stringSet("cadence", "budget", "escalationTarget")

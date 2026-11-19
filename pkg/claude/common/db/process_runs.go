@@ -894,6 +894,10 @@ func ListRunnableProcessRunIDs(afterID string, limit int) ([]string, string, err
 	// accounted for by its dispatch record and simply occupies a slot while its
 	// performer works, so a sibling ready branch keeps the run runnable. A WAIT
 	// command is the same, accounted for by its timer record.
+	// An outstanding MESSAGE command makes the run runnable on its own: a message
+	// is safe to send again, so a resume picks it up (executor.Prepare) rather
+	// than leaving it for reconciliation. A live owner already sending it
+	// refuses the resume's claim, so including it then is harmless.
 	//
 	// An orphaned run (its bound group or agent is gone) is excluded too: it is
 	// parked for a human to re-scope, never resumed by the fallback. A paused
@@ -925,13 +929,17 @@ func ListRunnableProcessRunIDs(afterID string, limit int) ([]string, string, err
 			AND paused_at IS NULL
 			AND CASE WHEN json_type(checkpoint_json, '$.commands') = 'array'
 					THEN (SELECT COUNT(*) FROM json_each(checkpoint_json, '$.commands')
-						WHERE COALESCE(json_extract(value, '$.kind'), '') NOT IN ('agent', 'wait'))
+						WHERE COALESCE(json_extract(value, '$.kind'), '') NOT IN ('agent', 'wait', 'message'))
 					ELSE 0 END = 0
-			AND CASE WHEN json_type(checkpoint_json, '$.nodes') = 'object'
+			AND (CASE WHEN json_type(checkpoint_json, '$.commands') = 'array'
+					THEN (SELECT COUNT(*) FROM json_each(checkpoint_json, '$.commands')
+						WHERE json_extract(value, '$.kind') = 'message')
+					ELSE 0 END > 0
+				OR CASE WHEN json_type(checkpoint_json, '$.nodes') = 'object'
 					THEN (SELECT COUNT(*) FROM json_each(checkpoint_json, '$.nodes')
 						WHERE value = 'ready')
 					ELSE 0 END
-				> COALESCE(json_array_length(checkpoint_json, '$.awaitingDecisions'), 0)
+				> COALESCE(json_array_length(checkpoint_json, '$.awaitingDecisions'), 0))
 			THEN 1 ELSE 0 END
 		FROM (
 			SELECT id, checkpoint_json, scope_state, paused_at FROM process_runs

@@ -735,3 +735,42 @@ func TestProcessTemplatesRunNamesEveryTemplateWithARun(t *testing.T) {
 	id, _, _ := strings.Cut(input.TemplateRef, "@")
 	assert.Equal(t, map[string]bool{id: true}, ran)
 }
+
+// TestRunnableProcessRunIDsResumeUnsentMessages: a message command nobody is
+// sending is safe to send again, so its run is resumed by the sweep (tk_9f7b4513)
+// even with no ready node, where a program command would need reconciling.
+func TestRunnableProcessRunIDsResumeUnsentMessages(t *testing.T) {
+	setupTestDB(t)
+	for _, item := range []struct {
+		id, checkpoint string
+	}{
+		{"run_message", `{"commands":[{"id":"cmd","kind":"message"}],"nodes":{"tell":"running"}}`},
+		{"run_message_and_program", `{"commands":[{"id":"cmd","kind":"message"},{"id":"cmd2","kind":"program"}],
+			"nodes":{"tell":"running","build":"running"}}`},
+		{"run_message_and_agent", `{"commands":[{"id":"cmd","kind":"message"},{"id":"cmd2","kind":"agent"}],
+			"nodes":{"tell":"running","build":"running"}}`},
+		{"run_no_kind", `{"commands":[{"id":"cmd"}],"nodes":{"task":"running","other":"ready"}}`},
+	} {
+		require.NoError(t, CreateProcessRun(processRunFixture(t, item.id, "running", json.RawMessage(item.checkpoint))))
+	}
+	ids, _, err := ListRunnableProcessRunIDs("", MaxProcessRunReadPage)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"run_message", "run_message_and_agent"}, ids,
+		"an unsent message resumes its run; a program beside it still needs reconciling, and so does a command of no kind")
+}
+
+func TestProcessMessageDeliveriesAreRecordedOnce(t *testing.T) {
+	setupTestDB(t)
+	require.NoError(t, CreateProcessRun(processRunFixture(t, "run_deliveries", "running", json.RawMessage(`{"nodes":{}}`))))
+	had, err := ProcessMessageDelivered("cmd_1", "operator")
+	require.NoError(t, err)
+	assert.False(t, had)
+	require.NoError(t, RecordProcessMessageDelivery("run_deliveries", "cmd_1", "operator"))
+	require.NoError(t, RecordProcessMessageDelivery("run_deliveries", "cmd_1", "operator"), "recording twice is a no-op")
+	had, err = ProcessMessageDelivered("cmd_1", "operator")
+	require.NoError(t, err)
+	assert.True(t, had)
+	had, err = ProcessMessageDelivered("cmd_2", "operator")
+	require.NoError(t, err)
+	assert.False(t, had, "another command (a retry) is its own")
+}

@@ -611,6 +611,8 @@ func validatePerformer(performer Performer, path string, decision bool, diagnost
 			diagnostic := diagError("missing_run", path+".run", "program performer requires run")
 			finding = &diagnostic
 		}
+	case PerformerMessage:
+		finding = messageFinding(performer, path, decision)
 	case PerformerRule:
 		if !decision {
 			diagnostic := diagError("rule_on_non_decision", path+".kind", "a rule decides a decision; it is only valid on decision nodes")
@@ -669,7 +671,8 @@ func validatePerformer(performer Performer, path string, decision bool, diagnost
 // instruction text or a human's long-form context. An unrecognized kind gets
 // its own invalid_performer_kind error; skip the scoping noise then.
 func validateKindScopedFields(performer Performer, path string, diagnostics *templateDiagnosticCollector) bool {
-	if performer.Kind != PerformerHuman && performer.Kind != PerformerAgent && performer.Kind != PerformerProgram && performer.Kind != PerformerRule {
+	if performer.Kind != PerformerHuman && performer.Kind != PerformerAgent && performer.Kind != PerformerProgram &&
+		performer.Kind != PerformerRule && performer.Kind != PerformerMessage {
 		return true
 	}
 	scoped := func(field string, set bool, kinds ...PerformerKind) bool {
@@ -701,6 +704,9 @@ func validateKindScopedFields(performer Performer, path string, diagnostics *tem
 		!scoped("args", len(performer.Args) > 0, PerformerProgram) ||
 		!scoped("cases", len(performer.Cases) > 0, PerformerRule) ||
 		!scoped("else", !isBlank(performer.Else), PerformerRule) ||
+		!scoped("to", len(performer.To) > 0, PerformerMessage) ||
+		!scoped("subject", !isBlank(performer.Subject), PerformerMessage) ||
+		!scoped("text", !isBlank(performer.Text), PerformerMessage) ||
 		!scoped("timeout", !isBlank(performer.Timeout), PerformerProgram, PerformerAgent, PerformerHuman) ||
 		!scoped("contact", performer.Contact != nil, PerformerProgram, PerformerAgent, PerformerHuman) ||
 		!scoped("profile", !isBlank(performer.Profile), PerformerProgram, PerformerAgent, PerformerHuman) {
@@ -1383,7 +1389,9 @@ func collectStepParamRefs(diagnostics *templateDiagnosticCollector, declared map
 func collectPerformerParamRefs(diagnostics *templateDiagnosticCollector, declared map[string]bool, path string, performer Performer) bool {
 	if !collectExecutableParamRefs(diagnostics, declared, path+".prompt", performer.Prompt) ||
 		!collectExecutableParamRefs(diagnostics, declared, path+".ask", performer.Ask) ||
-		!collectExecutableParamRefs(diagnostics, declared, path+".run", performer.Run) {
+		!collectExecutableParamRefs(diagnostics, declared, path+".run", performer.Run) ||
+		!collectExecutableParamRefs(diagnostics, declared, path+".subject", performer.Subject) ||
+		!collectExecutableParamRefs(diagnostics, declared, path+".text", performer.Text) {
 		return false
 	}
 	for i, arg := range performer.Args {
@@ -1485,4 +1493,70 @@ func validateLayout(tmpl *Template, diagnostics *templateDiagnosticCollector) bo
 		}
 	}
 	return true
+}
+
+// Bounds of a message performer's text: a subject is a line, the text a
+// short note (a long report belongs in an output the message names).
+const (
+	MaxMessageSubjectBytes = 200
+	MaxMessageTextBytes    = 8 * 1024
+)
+
+// messageFinding is the first problem of a message performer: it sends from
+// a task, needs text and at least one recipient, and names each recipient in
+// one of the MessageTo forms, at most once.
+func messageFinding(performer Performer, path string, decision bool) *Diagnostic {
+	finding := func(code, field, message string) *Diagnostic {
+		diagnostic := diagError(code, path+field, message)
+		return &diagnostic
+	}
+	if decision {
+		return finding("message_on_decision", ".kind", "a message is sent by a task; a decision cannot send one")
+	}
+	if isBlank(performer.Text) {
+		return finding("missing_text", ".text", "a message performer requires text")
+	}
+	if len(performer.Subject) > MaxMessageSubjectBytes || strings.ContainsAny(performer.Subject, "\r\n") {
+		return finding("invalid_subject", ".subject", fmt.Sprintf("a subject is one line of at most %d bytes", MaxMessageSubjectBytes))
+	}
+	if len(performer.Text) > MaxMessageTextBytes {
+		return finding("invalid_text", ".text", fmt.Sprintf("a message's text is at most %d bytes", MaxMessageTextBytes))
+	}
+	if len(performer.To) == 0 {
+		return finding("missing_recipient", ".to", "a message performer requires at least one recipient in to")
+	}
+	if len(performer.To) > MaxMessageRecipients {
+		return finding("invalid_recipient", ".to", fmt.Sprintf("a message goes to at most %d recipients", MaxMessageRecipients))
+	}
+	seen := make(map[string]bool, len(performer.To))
+	for i, to := range performer.To {
+		field := fmt.Sprintf(".to[%d]", i)
+		if !ValidMessageRecipient(to) {
+			return finding("invalid_recipient", field, fmt.Sprintf(
+				"recipient %q is not one of operator, lead, group, role:<role> or agent:<name>", to))
+		}
+		if seen[to] {
+			return finding("duplicate_recipient", field, fmt.Sprintf("recipient %q is named twice", to))
+		}
+		seen[to] = true
+	}
+	return nil
+}
+
+// ValidMessageRecipient reports whether to names a recipient in one of the
+// MessageTo forms, without whitespace or a {{param}} (a recipient is literal).
+func ValidMessageRecipient(to string) bool {
+	if to != strings.TrimSpace(to) || strings.Contains(to, "{{") || strings.ContainsAny(to, " \t\r\n") {
+		return false
+	}
+	switch to {
+	case MessageToOperator, MessageToLead, MessageToGroup:
+		return true
+	}
+	for _, prefix := range []string{MessageToRolePrefix, MessageToAgentPrefix} {
+		if rest, ok := strings.CutPrefix(to, prefix); ok {
+			return rest != "" && len(rest) <= 128
+		}
+	}
+	return false
 }

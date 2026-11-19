@@ -17,7 +17,7 @@ export const PROCESS_CLIPBOARD_MAX_OUTCOME = 512;
 export const PROCESS_CLIPBOARD_MAX_COORDINATE = 1_000_000;
 
 const PROCESS_NODE_TYPES = new Set(['task', 'decision', 'parallel', 'wait', 'start', 'end', 'subprocess']);
-const PROCESS_PERFORMER_KINDS = new Set(['human', 'agent', 'program', 'rule']);
+const PROCESS_PERFORMER_KINDS = new Set(['human', 'agent', 'program', 'rule', 'message']);
 const NODE_ID = /^[a-z0-9][a-z0-9._-]*$/;
 const MAX_JSON_DEPTH = 32;
 const MAX_JSON_ITEMS = 32_768;
@@ -34,7 +34,7 @@ const STEP_FIELDS = new Set([
 const PERFORMER_FIELDS = new Set([
   'kind', 'profile', 'prompt', 'ask', 'choices', 'choiceOutcomes', 'assignee',
   'role', 'anyone', 'lead', 'sameAs', 'differentFrom', 'fallback', 'spawn', 'model', 'effort', 'run',
-  'args', 'timeout', 'contact', 'cases', 'else',
+  'args', 'timeout', 'contact', 'cases', 'else', 'to', 'subject', 'text',
 ]);
 const RULE_CASE_FIELDS = new Set(['when', 'then']);
 const FALLBACK_FIELDS = new Set(['action', 'profile']);

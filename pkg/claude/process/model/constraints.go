@@ -171,7 +171,7 @@ func validateCaptureRefs(tmpl *Template, diagnostics *templateDiagnosticCollecto
 	}
 	for _, nodeID := range sortedKeys(tmpl.Nodes) {
 		for _, slot := range performerSlots(nodeID, tmpl.Nodes[nodeID]) {
-			for _, field := range []struct{ name, value string }{{"prompt", slot.performer.Prompt}, {"ask", slot.performer.Ask}} {
+			for _, field := range []struct{ name, value string }{{"prompt", slot.performer.Prompt}, {"ask", slot.performer.Ask}, {"subject", slot.performer.Subject}, {"text", slot.performer.Text}} {
 				for _, ref := range CaptureReferences(field.value) {
 					// A step may read its own output: in a loop, that is the
 					// previous round's value.

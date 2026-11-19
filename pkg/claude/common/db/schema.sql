@@ -2686,3 +2686,13 @@ CREATE TABLE process_wait_timers (
 ) STRICT;
 
 CREATE INDEX idx_process_wait_timers_due ON process_wait_timers(due_at);
+
+CREATE TABLE process_message_deliveries (
+			command_id   TEXT NOT NULL,
+			recipient    TEXT NOT NULL,
+			run_id       TEXT NOT NULL REFERENCES process_runs(id) ON DELETE CASCADE,
+			delivered_at INTEGER NOT NULL,
+			PRIMARY KEY (command_id, recipient)
+		) STRICT;
+
+CREATE INDEX idx_process_message_deliveries_run ON process_message_deliveries(run_id);

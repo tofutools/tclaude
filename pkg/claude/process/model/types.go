@@ -86,6 +86,22 @@ const (
 	// PerformerRule decides a decision by its cases, with no agent or person
 	// involved (rule.go).
 	PerformerRule PerformerKind = "rule"
+	// PerformerMessage sends a message (To, Subject, Text) and goes on: the
+	// daemon delivers it, and the step passes once every recipient has it.
+	PerformerMessage PerformerKind = "message"
+)
+
+// Message recipients (Performer.To): the operator, the run group's lead, the
+// whole group, or a member by role (MessageToRolePrefix) or by agent name or
+// id (MessageToAgentPrefix).
+const (
+	MessageToOperator    = "operator"
+	MessageToLead        = "lead"
+	MessageToGroup       = "group"
+	MessageToRolePrefix  = "role:"
+	MessageToAgentPrefix = "agent:"
+	// MaxMessageRecipients bounds Performer.To.
+	MaxMessageRecipients = 8
 )
 
 type Template struct {
@@ -240,6 +256,12 @@ type Performer struct {
 	// first case whose condition holds, or Else (rule.go).
 	Cases []RuleCase `json:"cases,omitempty" yaml:"cases,omitempty"`
 	Else  string     `json:"else,omitempty" yaml:"else,omitempty"`
+	// To, Subject and Text are message-scoped: who gets the message (see
+	// MessageToOperator and friends), its optional subject, and its text.
+	// Subject and Text read params and step outputs like a prompt.
+	To      []string `json:"to,omitempty" yaml:"to,omitempty"`
+	Subject string   `json:"subject,omitempty" yaml:"subject,omitempty"`
+	Text    string   `json:"text,omitempty" yaml:"text,omitempty"`
 }
 
 // ContactSchedule controls follow-up for an asynchronous performer slot. A
