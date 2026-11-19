@@ -23,7 +23,7 @@ import { LOOP_DEFAULT_ROUNDS, edgeGoesBack, exhaustionChoices, loopBound, loopab
 const PASS_LABELS = ['pass', 'done', 'success', 'next'];
 // A new step's continuing outcome: a task passes on, a "you" decision
 // continues.
-const CONTINUE = { agent: 'next', command: 'next', you: 'continue' };
+const CONTINUE = { agent: 'next', command: 'next', message: 'next', you: 'continue' };
 // DECISION_KINDS are the kinds that insert a decision with named answers:
 // 'decide' is decided by an agent (pick who), 'decide-you' by you. Both
 // start with yes and no, each going on to what came next; the answers are
@@ -44,7 +44,8 @@ function linkOn(view, from, kind, to) {
 }
 
 // A gate is an agreement gate: a decision several deciders take together.
-export const MINI_KINDS = Object.freeze(['agent', 'you', 'command', 'gate', 'rule']);
+// A message sends one and goes on (model.PerformerMessage).
+export const MINI_KINDS = Object.freeze(['agent', 'you', 'command', 'message', 'gate', 'rule']);
 
 function clone(value) {
   return JSON.parse(JSON.stringify(value));
@@ -68,6 +69,7 @@ export function miniKind(node) {
   if (type === 'decision' && kind === 'rule') return 'rule';
   if (kind === 'human') return 'you';
   if (kind === 'program') return 'command';
+  if (kind === 'message' && type === 'task') return 'message';
   return 'agent';
 }
 
@@ -124,11 +126,13 @@ function uniqueOutcome(view, id, base) {
 
 // newStepNode is a fresh step of `kind`.
 export function newStepNode(kind, name = '') {
-  const label = name || { agent: 'New step', you: 'Decide', command: 'Command', decide: 'Decision', 'decide-you': 'Decision' }[kind] || 'New step';
+  const label = name || { agent: 'New step', you: 'Decide', command: 'Command', message: 'Tell', decide: 'Decision', 'decide-you': 'Decision' }[kind] || 'New step';
   if (kind === 'decide') return { type: 'decision', name: label, performer: { kind: 'agent', prompt: '' } };
   if (kind === 'decide-you') return { type: 'decision', name: label, performer: { kind: 'human', ask: '', choices: [...DECISION_OUTCOMES] } };
   if (kind === 'you') return { type: 'decision', name: label, performer: { kind: 'human', ask: '', choices: [CONTINUE.you] } };
   if (kind === 'command') return { type: 'task', name: label, performer: { kind: 'program', run: '' } };
+  // A new message goes to you until the operator picks who else.
+  if (kind === 'message') return { type: 'task', name: label, performer: { kind: 'message', to: ['operator'], text: '' } };
   return { type: 'task', name: label, performer: { kind: 'agent', prompt: '' } };
 }
 
@@ -851,8 +855,11 @@ export function changeKind(view, id, kind) {
   const from = miniKind(node);
   if (from === 'gate' || kind === 'gate') throw new Error('a gate gains and loses deciders, not a kind');
   if (from === kind) return { view, id };
+  // A decision waits for an answer; a message only tells, and goes on.
+  if (kind === 'message' && node.type === 'decision') throw new Error('a decision cannot become a message: add one after it');
   const next = copyView(view);
-  const who = kind === 'you' ? { mode: 'you' } : kind === 'command' ? { mode: 'command' } : { mode: 'nobody' };
+  const who = kind === 'you' ? { mode: 'you' } : kind === 'command' ? { mode: 'command' }
+    : kind === 'message' ? { mode: 'message', to: ['operator'] } : { mode: 'nobody' };
   const step = setStepWho({ id, node: next.template.nodes[id] }, who);
   const changed = step.node;
   const main = mainEdge(next, id);
@@ -866,14 +873,14 @@ export function changeKind(view, id, kind) {
     changed.performer.choices = answers.length ? [CONTINUE.you, ...answers.filter((a) => a !== CONTINUE.you)] : [CONTINUE.you];
   }
   next.template.nodes[id] = changed;
-  // Only a task reports outputs.
-  if (changed.type !== 'task') delete changed.captures;
+  // Only a task reports outputs, and a message reports none.
+  if (changed.type !== 'task' || kind === 'message') delete changed.captures;
   // A retry runs only on agent and command tasks, and only an agent can be
   // handed its own failure back: what the new kind cannot run goes.
   if (changed.type !== 'task') delete changed.retry;
   // Only a task may fail and go on; a decision with mayFail is refused.
   if (changed.type !== 'task') delete changed.mayFail;
-  else if (kind === 'command' && changed.retry?.onFail && changed.retry.onFail !== 'fresh-attempt') delete changed.retry.onFail;
+  else if ((kind === 'command' || kind === 'message') && changed.retry?.onFail && changed.retry.onFail !== 'fresh-attempt') delete changed.retry.onFail;
   let orphans = [];
   if (node.type === 'decision' && kind !== 'you') {
     // A task continues one way: only the main answer's path stays, and the

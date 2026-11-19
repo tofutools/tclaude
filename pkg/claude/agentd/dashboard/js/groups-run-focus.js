@@ -24,6 +24,7 @@ import {
 } from './process-context.js';
 import { AgentCombobox } from './agent-picker.js';
 import { RunLog, RunOversight, eventSentence, openConcerns } from './process-oversight.js';
+import { messageRecipientWords } from './process-step-list.js';
 
 const html = htm.bind(h);
 
@@ -150,6 +151,7 @@ function performerText(node, nameOf, wizard) {
   if (kind === 'human') return wizard ? 'any keeper' : 'any operator';
   if (kind === 'program' || kind === 'command') return wizard ? 'an incantation' : 'program';
   if (kind === 'rule') return wizard ? 'its own law' : 'its rule, nobody is asked';
+  if (kind === 'message') return `${wizard ? 'a sending' : 'a message'} to ${(performer.to || []).map(messageRecipientWords).join(', ') || 'nobody yet'}`;
   const ref = performer.ref && performer.ref !== 'unassigned' ? performer.ref : '';
   if (!ref) return kind === 'agent' ? 'unassigned' : '—';
   return nameOf(ref) || performer.name || performer.label || ref;

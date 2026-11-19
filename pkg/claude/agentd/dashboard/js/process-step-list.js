@@ -220,7 +220,7 @@ export function stepListToView(list) {
 
 function stepTexts(node) {
   return [node?.performer || {}, ...(node?.deciders || [])]
-    .flatMap((performer) => [performer?.prompt, performer?.ask, performer?.run, ...(performer?.args || [])])
+    .flatMap((performer) => [performer?.prompt, performer?.ask, performer?.run, performer?.subject, performer?.text, ...(performer?.args || [])])
     .filter((text) => typeof text === 'string');
 }
 
@@ -263,12 +263,68 @@ export function expandParamShorthand(text) {
 //                                  spawns (profile '' is the group's default
 //                                  spawn profile); with no one to match, a
 //                                  group run spawns one every time
+//   { mode: 'message', to }        a message (to: its recipients, model.MessageTo*)
 //   { mode: 'nobody' }             an agent performer that names no one
+// A message's recipients (model.MessageTo*): you, the lead, the whole
+// group, a role (role:<r>) or an agent (agent:<name>).
+export const MESSAGE_TO_OPERATOR = 'operator';
+export const MESSAGE_TO_LEAD = 'lead';
+export const MESSAGE_TO_GROUP = 'group';
+export const MESSAGE_MAX_RECIPIENTS = 8;
+
+// setStepRecipients sets a message step's recipients: each at most once,
+// at most MESSAGE_MAX_RECIPIENTS.
+export function setStepRecipients(step, to) {
+  const node = clone(step.node);
+  const list = [...new Set((to || []).map((value) => String(value || '').trim()).filter(Boolean))].slice(0, MESSAGE_MAX_RECIPIENTS);
+  node.performer = { ...(node.performer || { kind: 'message' }) };
+  if (list.length) node.performer.to = list;
+  else delete node.performer.to;
+  return { ...step, node };
+}
+
+// messageRecipientOptions are who a message can go to, for a roster: you,
+// the lead, the whole group, each role the group holds (`roles`, else the
+// roster's), and each member.
+export function messageRecipientOptions(roster = [], roles = null) {
+  const held = roles?.length ? roles.map((r) => r.role) : [...new Set(roster.map((m) => m.role).filter(Boolean))].sort();
+  return [
+    { value: MESSAGE_TO_OPERATOR, label: 'you (Messages)' },
+    { value: MESSAGE_TO_LEAD, label: "the group's lead" },
+    { value: MESSAGE_TO_GROUP, label: 'the whole group' },
+    ...held.map((role) => ({ value: `role:${role}`, label: `every ${role}` })),
+    ...roster.filter((m) => m.name).map((m) => ({ value: `agent:${m.name}`, label: m.name })),
+  ];
+}
+
+// setStepSubject sets a message step's optional one-line subject.
+export function setStepSubject(step, subject) {
+  const node = clone(step.node);
+  const value = expandParamShorthand(String(subject ?? '').replace(/[\r\n]+/g, ' ').trim());
+  node.performer = { ...(node.performer || { kind: 'message' }) };
+  if (value) node.performer.subject = value;
+  else delete node.performer.subject;
+  return { ...step, node };
+}
+
+// messageRecipientWords says one recipient for a person: "you", "the lead",
+// "the whole group", "reviewer", "rita".
+export function messageRecipientWords(to) {
+  if (to === MESSAGE_TO_OPERATOR) return 'you';
+  if (to === MESSAGE_TO_LEAD) return 'the lead';
+  if (to === MESSAGE_TO_GROUP) return 'the whole group';
+  const role = String(to || '').match(/^role:(.+)$/);
+  if (role) return role[1];
+  const agent = String(to || '').match(/^agent:(.+)$/);
+  return agent ? agent[1] : String(to || '');
+}
+
 export function stepWho(step) {
   const performer = step?.node?.performer;
   if (!performer) return { mode: 'nobody' };
   if (performer.kind === 'human') return { mode: 'you', assignee: performer.assignee || '' };
   if (performer.kind === 'program') return { mode: 'command', run: performer.run || '' };
+  if (performer.kind === 'message') return { mode: 'message', to: [...(performer.to || [])] };
   if (performer.kind === 'rule') return { mode: 'rule' };
   if (performer.assignee) return { mode: 'agent', agent: performer.assignee };
   if (performer.role) return { mode: 'role', role: performer.role };
@@ -328,6 +384,7 @@ export function stepText(step) {
   const performer = step?.node?.performer || {};
   if (performer.kind === 'human') return performer.ask || performer.prompt || '';
   if (performer.kind === 'program') return performer.run ? joinCommand([performer.run, ...(performer.args || [])]) : '';
+  if (performer.kind === 'message') return performer.text || '';
   return performer.prompt || '';
 }
 
@@ -349,6 +406,13 @@ export function setStepWho(step, who, { legacyRoles = false } = {}) {
       for (const key of ['choices', 'choiceOutcomes', 'assignee', 'prompt']) if (old[key] !== undefined) performer[key] = old[key];
     }
     if (!performer.ask) delete performer.ask;
+  } else if (who.mode === 'message') {
+    // A message has no profile, timeout or contact: nobody performs it.
+    // A step becoming a message tells you until the operator picks who else.
+    performer = { kind: 'message', to: [...(who.to || (old.kind === 'message' ? old.to || [] : [MESSAGE_TO_OPERATOR]))] };
+    if (old.kind === 'message' && old.subject) performer.subject = old.subject;
+    if (text) performer.text = text;
+    if (!performer.to.length) delete performer.to;
   } else if (who.mode === 'command') {
     performer = { kind: 'program', ...shared, run: old.kind === 'program' ? old.run || '' : '' };
     if (old.kind === 'program' && old.args) performer.args = old.args;
@@ -480,6 +544,7 @@ export function setStepText(step, text) {
   const value = expandParamShorthand(text);
   if (performer.kind === 'human') performer.ask = value;
   else if (performer.kind === 'program') programArgv(performer, value);
+  else if (performer.kind === 'message') performer.text = value;
   else performer.prompt = value;
   node.performer = performer;
   return { ...step, node };
@@ -605,10 +670,11 @@ export function setStepLinks(step, links) {
 
 // newStep builds a step of the given kind with a fresh id.
 export function newStep(list, { kind = 'agent', name = '', text = '', who = null } = {}) {
-  const fallbackName = { agent: 'Step', you: 'Approve', command: 'Command' }[kind] || 'Step';
+  const fallbackName = { agent: 'Step', you: 'Approve', command: 'Command', message: 'Tell' }[kind] || 'Step';
   const id = uniqueID(name || fallbackName, listNodeIDs(list));
   const base = { id, node: { type: 'task', name: name || fallbackName, performer: { kind: 'agent' } }, cont: STEP_CONTINUE_OUTCOME, links: [] };
-  const mode = who || (kind === 'you' ? { mode: 'you' } : kind === 'command' ? { mode: 'command', run: text } : { mode: 'nobody' });
+  const mode = who || (kind === 'you' ? { mode: 'you' } : kind === 'command' ? { mode: 'command', run: text }
+    : kind === 'message' ? { mode: 'message', to: [MESSAGE_TO_OPERATOR] } : { mode: 'nobody' });
   let step = setStepWho(base, mode);
   if (text && mode.mode !== 'command') step = setStepText(step, text);
   // A human performs only decisions today, so a "you" step is a decision

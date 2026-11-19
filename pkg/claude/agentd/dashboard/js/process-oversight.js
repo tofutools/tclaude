@@ -124,6 +124,18 @@ export function eventSentence(event, nameOf = () => '', { withStep = true } = {}
       if (observation.outcome !== 'failed') return { icon: '·', tone: '', text: `${event.nodeId || 'a command'} ${observation.outcome || 'finished'}${observation.exitCode ? ` (exit ${observation.exitCode})` : ''}` };
       return { icon: '✖', tone: 'concern', text: `${event.nodeId || 'a command'} failed${observation.error ? `: ${clip(observation.error)}` : ''}` };
     }
+    // A message step: what it sent, and to whom (executor.MessageReport).
+    case 'message_sent': {
+      const observation = payload.observation || {};
+      const message = payload.message || {};
+      const reached = (message.delivered || []).map((d) => (d.key === 'operator' ? 'you' : d.name || d.key));
+      const subject = message.subject ? ` “${clip(message.subject, 80)}”` : '';
+      const to = reached.length ? ` to ${reached.join(', ')}` : '';
+      if (observation.outcome !== 'failed') return { icon: '✉', tone: '', text: `${event.nodeId || 'a message'} sent${subject}${to}` };
+      return { icon: '✖', tone: 'concern', text: `${event.nodeId || 'a message'} could not be sent${observation.error ? `: ${clip(observation.error)}` : ''}${reached.length ? ` (it reached ${reached.join(', ')})` : ''}` };
+    }
+    case 'message_resumed':
+      return { icon: '✉', tone: '', text: `${event.nodeId || 'a message'}: sending again after a restart` };
     case 'agent_reported': {
       const observation = payload.observation || {};
       const verdict = observation.verdict ? ` ${observation.verdict}` : '';

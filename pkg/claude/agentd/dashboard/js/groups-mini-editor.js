@@ -33,6 +33,7 @@ import { FailureRow } from './process-failure-row.js';
 import {
   agentStepIDs, collapseParamShorthand, expandParamShorthand, constraintFromValue, constraintValue, outputRef, setStepConstraint, setStepName, setStepOutputs,
   FAILURE_RETRIES_MAX, setStepFailure, setStepText, setStepWho, stepConstraint, stepFailure, stepOutputs, stepText, stepWho, viewToStepList,
+  messageRecipientWords, setStepRecipients, setStepSubject,
 } from './process-step-list.js';
 import { openProcessDraft } from './process-draft-handoff.js';
 import { followName } from './process-step-ids.js';
@@ -41,7 +42,7 @@ import {
   addReviewer, stuckGate, withReviewerDefault,
 } from './process-gate-deciders.js';
 import {
-  AUTOSAVE_DELAY_MS, DRAFT_DESCRIPTION_MAX, FallbackPicker, LifetimePicker, TypedField, UNTITLED_PROCESS, WhoPicker, defaultNotify, inheritLabel, useSpawnProfiles,
+  AUTOSAVE_DELAY_MS, DRAFT_DESCRIPTION_MAX, FallbackPicker, LifetimePicker, RecipientPicker, TypedField, UNTITLED_PROCESS, WhoPicker, defaultNotify, inheritLabel, useSpawnProfiles,
 } from './groups-quickstart.js';
 import { fallbackNote, groupRoles, setStepFallback, setStepLifetime, stepFallbackValue } from './process-quickstart.js';
 import { withShortcut } from './keybindings.js';
@@ -70,7 +71,7 @@ function agentStatus(snapshot, agentId) {
   return String(rows.find((row) => row?.agent_id === agentId)?.state?.status || '');
 }
 
-const KIND_CHOICES = Object.freeze([['agent', '🤖', 'agent'], ['you', '👤', 'you'], ['command', '⌘', 'command']]);
+const KIND_CHOICES = Object.freeze([['agent', '🤖', 'agent'], ['you', '👤', 'you'], ['command', '⌘', 'command'], ['message', '✉', 'message']]);
 // INSERT_CHOICES adds a decision (yes / no, an agent decides until you pick
 // otherwise) to what a new step can be.
 const INSERT_CHOICES = Object.freeze([...KIND_CHOICES, ['decide', '◇', 'decision']]);
@@ -127,6 +128,7 @@ function whoLine(node, fallbackInfo) {
   if (who.mode === 'you') return 'you';
   if (who.mode === 'rule') return '⚙ a rule';
   if (who.mode === 'command') return stepText({ node }) || 'a command';
+  if (who.mode === 'message') return `✉ to ${(who.to || []).map(messageRecipientWords).join(' · ') || 'nobody yet'}`;
   if (node.performer?.sameAs) return agent(`same agent as ${node.performer.sameAs}`);
   return agent('pick who');
 }
@@ -323,11 +325,12 @@ function Inspector({ view, id, roster, roles, fallbackInfo, onApply, onRename, o
   const setWho = (who) => {
     // A decision stays one whoever decides it: its outcomes and loops stay.
     if (node.type === 'decision' && who.mode !== 'command') { onApply(setDecisionWho(view, id, who)); return; }
-    if (who.mode === 'you' || who.mode === 'command') { onKind(who.mode); return; }
+    if (who.mode === 'you' || who.mode === 'command' || who.mode === 'message') { onKind(who.mode); return; }
     if (kind !== 'agent') { onKind('agent', who); return; }
     onApply(updateStep(view, id, (s) => setStepWho(s, who)));
   };
-  const label = { agent: 'What', you: 'Asks', command: 'Runs', gate: 'Asks' }[kind];
+  const label = { agent: 'What', you: 'Asks', command: 'Runs', message: 'Message', gate: 'Asks' }[kind];
+  const message = kind === 'message';
   const rule = kind === 'rule';
   const gate = kind === 'gate';
   const noMoreDeciders = node.type === 'decision' ? canAddDecider(view, id) : 'only a decision';
@@ -347,6 +350,11 @@ function Inspector({ view, id, roster, roles, fallbackInfo, onApply, onRename, o
     onKeyDown=${(event) => { if (event.key === 'Escape') { event.stopPropagation(); onClose(); } }}>
     <label class="gm-field"><span>Step</span><${TypedField} name="groups-mini-editor-input" type="text" data-mini-name value=${node.name || ''} placeholder=${id}
       onChange=${(event) => onRename(event.currentTarget.value)} /></label>
+    ${message && html`<div class="gm-field" data-mini-to=${id}><span>To</span><${RecipientPicker} to=${node.performer?.to || []} roster=${roster} roles=${roles}
+      label="Tell" onChange=${(to) => onApply(updateStep(view, id, (s) => setStepRecipients(s, to)))} /></div>
+      <label class="gm-field" data-mini-subject=${id}><span>Subject</span><${TypedField} name="gm-message-subject" type="text" value=${collapseParamShorthand(node.performer?.subject || '')}
+        placeholder=${`${view.template?.name || 'process'}: ${node.name || id}`} title="One line; empty is the process and step name"
+        onChange=${(event) => onApply(updateStep(view, id, (s) => setStepSubject(s, event.currentTarget.value)))} /></label>`}
     ${!rule && html`<label class="gm-field"><span>${label}</span><${TypedField} as="textarea" name="groups-mini-editor-textarea" rows="3" data-mini-text value=${gate ? collapseParamShorthand(shared) : text}
       title=${gate ? "Every decider is asked this, unless its ▸ gives it its own ask" : undefined}
       onChange=${(event) => onApply(gate ? ((typed) => { shownAsk.current[id] = expandParamShorthand(typed); return setGateAsk(view, id, typed, shared); })(event.currentTarget.value)
@@ -360,7 +368,7 @@ function Inspector({ view, id, roster, roles, fallbackInfo, onApply, onRename, o
         ${outcomes.filter(({ outcome }) => !loopBound(node, outcome)).map(({ outcome }) => html`<option key=${outcome} value=${outcome}>${outcome}</option>`)}
       <//></div>
       <p class="gq-dim">Otherwise the first decider, in this order, who chose something else decides; the work goes back with everyone's notes.</p>`
-    : html`<div class="gm-field"><span>Who</span><${WhoPicker} step=${step} roster=${roster} roles=${roles} profiles=${fallbackInfo.profiles}
+    : html`<div class="gm-field"><span>${message ? 'Kind' : 'Who'}</span><${WhoPicker} step=${step} roster=${roster} roles=${roles} profiles=${fallbackInfo.profiles}
       defaultSpawnProfile=${fallbackInfo.defaultSpawnProfile} rule=${node.type === 'decision' && (kind === 'rule' || ruleOperands(view, id).length > 0)} onChange=${setWho} />
       ${node.type === 'decision' && kind !== 'command' && !rule && html`<${Button} size="sm" variant="link" class="gq-link" data-mini-add-decider
         disabled=${!!noMoreDeciders} title=${noMoreDeciders || 'Several decide together: all must agree'}
@@ -382,7 +390,7 @@ function Inspector({ view, id, roster, roles, fallbackInfo, onApply, onRename, o
     ${kind === 'agent' && !gate && node.performer?.fallback?.action === 'spawn' && html`<div class="gm-field" data-mini-lifetime=${id}><span>Afterwards</span>
       <${LifetimePicker} fallback=${node.performer.fallback} label=${`Afterwards, ${spawns ? 'the new agent' : 'an agent spawned for this step'}`}
         onChange=${(lifetime) => onApply(updateStep(view, id, (s) => setStepLifetime(s, lifetime)))} /></div>`}
-    ${(kind === 'agent' || kind === 'command') && node.type === 'task' && html`<${FailureRow} id=${id} failure=${stepFailure(step)} staged=${!!(node.plan || node.checks?.length || node.review)}
+    ${(kind === 'agent' || kind === 'command' || message) && node.type === 'task' && html`<${FailureRow} id=${id} failure=${stepFailure(step)} staged=${!!(node.plan || node.checks?.length || node.review)}
       onChange=${(next) => onApply(updateStep(view, id, (s) => setStepFailure(s, next)))} />`}
     ${kind === 'agent' && node.type === 'task' && html`<label class="gm-field" data-mini-outputs=${id}><span>Outputs</span><${TypedField} name="none-e-g-pr" type="text"
       value=${outputs.join(', ')} placeholder="none (e.g. pr)" title="Names this step reports, which later steps read as {{ outputs.<name> }}"
@@ -494,7 +502,7 @@ function StructureMenu({ view, menu, onRun, onWrap, onClose }) {
     ${item('duplicate', 'Duplicate', step ? '' : 'only a step can be duplicated here', () => onRun(() => duplicate(view, id)))}
     ${item('wrap', 'Wrap in a subprocess… (full editor)', step ? '' : 'only a step can be wrapped', onWrap)}
     ${step && html`<div class="gm-menu-kinds" data-mini-menu="kind"><span>Change to</span>
-      <${KindChips} label="Change to" onPick=${(kind) => onRun(() => changeKind(view, id, kind))} /></div>`}
+      <${KindChips} label="Change to" choices=${node.type === 'decision' ? KIND_CHOICES.filter(([kind]) => kind !== 'message') : KIND_CHOICES} onPick=${(kind) => onRun(() => changeKind(view, id, kind))} /></div>`}
     <hr />
     ${item('delete', orphans.length ? `Delete step (and ${orphans.join(', ')}, only reached through it)` : 'Delete step',
     canDelete(view, id), () => onRun(() => deleteStep(view, id)))}

@@ -11,7 +11,7 @@ import { h } from 'preact';
 import { useLayoutEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import {
-  DECISION_KINDS, PERFORMER_KINDS, performerFieldsFor, setPerformerKind, setPerformerField,
+  KNOWN_KINDS, PERFORMER_KINDS, performerFieldsFor, setPerformerKind, setPerformerField,
   setChoiceOutcome, setContactField, setFallbackField, formatLines, FALLBACK_ACTIONS, SPAWN_LIFETIMES,
 } from './process-node-form.js';
 
@@ -78,7 +78,7 @@ export function PerformerEditor({
   only = null, omit = [], showKind = true, contact = false, kinds = PERFORMER_KINDS, setKind = setPerformerKind,
 }) {
   const kind = typeof performer?.kind === 'string' && performer.kind ? performer.kind : 'agent';
-  const known = DECISION_KINDS.includes(kind);
+  const known = KNOWN_KINDS.includes(kind);
   const mutate = (key, value, operation) => commit(`${path}.${key}`, (draft) => operation(locate(draft), value, draft));
   const skip = new Set(omit);
   const fields = (known ? performerFieldsFor(kind) : [])

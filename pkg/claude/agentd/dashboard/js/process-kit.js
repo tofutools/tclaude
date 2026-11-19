@@ -36,6 +36,7 @@ export const PROCESS_NODE_KINDS = Object.freeze({
   agent: { glyph: '🤖', label: 'Agent task', wizardLabel: 'Hero rune', hint: 'prompt, performer slot, stages' },
   human: { glyph: '👤', label: 'Human step', wizardLabel: 'Mortal rune', hint: 'approve / input / do' },
   command: { glyph: '⌘', label: 'Command', wizardLabel: 'Incantation rune', hint: 'shell, in a sandbox' },
+  message: { glyph: '✉', label: 'Message', wizardLabel: 'Sending rune', hint: 'tell someone, then go on' },
   decision: { glyph: '◆', label: 'Decision', wizardLabel: 'Forking rune', hint: 'on outcome or expression' },
   parallel: { glyph: '⫴', label: 'Parallel', wizardLabel: 'Splitting rune', hint: 'fan-out ×N, join all/any' },
   wait: { glyph: '⏳', label: 'Wait', wizardLabel: 'Waiting rune', hint: 'time, event, PR merged…' },

@@ -28,6 +28,15 @@ export const RULE_KIND = 'rule';
 export const DECISION_KINDS = [...PERFORMER_KINDS, RULE_KIND];
 const RULE_KEYS = ['cases', 'else'];
 
+// A task has one more: a message sends one and goes on, nobody performs it
+// (model.PerformerMessage). Its fields are to, subject and text.
+export const MESSAGE_KIND = 'message';
+export const TASK_KINDS = [...PERFORMER_KINDS, MESSAGE_KIND];
+// KNOWN_KINDS are every kind the model has, wherever it is valid.
+export const KNOWN_KINDS = [...DECISION_KINDS, MESSAGE_KIND];
+// The recipients a message names (model.MessageTo*).
+export const MESSAGE_RECIPIENTS_HINT = 'One per line: operator (you, in Messages), lead, group (every member), role:<role> or agent:<name>';
+
 export const RETRY_ON_FAIL_MODES = ['feedback-same-session', 'fresh-attempt'];
 
 export const PLAN_APPROVAL_MODES = ['auto', 'human'];
@@ -64,6 +73,9 @@ export const PERFORMER_FIELDS = [
   { key: 'run', label: 'command', kinds: ['program'], hint: 'Program performers are command execution: this command runs on the host when the node activates' },
   { key: 'args', label: 'arguments', kinds: ['program'], list: true, hint: 'Command arguments, one per line (never shell-parsed)' },
   { key: 'timeout', label: 'timeout', kinds: PERFORMER_KINDS, hint: 'Optional Go duration (30s, 5m, 1h30m)' },
+  { key: 'to', label: 'to', kinds: [MESSAGE_KIND], list: true, hint: MESSAGE_RECIPIENTS_HINT },
+  { key: 'subject', label: 'subject', kinds: [MESSAGE_KIND], hint: 'Optional one line; reads {{params.x}} and {{ outputs.x }}. Blank: the process and step name' },
+  { key: 'text', label: 'message', kinds: [MESSAGE_KIND], multiline: true, hint: 'What it says; reads {{params.x}} and {{ outputs.x }}. Sent, then the process goes on' },
 ];
 
 export function performerFieldsFor(kind) {
@@ -74,7 +86,7 @@ export function performerFieldsFor(kind) {
 // (ask/prompt/run) stays absent until the author fills it — saves are
 // advisory, so the missing-field diagnostic guides without blocking.
 export function defaultPerformer(kind) {
-  if (!DECISION_KINDS.includes(kind)) throw new Error(`unknown performer kind ${kind}`);
+  if (!KNOWN_KINDS.includes(kind)) throw new Error(`unknown performer kind ${kind}`);
   return { kind };
 }
 
@@ -87,7 +99,7 @@ export function defaultPerformer(kind) {
 // when it stops being one. A rule's cases are seeded by the caller, which
 // knows the graph (seedRule in process-rules.js).
 export function setPerformerKind(performer, kind) {
-  if (!DECISION_KINDS.includes(kind)) throw new Error(`unknown performer kind ${kind}`);
+  if (!KNOWN_KINDS.includes(kind)) throw new Error(`unknown performer kind ${kind}`);
   performer.kind = kind;
   for (const field of PERFORMER_FIELDS) {
     if (!field.kinds.includes(kind) && field.key in performer) delete performer[field.key];
