@@ -70,6 +70,9 @@ type processRunInput struct {
 	block  *executor.MarkBlockInput
 	back   *executor.SendBackInput
 	amend  *executor.AmendInput
+	// wait ends a wait step: its deadline passed, someone skipped it, or its
+	// deadline could not be worked out.
+	wait *executor.WaitFinish
 }
 
 type processRunCancelInput struct {
@@ -108,6 +111,8 @@ func (i processRunInput) apply(run *executor.Run, actor string) error {
 		return executor.SendBack(run, actor, *i.back)
 	case i.amend != nil:
 		return executor.Amend(run, actor, *i.amend)
+	case i.wait != nil:
+		return executor.FinishWait(run, actor, *i.wait)
 	default:
 		return fmt.Errorf("process run input names no decision, blocked resolution, or agent report")
 	}
@@ -410,6 +415,8 @@ type processRunCommandView struct {
 	// Parkable marks an agent task step a person may park (POST .../block):
 	// not a decider, a vote, or a check or review stage.
 	Parkable bool `json:"parkable,omitempty"`
+	// Wait is a waiting wait step's deadline (state "waiting").
+	Wait *processRunWaitView `json:"wait,omitempty"`
 }
 
 const (
@@ -419,6 +426,8 @@ const (
 	processCommandAwaitPerformer = "awaiting_performer"
 	// processCommandAwaitingPerson is an open step a person performs.
 	processCommandAwaitingPerson = "awaiting_person"
+	// processCommandWaiting is a wait step waiting for its deadline.
+	processCommandWaiting = "waiting"
 )
 
 type processRunSummaryView struct {
@@ -744,9 +753,10 @@ func (m *processRunManager) beginRun(runID string, prepared *executor.Run, start
 			// can be planned. The action succeeded; nothing started.
 			return false, nil
 		}
-		if len(run.AgentCommands()) > 0 {
-			// Agent performers hold the run's slots, or are the only live work.
-			// Their reports, not a driver, move the run next.
+		if len(run.AgentCommands()) > 0 || len(run.WaitCommands()) > 0 {
+			// Agent performers hold the run's slots, or are the only live work,
+			// or a wait is. Their reports and the wait's timer, not a driver,
+			// move the run next.
 			return false, nil
 		}
 		if run.Held() && run.Action().Kind != executor.ActionNeedsReconcile {
@@ -800,7 +810,7 @@ func fillProcessRun(claim *processRunClaim, run *executor.Run, capacity int) ([]
 // accounted for by its dispatch record, so the live permission is dropped.
 func startProcessAgentDispatches(runID string, run *executor.Run, pending []*executor.Dispatch) []*executor.Dispatch {
 	programs := pending[:0:0]
-	agents := false
+	agents, waits := false, false
 	for _, dispatch := range pending {
 		switch dispatch.Command().Kind {
 		case engine.CommandAgent:
@@ -812,12 +822,19 @@ func startProcessAgentDispatches(runID string, run *executor.Run, pending []*exe
 			// executor grants none; this keeps one from ever running as a
 			// program.
 			executor.Abandon(run, dispatch)
+		case engine.CommandWait:
+			// A wait's timer record accounts for it (process_wait_steps.go).
+			executor.Abandon(run, dispatch)
+			waits = true
 			continue
 		}
 		programs = append(programs, dispatch)
 	}
 	if agents {
 		kickProcessAgentDispatch(runID)
+	}
+	if waits {
+		kickProcessWaits()
 	}
 	return programs
 }
@@ -917,7 +934,7 @@ func (m *processRunManager) drive(runID string, claim *processRunClaim, dispatch
 		// pending programs take a slot here.
 		pendingPrograms := 0
 		for _, dispatch := range pending {
-			if dispatch.Command().Kind != engine.CommandAgent {
+			if !dispatch.Command().Kind.External() {
 				pendingPrograms++
 			}
 		}
@@ -1029,6 +1046,7 @@ func (m *processRunManager) shutdown(ctx context.Context) error {
 }
 
 func startProcessRunRuntime(stop <-chan struct{}) {
+	go runProcessWaitLoop(stop)
 	go func() {
 		sweepProcessRuns()
 		// A restart rediscovers every in-flight agent dispatch here.
@@ -1045,6 +1063,7 @@ func startProcessRunRuntime(stop <-chan struct{}) {
 				sweepProcessConcerns()
 				sweepProcessStuckSignals()
 				reapProcessSpawnedPerformers()
+				kickProcessWaits()
 			}
 		}
 	}()
@@ -1831,12 +1850,23 @@ func processRunViewWith(record *db.ProcessRun, accounted map[string]struct{}, cl
 	anyExecuting := false
 	needsPerformer := false
 	awaitingPerformer := false
+	waiting := false
+	var waitTimers map[string]db.ProcessWaitTimer
 	for i := range checkpoint.Commands {
 		command := checkpoint.Commands[i]
 		view := processRunCommandView{
 			CommandID: command.ID, NodeID: command.NodeID, Kind: command.Kind, Attempt: command.Attempt,
 			Round: command.Round, Rounds: command.Rounds,
 			Profile: command.Program.Profile, Program: command.Program.Run,
+		}
+		if command.Kind == engine.CommandWait {
+			if waitTimers == nil {
+				waitTimers = processWaitTimersOf(record.ID)
+			}
+			view.State, waiting = processCommandWaiting, true
+			view.Wait = processRunWaitViewOf(command, waitTimers)
+			commands = append(commands, view)
+			continue
 		}
 		if command.Kind == engine.CommandAgent {
 			if command.Agent != nil {
@@ -1971,6 +2001,8 @@ func processRunViewWith(record *db.ProcessRun, accounted map[string]struct{}, cl
 		action = "paused"
 	case awaitingPerformer:
 		action = processCommandAwaitPerformer
+	case waiting && checkpoint.Status == engine.RunRunning:
+		action = processCommandWaiting
 	case checkpoint.Status != engine.RunRunning:
 		action = "terminal"
 	case claimed:
@@ -2076,6 +2108,8 @@ func writeProcessRuntimeError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusConflict, "process_decision_stale", err.Error())
 	case errors.Is(err, engine.ErrStaleResolution):
 		writeError(w, http.StatusConflict, "process_blocked_stale", err.Error())
+	case errors.Is(err, errProcessNoWait), errors.Is(err, engine.ErrStaleObservation):
+		writeError(w, http.StatusConflict, "process_wait_stale", err.Error())
 	case errors.Is(err, db.ErrProcessRunVersionConflict):
 		writeError(w, http.StatusConflict, "process_run_conflict", err.Error())
 	case errors.Is(err, engine.ErrInvalidDecisionVerdict):

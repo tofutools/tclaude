@@ -170,6 +170,7 @@ func registerDashboardRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/process/runs/{id}/resume", dashboardProcessRoute(handleProcessRunResume))
 	// The Blocked chip's retry / skip / cancel resolves a parked branch.
 	mux.HandleFunc("POST /v1/process/runs/{id}/resolve-blocked", dashboardProcessRoute(handleProcessRunResolveBlocked))
+	mux.HandleFunc("POST /v1/process/runs/{id}/skip-wait", dashboardProcessRoute(handleProcessRunSkipWait))
 	mux.HandleFunc("POST /v1/process/runs/{id}/cancel", dashboardProcessRoute(handleProcessRunCancel))
 	mux.HandleFunc("POST /v1/process/runs/{id}/block", dashboardProcessRoute(handleProcessRunMarkBlocked))
 	mux.HandleFunc("POST /v1/process/runs/{id}/send-back", dashboardProcessRoute(handleProcessRunSendBack))

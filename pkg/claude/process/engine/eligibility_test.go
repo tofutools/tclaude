@@ -190,12 +190,12 @@ func TestEligibilityRejectsUnsupportedAuthoringValidFeatures(t *testing.T) {
 			},
 		},
 		{
-			name: "wait",
+			name: "wait for a signal",
 			code: "unsupported_wait",
 			tmpl: func() *model.Template {
 				tmpl := sequentialTemplate("task")
 				tmpl.Nodes["start"] = model.Node{Type: model.NodeTypeStart, Next: model.Next{model.DefaultOutcome: "wait"}}
-				tmpl.Nodes["wait"] = model.Node{Type: model.NodeTypeWait, Wait: &model.WaitConfig{Duration: "1s"}, Next: model.Next{model.DefaultOutcome: "task"}}
+				tmpl.Nodes["wait"] = model.Node{Type: model.NodeTypeWait, Wait: &model.WaitConfig{Signal: "go"}, Next: model.Next{model.DefaultOutcome: "task"}}
 				return tmpl
 			},
 		},

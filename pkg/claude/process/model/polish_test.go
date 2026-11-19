@@ -211,10 +211,11 @@ nodes:
 	}
 }
 
-// TestParamRefInDurationIsError pins F1: a param reference in a non-templatable
-// duration field is a hard error (it can never parse), not merely an inert
-// warning.
-func TestParamRefInDurationIsError(t *testing.T) {
+// TestParamRefInWaitDurationIsBoundLater: a wait's duration and until are
+// bound when the run (params) or the step (outputs) starts, so a reference is
+// neither parsed at authoring time nor called inert. One to an undeclared
+// param is still an error.
+func TestParamRefInWaitDurationIsBoundLater(t *testing.T) {
 	data := `
 apiVersion: tclaude.dev/v1alpha1
 kind: ProcessTemplate
@@ -226,7 +227,7 @@ start: a
 nodes:
   a:
     type: wait
-    wait: { duration: "{{ params.d }}" }
+    wait: { duration: "{{ params.d }}", until: "{{ params.e }}" }
     next: done
   done: { type: end }
 `
@@ -234,12 +235,15 @@ nodes:
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !hasDiagnosticPath(parsed.Diagnostics, "invalid_duration", "nodes.a.wait.duration") {
-		t.Fatalf("expected invalid_duration for param ref in duration, got %#v", parsed.Diagnostics)
+	for _, code := range []string{"invalid_duration", "invalid_until", "inert_param_ref"} {
+		for _, path := range []string{"nodes.a.wait.duration", "nodes.a.wait.until"} {
+			if hasDiagnosticPath(parsed.Diagnostics, code, path) {
+				t.Fatalf("unexpected %s at %s: %#v", code, path, parsed.Diagnostics)
+			}
+		}
 	}
-	// The inert warning should also fire, explaining why interpolation won't run.
-	if !hasDiagnosticPath(parsed.Diagnostics, "inert_param_ref", "nodes.a.wait.duration") {
-		t.Fatalf("expected inert_param_ref alongside invalid_duration, got %#v", parsed.Diagnostics)
+	if !hasDiagnosticPath(parsed.Diagnostics, "undeclared_param_ref", "nodes.a.wait.until") {
+		t.Fatalf("expected undeclared_param_ref for params.e, got %#v", parsed.Diagnostics)
 	}
 }
 
@@ -275,13 +279,13 @@ nodes:
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Until is both inert and invalid under its literal RFC3339 contract.
-	if !hasDiagnosticPath(parsed.Diagnostics, "invalid_until", "nodes.waiter.wait.until") {
-		t.Fatalf("expected invalid_until alongside inert warning, got %#v", parsed.Diagnostics)
+	// Until is bound when the run starts, so it is neither inert nor invalid.
+	if hasDiagnosticPath(parsed.Diagnostics, "invalid_until", "nodes.waiter.wait.until") ||
+		hasDiagnosticPath(parsed.Diagnostics, "inert_param_ref", "nodes.waiter.wait.until") {
+		t.Fatalf("a wait's until is interpolated, got %#v", parsed.Diagnostics)
 	}
 	wantPaths := []string{
 		"nodes.a.performer.profile",
-		"nodes.waiter.wait.until",
 		"nodes.waiter.wait.signal",
 	}
 	for _, path := range wantPaths {

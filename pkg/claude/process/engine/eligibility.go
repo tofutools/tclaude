@@ -216,7 +216,16 @@ func CheckEligibility(tmpl *model.Template) model.Diagnostics {
 				// as arrived. Authoring validation already proved the degree and
 				// structured-scope contract, so nothing is re-checked here.
 			case model.NodeTypeWait:
-				add("unsupported_wait", path+".type", "wait nodes are not executable in this engine yet")
+				// A wait for a duration or a time runs; one for a signal does not.
+				switch {
+				case node.Wait != nil && strings.TrimSpace(node.Wait.Signal) != "":
+					add("unsupported_wait", path+".wait.signal", "waiting for a signal is not executable in this engine yet")
+				case node.Wait == nil || (strings.TrimSpace(node.Wait.Duration) == "" && strings.TrimSpace(node.Wait.Until) == ""):
+					add("unsupported_wait", path+".wait", "a wait step needs a duration or an until time")
+				}
+				if len(node.Next) != 1 {
+					add("unsupported_routing", path+".next", "a wait step requires exactly one outgoing route in this engine")
+				}
 			case model.NodeTypeSubprocess:
 				// A subprocess executes its body as namespaced nodes of this run, so
 				// the body has to be executable on exactly the same terms. A

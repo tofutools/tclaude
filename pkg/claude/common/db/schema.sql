@@ -2673,3 +2673,16 @@ CREATE INDEX idx_process_run_amendments_run
 CREATE INDEX idx_process_run_amendments_message
 			ON process_run_amendments(human_message_id)
 			WHERE human_message_id != 0;
+
+CREATE TABLE process_wait_timers (
+	run_id     TEXT NOT NULL REFERENCES process_runs(id) ON DELETE CASCADE,
+	command_id TEXT NOT NULL CHECK(length(CAST(command_id AS BLOB)) BETWEEN 1 AND 1024),
+	node_id    TEXT NOT NULL CHECK(length(CAST(node_id AS BLOB)) BETWEEN 1 AND 512),
+	attempt    INTEGER NOT NULL CHECK(attempt >= 1),
+	started_at INTEGER NOT NULL,
+	due_at     INTEGER NOT NULL,
+	failure    TEXT NOT NULL DEFAULT '' CHECK(length(CAST(failure AS BLOB)) <= 1024),
+	PRIMARY KEY (run_id, command_id)
+) STRICT;
+
+CREATE INDEX idx_process_wait_timers_due ON process_wait_timers(due_at);

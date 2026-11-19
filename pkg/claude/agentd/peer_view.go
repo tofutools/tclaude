@@ -249,6 +249,7 @@ func peerViewRules() map[string]peerViewRule {
 		"POST /v1/process/runs/{id}/resume",
 		"POST /v1/process/runs/{id}/decide",
 		"POST /v1/process/runs/{id}/resolve-blocked",
+		"POST /v1/process/runs/{id}/skip-wait",
 		"POST /v1/process/runs/{id}/nodes/{node}/assign",
 	} {
 		rules[pattern] = peerViewRule{feature: "process.runs.manage", requires: PermProcessRunsManage, write: servePeerProcessRunManage}

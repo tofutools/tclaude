@@ -75,7 +75,8 @@ type definitionNode struct {
 	human   *HumanCommand  // task nodes a person performs only
 	// ask is what a person deciding a decision (or casting a gate vote) is
 	// asked, parameters filled in; empty when nobody authored one.
-	ask humanAsk
+	ask  humanAsk
+	wait *WaitCommand // wait nodes only
 	// maxAttempts is the authored retry budget of a task node, first attempt
 	// included, and 1 for a task with no authored retry. It is the ONLY thing
 	// preparation carries about retry: the reducer needs a ceiling to compare
@@ -339,6 +340,13 @@ func prepareScope(definition *Definition, tmpl *model.Template, params map[strin
 				return err
 			}
 			prepared.program = program
+		case model.NodeTypeWait:
+			// A wait is a task whose command is a timer: one attempt, one
+			// route, settled by the daemon when its deadline passes.
+			prepared.kind = definitionTask
+			prepared.maxAttempts = 1
+			bound := model.InterpolateWait(*node.Wait, params)
+			prepared.wait = &WaitCommand{Duration: strings.TrimSpace(bound.Duration), Until: strings.TrimSpace(bound.Until)}
 		case model.NodeTypeDecision:
 			if node.IsGate() {
 				// The gate itself is the fork to its votes (gates.go).
@@ -1645,6 +1653,9 @@ func commandsEqual(left, right Command) bool {
 		return false
 	}
 	if (left.Human == nil) != (right.Human == nil) || (left.Human != nil && !humanCommandsEqual(*left.Human, *right.Human)) {
+		return false
+	}
+	if (left.Wait == nil) != (right.Wait == nil) || (left.Wait != nil && *left.Wait != *right.Wait) {
 		return false
 	}
 	return left.ID == right.ID && left.Kind == right.Kind && left.NodeID == right.NodeID &&
