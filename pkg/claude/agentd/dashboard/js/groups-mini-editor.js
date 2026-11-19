@@ -128,7 +128,7 @@ function whoLine(node, fallbackInfo) {
   if (who.mode === 'you') return 'you';
   if (who.mode === 'rule') return '⚙ a rule';
   if (who.mode === 'command') return stepText({ node }) || 'a command';
-  if (who.mode === 'message') return `✉ to ${(who.to || []).map(messageRecipientWords).join(' · ') || 'nobody yet'}`;
+  if (who.mode === 'message') return `to ${(who.to || []).map(messageRecipientWords).join(' · ') || 'nobody yet'}`;
   if (node.performer?.sameAs) return agent(`same agent as ${node.performer.sameAs}`);
   return agent('pick who');
 }

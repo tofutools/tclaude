@@ -118,7 +118,7 @@ export function templateVersionLabel(run) {
 
 // A task's kit kind follows its performer: the read model keeps the template
 // type ('task') and says who performs it.
-const PERFORMER_KINDS = Object.freeze({ human: 'human', program: 'command', command: 'command', agent: 'agent' });
+const PERFORMER_KINDS = Object.freeze({ human: 'human', program: 'command', command: 'command', agent: 'agent', message: 'message' });
 
 function nodeKind(node) {
   const raw = String(node.kind || '').toLowerCase();
