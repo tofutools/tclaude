@@ -262,6 +262,34 @@ type WaitConfig struct {
 	Duration string `json:"duration,omitempty" yaml:"duration,omitempty"`
 	Until    string `json:"until,omitempty" yaml:"until,omitempty"`
 	Signal   string `json:"signal,omitempty" yaml:"signal,omitempty"`
+	// Check makes the wait wait for a criterion instead of a time (wait.go).
+	Check *WaitCheck `json:"check,omitempty" yaml:"check,omitempty"`
+}
+
+// WaitCheck is a criterion a wait step checks again and again until it holds:
+// a rule condition (When) or a yes/no check a program or an agent answers
+// (Performer), every Every, backing off up to MaxEvery, for at most MaxChecks
+// checks or Within in all. OnLimit says what reaching a limit does.
+type WaitCheck struct {
+	When      string     `json:"when,omitempty" yaml:"when,omitempty"`
+	Performer *Performer `json:"performer,omitempty" yaml:"performer,omitempty"`
+	Every     string     `json:"every,omitempty" yaml:"every,omitempty"`
+	// Backoff is WaitBackoffFixed (also what an empty value means) or
+	// WaitBackoffExponential, which multiplies the interval by Factor
+	// (default 2) after each check, up to MaxEvery.
+	Backoff  string  `json:"backoff,omitempty" yaml:"backoff,omitempty"`
+	Factor   float64 `json:"factor,omitempty" yaml:"factor,omitempty"`
+	MaxEvery string  `json:"maxEvery,omitempty" yaml:"maxEvery,omitempty"`
+	// Timeout bounds one check by a program.
+	Timeout   string `json:"timeout,omitempty" yaml:"timeout,omitempty"`
+	MaxChecks int    `json:"maxChecks,omitempty" yaml:"maxChecks,omitempty"`
+	// MaxFailedChecks is how many checks in a row may fail (error, not "no")
+	// before the step fails; 0 means DefaultMaxFailedChecks.
+	MaxFailedChecks int    `json:"maxFailedChecks,omitempty" yaml:"maxFailedChecks,omitempty"`
+	Within          string `json:"within,omitempty" yaml:"within,omitempty"`
+	// OnLimit is WaitOnLimitFail (also what an empty value means) or
+	// WaitOnLimitTimedOut, which takes the step's timedOut route.
+	OnLimit string `json:"onLimit,omitempty" yaml:"onLimit,omitempty"`
 }
 
 type Metadata map[string]any

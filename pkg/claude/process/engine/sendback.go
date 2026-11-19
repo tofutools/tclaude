@@ -162,6 +162,7 @@ func applySendBack(next *Checkpoint, definition *Definition, back SendBack) erro
 		removeCommand(next, node.id)
 		removeObligation(next, node.id)
 		removeBlocked(next, node.id)
+		delete(next.WaitChecks, node.id)
 		next.Nodes[node.id] = NodePending
 		_, approval := approvalAnchor(definition, node)
 		switch {

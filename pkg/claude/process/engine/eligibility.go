@@ -220,10 +220,22 @@ func CheckEligibility(tmpl *model.Template) model.Diagnostics {
 				switch {
 				case node.Wait != nil && strings.TrimSpace(node.Wait.Signal) != "":
 					add("unsupported_wait", path+".wait.signal", "waiting for a signal is not executable in this engine yet")
+				case node.Wait != nil && node.Wait.Check != nil:
+					// A wait for a criterion: authoring validation checked its
+					// shape and its routes (met and timedOut, or one).
+					if p := node.Wait.Check.Performer; p != nil {
+						switch {
+						case p.Kind == model.PerformerAgent && strings.TrimSpace(p.Timeout) != "":
+							add("unsupported_timeout", path+".wait.check.performer.timeout", "agent performer timeouts are not executable in this engine yet")
+						case p.Contact != nil:
+							add("unsupported_contact", path+".wait.check.performer.contact", "performer contact schedules are not executable in this engine yet")
+						}
+					}
+					break
 				case node.Wait == nil || (strings.TrimSpace(node.Wait.Duration) == "" && strings.TrimSpace(node.Wait.Until) == ""):
 					add("unsupported_wait", path+".wait", "a wait step needs a duration or an until time")
 				}
-				if len(node.Next) != 1 {
+				if (node.Wait == nil || node.Wait.Check == nil || !node.Wait.Check.TimesOut()) && len(node.Next) != 1 {
 					add("unsupported_routing", path+".next", "a wait step requires exactly one outgoing route in this engine")
 				}
 			case model.NodeTypeSubprocess:

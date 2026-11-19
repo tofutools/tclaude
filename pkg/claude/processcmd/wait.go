@@ -23,6 +23,11 @@ type processRunWaitJSON struct {
 	StartedAt *time.Time `json:"startedAt,omitempty"`
 	DueAt     *time.Time `json:"dueAt,omitempty"`
 	Failure   string     `json:"failure,omitempty"`
+	Check     *struct {
+		Checks int    `json:"checks"`
+		Failed int    `json:"failed"`
+		Last   string `json:"last"`
+	} `json:"check,omitempty"`
 }
 
 // label is what the wait waits for, as authored: "3 days", "until <time>",
@@ -30,6 +35,9 @@ type processRunWaitJSON struct {
 func (w *processRunWaitJSON) label() string {
 	if w == nil {
 		return "wait"
+	}
+	if w.Check != nil {
+		return "wait for a criterion"
 	}
 	var parts []string
 	if w.Duration != "" {
@@ -54,6 +62,16 @@ func (w *processRunWaitJSON) status(now time.Time) string {
 	}
 	left := w.DueAt.Sub(now)
 	due := w.DueAt.Local().Format("2006-01-02 15:04 MST")
+	if w.Check != nil {
+		progress := fmt.Sprintf("%d checks made", w.Check.Checks)
+		if w.Check.Last != "" {
+			progress += ", last: " + displayProcessEventField(w.Check.Last)
+		}
+		if left <= 0 {
+			return progress + "; checking now"
+		}
+		return progress + "; next check in " + left.Round(time.Second).String()
+	}
 	if left <= 0 {
 		return "due now (was due " + due + ")"
 	}

@@ -75,8 +75,9 @@ type definitionNode struct {
 	human   *HumanCommand  // task nodes a person performs only
 	// ask is what a person deciding a decision (or casting a gate vote) is
 	// asked, parameters filled in; empty when nobody authored one.
-	ask  humanAsk
-	wait *WaitCommand // wait nodes only
+	ask   humanAsk
+	wait  *WaitCommand       // wait nodes only
+	check *preparedWaitCheck // waits for a criterion only (waitcheck.go)
 	// maxAttempts is the authored retry budget of a task node, first attempt
 	// included, and 1 for a task with no authored retry. It is the ONLY thing
 	// preparation carries about retry: the reducer needs a ceiling to compare
@@ -220,10 +221,14 @@ func Prepare(tmpl *model.Template, params map[string]string) (*Definition, error
 		}
 	}
 	for _, node := range definition.nodes {
-		if node.rule == nil {
+		rule := node.rule
+		if node.check != nil {
+			rule = node.check.rule
+		}
+		if rule == nil {
 			continue
 		}
-		for _, id := range node.rule.recordedSteps() {
+		for _, id := range rule.recordedSteps() {
 			if index, ok := definition.index[id]; ok {
 				definition.nodes[index].recorded = true
 			}
@@ -345,6 +350,15 @@ func prepareScope(definition *Definition, tmpl *model.Template, params map[strin
 			// route, settled by the daemon when its deadline passes.
 			prepared.kind = definitionTask
 			prepared.maxAttempts = 1
+			if node.Wait.Check != nil {
+				check, err := prepareWaitCheck(definition, id, *node.Wait.Check, tmpl, params, prefix)
+				if err != nil {
+					return err
+				}
+				prepared.check = check
+				prepared.maxAttempts = waitCheckAttempts
+				break
+			}
 			bound := model.InterpolateWait(*node.Wait, params)
 			prepared.wait = &WaitCommand{Duration: strings.TrimSpace(bound.Duration), Until: strings.TrimSpace(bound.Until)}
 		case model.NodeTypeDecision:
@@ -1028,6 +1042,16 @@ func validateCheckpoint(checkpoint Checkpoint, definition *Definition) error {
 			return invalid("step record %q names no step a rule reads", id)
 		}
 	}
+	for id, state := range checkpoint.WaitChecks {
+		node, ok := definitionNodeByID(definition, id)
+		if !ok || node.check == nil {
+			return invalid("wait check state %q names no wait for a criterion", id)
+		}
+		if state.Checks < 0 || state.Failed < 0 || (state.Phase != waitPhaseTimer && state.Phase != waitPhaseCheck) ||
+			(state.Phase == waitPhaseCheck && node.check.rule != nil) {
+			return invalid("wait check state %q is not one its wait can be in", id)
+		}
+	}
 	for id, choice := range checkpoint.Rules {
 		node, ok := definitionNodeByID(definition, id)
 		if !ok || node.rule == nil {
@@ -1250,8 +1274,8 @@ func validateCommands(checkpoint Checkpoint, definition *Definition) error {
 		if !ok || !node.runsCommand() {
 			return invalid("command node %q is not a prepared task", command.NodeID)
 		}
-		if command.Kind != node.commandKind() {
-			return invalid("command kind for node %q must be %q", command.NodeID, node.commandKind())
+		if want := node.commandKindIn(checkpoint); command.Kind != want {
+			return invalid("command kind for node %q must be %q", command.NodeID, want)
 		}
 		if _, dup := seen[command.NodeID]; dup {
 			return invalid("duplicate command for node %q", command.NodeID)

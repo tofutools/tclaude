@@ -145,12 +145,15 @@ func startProcessWaitTimer(wait db.ProcessUntimedWait) {
 	}
 	duration := model.InterpolateCaptures(wait.Duration, values)
 	until := model.InterpolateCaptures(wait.Until, values)
-	if missing := slices.Concat(model.CaptureReferences(duration), model.CaptureReferences(until)); len(missing) > 0 {
-		timer.Failure = "wait '" + wait.NodeID + "': no step has reported output " + strconv.Quote(missing[0]) + " to wait on"
-	} else if due, err := model.WaitDeadline(duration, until, now); err != nil {
-		timer.Failure = "wait '" + wait.NodeID + "': " + err.Error()
-	} else {
-		timer.DueAt = due.UTC()
+	// A wait due at once (a check wait's first check) keeps now as its deadline.
+	if !wait.Now {
+		if missing := slices.Concat(model.CaptureReferences(duration), model.CaptureReferences(until)); len(missing) > 0 {
+			timer.Failure = "wait '" + wait.NodeID + "': no step has reported output " + strconv.Quote(missing[0]) + " to wait on"
+		} else if due, err := model.WaitDeadline(duration, until, now); err != nil {
+			timer.Failure = "wait '" + wait.NodeID + "': " + err.Error()
+		} else {
+			timer.DueAt = due.UTC()
+		}
 	}
 	if _, err := db.EnsureProcessWaitTimer(timer); err != nil {
 		slog.Warn("process waits: recording a wait's deadline failed", "run", wait.RunID, "node", wait.NodeID, "error", err)
@@ -218,10 +221,16 @@ type processRunWaitView struct {
 	DueAt     *time.Time `json:"dueAt,omitempty"`
 	// Failure says the deadline could not be worked out; the step fails.
 	Failure string `json:"failure,omitempty"`
+	// Check is a wait for a criterion's progress: checks made, failed in a
+	// row, the last answer. This timer is its wait for the next check.
+	Check *engine.WaitCheckState `json:"check,omitempty"`
 }
 
-func processRunWaitViewOf(command engine.Command, timers map[string]db.ProcessWaitTimer) *processRunWaitView {
+func processRunWaitViewOf(command engine.Command, timers map[string]db.ProcessWaitTimer, checks map[string]engine.WaitCheckState) *processRunWaitView {
 	view := &processRunWaitView{}
+	if state, ok := checks[command.NodeID]; ok {
+		view.Check = &state
+	}
 	if command.Wait != nil {
 		view.Duration, view.Until = command.Wait.Duration, command.Wait.Until
 	}

@@ -85,6 +85,9 @@ func performerSlots(nodeID string, node Node) []struct {
 	if node.Review != nil {
 		add(path+".review.performer", &node.Review.Performer)
 	}
+	if node.Wait != nil && node.Wait.Check != nil {
+		add(path+".wait.check.performer", node.Wait.Check.Performer)
+	}
 	return out
 }
 

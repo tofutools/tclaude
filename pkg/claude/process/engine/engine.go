@@ -336,6 +336,13 @@ func apply(checkpoint Checkpoint, definition *Definition, transition Transition)
 			return invalid("outstanding command node %q is not prepared", outstanding.NodeID)
 		}
 		node := definition.nodes[index]
+		if node.check != nil {
+			// A wait for a criterion: a timer came due or a check answered.
+			if err := applyWaitCheckObservation(&next, definition, index, outstanding, observation); err != nil {
+				return Checkpoint{}, err
+			}
+			break
+		}
 		decider := node.kind == definitionDecision
 		if observation.Verdict != "" && (!decider || observation.Outcome != ProgramSucceeded) {
 			return invalid("only a successful agent decision observation carries a verdict")
@@ -640,6 +647,14 @@ func apply(checkpoint Checkpoint, definition *Definition, transition Transition)
 		removeCommand(&next, node.id)
 		next.Nodes[node.id] = NodeBlocked
 		addBlocked(&next, node.id, mark.Reason)
+	case TransitionWaitMet:
+		if transition.Command != nil || transition.Observation != nil || transition.Decision != nil ||
+			transition.Resolution != nil || transition.Mark != nil || transition.Back != nil {
+			return invalid("wait_met transition cannot carry a payload")
+		}
+		if err := applyWaitMet(&next, definition, transition.NodeID); err != nil {
+			return Checkpoint{}, err
+		}
 	case TransitionSentBack:
 		if transition.Back == nil || transition.Command != nil || transition.Observation != nil ||
 			transition.Decision != nil || transition.Resolution != nil || transition.Mark != nil {
@@ -1300,6 +1315,9 @@ func nextEngineTransition(checkpoint Checkpoint, definition *Definition) (Transi
 	if checkpoint.Status != RunRunning || doomed(checkpoint) {
 		return Transition{}, false
 	}
+	if transition, ok := waitMetTransition(checkpoint, definition); ok {
+		return transition, true
+	}
 	for _, node := range definition.nodes {
 		if checkpoint.Nodes[node.id] != NodeReady {
 			continue
@@ -1379,7 +1397,7 @@ func verdictAllowed(node definitionNode, verdict string) bool {
 // finished — so the load boundary re-derives the same command.
 func taskCommand(checkpoint Checkpoint, definition *Definition, node definitionNode, attempt int) Command {
 	runID := checkpoint.RunID
-	kind := node.commandKind()
+	kind := node.commandKindIn(checkpoint)
 	command := Command{
 		ID:      fmt.Sprintf("cmd_%d_%s_%d_%s_%d_%s", len(runID), runID, len(node.id), node.id, attempt, kind),
 		Kind:    kind,
@@ -1394,6 +1412,8 @@ func taskCommand(checkpoint Checkpoint, definition *Definition, node definitionN
 		command.Verdicts = slices.Clone(node.verdicts)
 	}
 	switch {
+	case node.check != nil:
+		fillWaitCheckCommand(checkpoint, node, &command)
 	case node.agent != nil:
 		agent := *node.agent
 		command.Agent = &agent
@@ -1418,6 +1438,15 @@ func (node definitionNode) runsCommand() bool {
 // decision nobody delegated to an agent, including every approval gate.
 func (node definitionNode) awaitsHuman() bool {
 	return node.kind == definitionDecision && node.agent == nil && node.rule == nil
+}
+
+// commandKindIn is the outbox kind a prepared task node plans now: a check
+// wait's depends on where it is.
+func (node definitionNode) commandKindIn(checkpoint Checkpoint) CommandKind {
+	if node.check != nil {
+		return node.waitCheckKind(checkpoint)
+	}
+	return node.commandKind()
 }
 
 // commandKind is the outbox kind a prepared task node plans.
@@ -1529,6 +1558,7 @@ func cloneCheckpoint(checkpoint Checkpoint) Checkpoint {
 	}
 	clone.Steps = cloneSteps(checkpoint.Steps)
 	clone.Rules = cloneRules(checkpoint.Rules)
+	clone.WaitChecks = maps.Clone(checkpoint.WaitChecks)
 	if len(checkpoint.Commands) > 0 {
 		clone.Commands = make([]Command, len(checkpoint.Commands))
 		for i := range checkpoint.Commands {

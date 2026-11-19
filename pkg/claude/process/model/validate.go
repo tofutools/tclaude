@@ -364,8 +364,19 @@ func validateNodes(tmpl *Template, diagnostics *templateDiagnosticCollector, dep
 				}
 			}
 		case NodeTypeWait:
-			if node.Wait == nil || (isBlank(node.Wait.Duration) && isBlank(node.Wait.Until) && isBlank(node.Wait.Signal)) {
-				if !diagnostics.Add(diagError("missing_wait", path+".wait", "wait node requires duration, until, or signal")) {
+			if node.Wait != nil && node.Wait.Check != nil {
+				var found Diagnostics
+				validateWaitCheck(tmpl, nodeID, node, func(code, at, message string) { found = append(found, diagError(code, at, message)) })
+				if node.Wait.Check.Performer != nil {
+					if !validatePerformer(*node.Wait.Check.Performer, path+".wait.check.performer", false, diagnostics) {
+						return false
+					}
+				}
+				if !diagnostics.AddAll(found) {
+					return false
+				}
+			} else if node.Wait == nil || (isBlank(node.Wait.Duration) && isBlank(node.Wait.Until) && isBlank(node.Wait.Signal)) {
+				if !diagnostics.Add(diagError("missing_wait", path+".wait", "wait node requires duration, until, signal, or check")) {
 					return false
 				}
 			}
@@ -1062,6 +1073,10 @@ func validateOutcomeRouting(tmpl *Template) Diagnostics {
 				}
 			}
 		case NodeTypeWait, NodeTypeStart:
+			if node.Type == NodeTypeWait && node.Wait != nil && node.Wait.Check != nil && node.Wait.Check.TimesOut() {
+				// met and timedOut, checked with the wait's criterion.
+				continue
+			}
 			if passWinner == "" {
 				diagnostics = append(diagnostics, diagError("missing_pass_edge", path,
 					fmt.Sprintf("%s node routes only through a pass edge; none of its outcomes is pass, done, success, or next, so it stalls the run", node.Type)))
@@ -1353,6 +1368,11 @@ func validateParamRefs(tmpl *Template, diagnostics *templateDiagnosticCollector)
 			if !collectExecutableParamRefs(diagnostics, declared, path+".wait.duration", node.Wait.Duration) ||
 				!collectExecutableParamRefs(diagnostics, declared, path+".wait.until", node.Wait.Until) {
 				return
+			}
+			if node.Wait.Check != nil && node.Wait.Check.Performer != nil {
+				if !collectPerformerParamRefs(diagnostics, declared, path+".wait.check.performer", *node.Wait.Check.Performer) {
+					return
+				}
 			}
 		}
 		if node.Plan != nil {

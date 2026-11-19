@@ -429,43 +429,7 @@ func validateRules(tmpl *Template, edges []Edge) Diagnostics {
 				add("invalid_rule_condition", casePath+".when", err.Error())
 				continue
 			}
-			for _, comparison := range cond.Comparisons() {
-				operand := comparison.Operand
-				param, isParam := tmpl.Params[operand.Name]
-				boolean := operand.Kind == OperandParam && isParam && (param.Type == "boolean" || param.Type == "bool")
-				switch {
-				case comparison.Bare && !boolean:
-					add("invalid_rule_condition", casePath+".when", fmt.Sprintf("%s on its own means it is true, which only a boolean param can be; compare it, such as %s == yes", operand, operand))
-				case boolean && !comparison.Bare:
-					if _, err := strconv.ParseBool(comparison.Value); err != nil || (comparison.Op != "==" && comparison.Op != "!=") {
-						add("invalid_rule_condition", casePath+".when", fmt.Sprintf("%s is a boolean param: compare it with == or != to true or false", operand))
-					}
-				}
-			}
-			for _, operand := range cond.Operands() {
-				switch operand.Kind {
-				case OperandParam:
-					if _, ok := tmpl.Params[operand.Name]; !ok {
-						add("unknown_rule_param", casePath+".when", fmt.Sprintf("%s names no param of this process", operand))
-					}
-				case OperandOutput:
-					if !outputs[operand.Name] {
-						add("unknown_rule_output", casePath+".when", fmt.Sprintf("%s names no step output", operand))
-					}
-				case OperandResult, OperandExitCode:
-					step, ok := tmpl.Nodes[operand.Name]
-					switch {
-					case !ok:
-						add("unknown_rule_step", casePath+".when", fmt.Sprintf("%s names no step", operand))
-					case step.Type != NodeTypeTask:
-						add("unknown_rule_step", casePath+".when", fmt.Sprintf("%s: %q is not a task, so it has no result", operand, operand.Name))
-					case !upstream(operand.Name, nodeID):
-						add("rule_step_not_upstream", casePath+".when", fmt.Sprintf("%s: step %q does not run before this decision", operand, operand.Name))
-					case operand.Kind == OperandExitCode && (step.Performer == nil || step.Performer.Kind != PerformerProgram || step.IsCompound()):
-						add("rule_exit_code_not_command", casePath+".when", fmt.Sprintf("%s: only a command step has an exit code", operand))
-					}
-				}
-			}
+			validateConditionOperands(tmpl, cond, casePath+".when", func(stepID string) bool { return upstream(stepID, nodeID) }, outputs, add)
 		}
 		for _, loop := range Loops(tmpl, edges) {
 			if loop.From != nodeID {
@@ -490,4 +454,48 @@ func validateRules(tmpl *Template, edges []Edge) Diagnostics {
 		}
 	}
 	return diagnostics
+}
+
+// validateConditionOperands checks what one condition reads: its params,
+// outputs and steps exist, and a boolean param is read as one. With upstream
+// set, a step it reads must run before the condition is evaluated.
+func validateConditionOperands(tmpl *Template, cond *Condition, at string, upstream func(stepID string) bool,
+	outputs map[string]bool, add func(code, at, message string)) {
+	for _, comparison := range cond.Comparisons() {
+		operand := comparison.Operand
+		param, isParam := tmpl.Params[operand.Name]
+		boolean := operand.Kind == OperandParam && isParam && (param.Type == "boolean" || param.Type == "bool")
+		switch {
+		case comparison.Bare && !boolean:
+			add("invalid_rule_condition", at, fmt.Sprintf("%s on its own means it is true, which only a boolean param can be; compare it, such as %s == yes", operand, operand))
+		case boolean && !comparison.Bare:
+			if _, err := strconv.ParseBool(comparison.Value); err != nil || (comparison.Op != "==" && comparison.Op != "!=") {
+				add("invalid_rule_condition", at, fmt.Sprintf("%s is a boolean param: compare it with == or != to true or false", operand))
+			}
+		}
+	}
+	for _, operand := range cond.Operands() {
+		switch operand.Kind {
+		case OperandParam:
+			if _, ok := tmpl.Params[operand.Name]; !ok {
+				add("unknown_rule_param", at, fmt.Sprintf("%s names no param of this process", operand))
+			}
+		case OperandOutput:
+			if !outputs[operand.Name] {
+				add("unknown_rule_output", at, fmt.Sprintf("%s names no step output", operand))
+			}
+		case OperandResult, OperandExitCode:
+			step, ok := tmpl.Nodes[operand.Name]
+			switch {
+			case !ok:
+				add("unknown_rule_step", at, fmt.Sprintf("%s names no step", operand))
+			case step.Type != NodeTypeTask:
+				add("unknown_rule_step", at, fmt.Sprintf("%s: %q is not a task, so it has no result", operand, operand.Name))
+			case upstream != nil && !upstream(operand.Name):
+				add("rule_step_not_upstream", at, fmt.Sprintf("%s: step %q does not run before this decision", operand, operand.Name))
+			case operand.Kind == OperandExitCode && (step.Performer == nil || step.Performer.Kind != PerformerProgram || step.IsCompound()):
+				add("rule_exit_code_not_command", at, fmt.Sprintf("%s: only a command step has an exit code", operand))
+			}
+		}
+	}
 }
