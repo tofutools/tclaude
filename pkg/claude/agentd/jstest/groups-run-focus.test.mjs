@@ -187,6 +187,31 @@ test('an agreement gate shows its tally, and your vote is decided under its own 
   assert.deepEqual(api.decisions, [['run_release', { nodeId: 'review.vote.2', verdict: 'approved', evidence: '', attempt: 1 }]]);
 });
 
+test("a person's step shows its ask, asks for its outputs, and sends them with a passing choice", async (t) => {
+  const saved = VIEWS.run_release;
+  VIEWS.run_release = { ...saved, awaitingDecisions: [{ nodeId: 'review', kind: 'task', verdicts: ['done', 'failed'],
+    passing: ['done'], attempt: 2, ask: 'Pack the order for Ada.', prompt: 'Use the small box.', outputs: ['tracking'] }] };
+  t.after(() => { VIEWS.run_release = saved; });
+  const { harness, root, api } = await mountRunFocus(t);
+  const form = root.querySelector('[data-run-decision="review"]');
+  assert.ok(form.hasAttribute('data-person-step'));
+  assert.equal(form.querySelector('.pps-ask').textContent, 'Pack the order for Ada.');
+  assert.equal(form.querySelector('.pps-prompt').textContent, 'Use the small box.');
+  const done = form.querySelector('[data-run-verdict="done"]');
+  assert.match(done.textContent, /✓ Done/);
+  assert.match(form.querySelector('[data-run-verdict="failed"]').textContent, /Couldn't do it/);
+  assert.ok(done.disabled, 'done waits for its output');
+  assert.ok(!form.querySelector('[data-run-verdict="failed"]').disabled, 'failing needs no output');
+  const field = form.querySelector('[data-person-output="tracking"]');
+  Object.defineProperty(field, 'value', { configurable: true, writable: true, value: ' TRK-42 ' });
+  await harness.act(() => harness.fireEvent(field, 'input'));
+  assert.ok(!root.querySelector('[data-run-verdict="done"]').disabled);
+  await harness.act(() => harness.fireEvent(root.querySelector('[data-run-verdict="done"]'), 'click'));
+  await settle(harness);
+  assert.deepEqual(api.decisions, [['run_release',
+    { nodeId: 'review', verdict: 'done', evidence: '', attempt: 2, outputs: { tracking: 'TRK-42' } }]]);
+});
+
 test('polls during a slow read queue one follow-up instead of discarding it, and long histories catch up', async (t) => {
   const api = fakeApi();
   const gates = [];

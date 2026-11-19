@@ -130,6 +130,17 @@ export function eventSentence(event, nameOf = () => '', { withStep = true } = {}
       if (observation.outcome !== 'failed') return { icon: '·', tone: '', text: `${who} reported ${event.nodeId || 'a step'}${verdict || ' done'}${payload.note ? `: ${clip(payload.note, 100)}` : ''}` };
       return { icon: '✖', tone: 'concern', text: `${who} reported ${event.nodeId || 'a step'} failed${payload.note || observation.error ? `: ${clip(payload.note || observation.error)}` : ''}` };
     }
+    // A step a person performs: opened, finished, or withdrawn with the run.
+    case 'human_prepared':
+      return { icon: '👤', tone: '', text: `${event.nodeId || 'a step'} waits on you${payload.command?.attempt > 1 ? ` (attempt ${payload.command.attempt})` : ''}` };
+    case 'human_reported': {
+      const outputs = Object.entries(payload.outputs || {}).map(([name, value]) => `${name} = ${clip(value, 60)}`).join(' · ');
+      const note = payload.note ? `: ${clip(payload.note, 100)}` : '';
+      if (payload.outcome === 'failed') return { icon: '✖', tone: 'concern', text: `${who} finished ${event.nodeId || 'a step'} as ${payload.choice}${note}` };
+      return { icon: '✓', tone: '', text: `${who} finished ${event.nodeId || 'a step'} as ${payload.choice}${note}${outputs ? ` (${outputs})` : ''}` };
+    }
+    case 'human_withdrawn':
+      return { icon: '✕', tone: 'concern', text: `${event.nodeId || 'a step'} was withdrawn: ${payload.reason || 'the run is ending'}` };
     case 'run_canceled':
       return { icon: '✕', tone: 'concern', text: `${who} canceled the run${payload.note ? `: ${clip(payload.note)}` : ''}` };
     default:

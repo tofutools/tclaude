@@ -119,6 +119,33 @@ test('a gate card on Now approves in one tap, and asks for a note before changes
   assert.equal(source.refreshes, 1, 'the context is read again after the verdict');
 });
 
+test("a person's step on a card says what to do, and a choice with outputs asks for them first", async (t) => {
+  const { harness, mod } = await load(t);
+  const { PhoneSheetHost, closePhoneSheet } = await harness.importDashboardModule('js/phone-sheet.js');
+  t.after(() => closePhoneSheet());
+  const api = fakeApi();
+  const getRun = api.getRun;
+  api.getRun = async (runId) => ({ ...(await getRun(runId)), awaitingDecisions: [{ nodeId: 'review', kind: 'task',
+    verdicts: ['done', 'failed'], passing: ['done'], attempt: 1, ask: 'Weigh the box.', outputs: ['weight'] }] });
+  const item = mod.gateItems(FIXTURE).find((entry) => entry.run.runId === 'run_release');
+  const mounted = await harness.mount(harness.html`<div><${mod.GateCard} item=${item} api=${api} source=${fakeSource(harness)} /><${PhoneSheetHost} /></div>`);
+  await settle(harness);
+  const card = mounted.container.querySelector('.phone-gate-card');
+  assert.match(card.querySelector('.phone-card-line').textContent, /waits on you to do a step/);
+  assert.equal(card.querySelector('.pps-ask').textContent, 'Weigh the box.');
+  assert.ok(card.querySelector('[data-run-verdict="done"]').classList.contains('phone-btn-ok'));
+  assert.ok(card.querySelector('[data-run-verdict="failed"]').classList.contains('phone-btn-no'));
+  await harness.act(() => card.querySelector('[data-run-verdict="done"]').click());
+  const sheet = mounted.container.querySelector('[role="dialog"]');
+  assert.ok(sheet, 'done with an output opens a sheet');
+  const send = harness.getByRole(sheet, 'button', { name: 'Done' });
+  assert.ok(send.disabled, 'until the output is filled in');
+  await harness.input(sheet.querySelector('[data-person-output="weight"]'), '18 kg');
+  await harness.act(() => harness.getByRole(sheet, 'button', { name: 'Done' }).click());
+  await settle(harness);
+  assert.deepEqual(api.decisions, [['run_release', { nodeId: 'review', verdict: 'done', evidence: '', attempt: 1, outputs: { weight: '18 kg' } }]]);
+});
+
 test('approve on a gate card goes in one tap, without a note', async (t) => {
   const { harness, mod } = await load(t);
   const api = fakeApi();

@@ -110,6 +110,37 @@ type processProjectionNode struct {
 	// Rule is a rule decision's cases and, once it has decided, its last
 	// choice: the case that held (-1 for else) and the values it read.
 	Rule *processProjectionRule `json:"rule,omitempty"`
+	// Person is a step a person performs: the choices they finish it with
+	// and the outputs a passing one fills in.
+	Person *processProjectionPerson `json:"person,omitempty"`
+}
+
+type processProjectionPerson struct {
+	Choices []string `json:"choices"`
+	Passing []string `json:"passing"`
+	Outputs []string `json:"outputs,omitempty"`
+}
+
+// processProjectionPersonOf is a person's step's choices as the engine binds
+// them: the authored ones, or done / failed.
+func processProjectionPersonOf(node model.Node) *processProjectionPerson {
+	if node.Type != model.NodeTypeTask || node.IsCompound() || node.Performer == nil || node.Performer.Kind != model.PerformerHuman {
+		return nil
+	}
+	person := &processProjectionPerson{Outputs: slices.Clone(node.Captures)}
+	if len(node.Performer.Choices) == 0 {
+		person.Choices = []string{engine.HumanChoiceDone, engine.HumanChoiceFailed}
+		person.Passing = []string{engine.HumanChoiceDone}
+		return person
+	}
+	for _, choice := range node.Performer.Choices {
+		choice = strings.TrimSpace(choice)
+		person.Choices = append(person.Choices, choice)
+		if strings.TrimSpace(node.Performer.ChoiceOutcomes[choice]) == "pass" {
+			person.Passing = append(person.Passing, choice)
+		}
+	}
+	return person
 }
 
 type processProjectionRule struct {
@@ -681,6 +712,7 @@ func newProcessProjectionSkeleton(tmpl *model.Template) *processProjectionSkelet
 		projected := processProjectionNode{
 			ID: id, Label: node.Name, Kind: string(node.Type), Performer: processProjectionPerformerOf(node),
 			Description: clipProjectionText(node.Description, processProjectionDescriptionRunes),
+			Person:      processProjectionPersonOf(node),
 		}
 		if projected.Label == "" {
 			projected.Label = id
