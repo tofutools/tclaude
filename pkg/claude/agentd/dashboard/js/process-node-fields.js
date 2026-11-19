@@ -68,6 +68,29 @@ export function NodeSelect({ fieldKey, label, options, value, apply, readOnly, b
   </label>`;
 }
 
+// PERSON_HINTS are the help a person's fields give: who performs one today,
+// and, on a task (a step the person performs), what its choices default to.
+const PERSON_HINTS = {
+  assignee: 'Leave empty, or operator: the operator performs a person\'s steps and decisions today',
+  ask: 'What the person is asked: one line',
+  prompt: 'The longer instructions the person reads',
+};
+const PERSON_TASK_HINTS = {
+  choices: 'Optional, one per line: the choices that finish this step. With none it finishes as done or failed',
+};
+
+function performerFieldHint(field, kind, task) {
+  if (kind !== 'human') return field.hint;
+  return (task && PERSON_TASK_HINTS[field.key]) || PERSON_HINTS[field.key] || field.hint;
+}
+
+function performerFieldPlaceholder(field, kind, task) {
+  if (kind !== 'human') return '';
+  if (field.key === 'assignee') return 'operator';
+  if (field.key === 'choices' && task) return 'done\nfailed';
+  return '';
+}
+
 // PerformerEditor is the ONE shared performer editor (the uniform performer
 // contract in process-node-form.js): kind plus the descriptor-declared fields
 // of that kind. `only` / `omit` slice the field list so blocks can split one
@@ -123,7 +146,8 @@ export function PerformerEditor({
       const value = field.list ? formatLines(performer?.[field.key]) : performer?.[field.key];
       return html`<div key=${field.key}>
         <${NodeField} fieldKey=${`${path}.${field.key}`} label=${field.label} value=${value || ''}
-          multiline=${!!(field.multiline || field.list)} hint=${field.hint} readOnly=${readOnly}
+          multiline=${!!(field.multiline || field.list)} hint=${performerFieldHint(field, kind, choiceRouting)}
+          placeholder=${performerFieldPlaceholder(field, kind, choiceRouting)} readOnly=${readOnly}
           apply=${(key, next) => mutate(field.key, next, (slot, raw) => setPerformerField(slot, field.key, raw, { choiceRouting }))} />
         ${field.key === 'run' && html`<p class="process-node-security-note">⚠ Program performers are command execution: this command runs on the host when the node activates.</p>`}
       </div>`;

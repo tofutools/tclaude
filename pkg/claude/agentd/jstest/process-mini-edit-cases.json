@@ -211,15 +211,12 @@
       "result": "canceled",
       "name": "stopped"
      },
-     "decide": {
-      "type": "decision",
-      "name": "Decide",
+     "your-step": {
+      "type": "task",
+      "name": "Your step",
       "performer": {
        "kind": "human",
-       "ask": "Do the thing.",
-       "choices": [
-        "continue"
-       ]
+       "ask": "Do the thing."
       }
      }
     }
@@ -233,7 +230,7 @@
     {
      "from": "start",
      "outcome": "next",
-     "to": "decide"
+     "to": "your-step"
     },
     {
      "from": "implement",
@@ -266,8 +263,8 @@
      "to": "end"
     },
     {
-     "from": "decide",
-     "outcome": "continue",
+     "from": "your-step",
+     "outcome": "next",
      "to": "implement"
     }
    ],
@@ -1113,14 +1110,11 @@
       "type": "start"
      },
      "implement": {
-      "type": "decision",
+      "type": "task",
       "name": "Implement",
       "performer": {
        "kind": "human",
-       "ask": "Implement {{params.issue}} on a branch and open a PR. When it comes back for changes, address the notes on the same PR.",
-       "choices": [
-        "continue"
-       ]
+       "ask": "Implement {{params.issue}} on a branch and open a PR. When it comes back for changes, address the notes on the same PR."
       }
      },
      "review": {
@@ -1187,7 +1181,7 @@
     },
     {
      "from": "implement",
-     "outcome": "continue",
+     "outcome": "next",
      "to": "review"
     },
     {

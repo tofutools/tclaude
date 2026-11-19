@@ -734,8 +734,12 @@ with the group's default spawn profile or another profile you pick beside it,
 or fail: the template's
 `fallback`), and an agent step can override that with its own choice under
 its Who picker, or follow the process; a step that does not simply wait shows
-its fallback (`↯ spawn opus-lead`, `↯ fail`) on its node; your answers to a *you* step branch to
-later steps, and `{{name}}` in a prompt becomes a start input. A preview, the
+its fallback (`↯ spawn opus-lead`, `↯ fail`) on its node. A *you* step is
+one you perform: its text is what you are asked to do, you finish it as done
+or failed, and in the graph's inspector it can name outputs you fill in (see
+[Steps done by a person](#steps-done-by-a-person)). *◇ you decide* makes it
+your decision instead, whose answers branch to later steps. `{{name}}` in a
+prompt becomes a start input. A preview, the
 start inputs and who each step would use now (the daemon's resolve-preview,
 a dry run of the group rules) update as you edit. A command
 step runs on this host only after you tick *Allow step N to run* for its
@@ -1484,6 +1488,11 @@ an agent's prompt. With no `choices` the step finishes as `done` or
 must fill in every output the step declares (with one output, the note
 stands in for it), which a later prompt reads as `{{ outputs.<name> }}`.
 
+In the dashboard, a *you* step in the step list or the small graph is one of
+these, and the full editor's palette has *Step done by a person*. Its
+outputs are the step's *Outputs*, and its choices, when left empty, are done
+and failed.
+
 Finish it with `decide`:
 
 ```bash
@@ -1505,10 +1514,10 @@ anywhere else, its card shows the pick. When the run withdraws the step (it
 is canceled, or fails elsewhere), its card reads "Withdrawn".
 
 - **Failing it**: a failing choice is a failed attempt, with the note as the
-  reason. With retries left the step opens again as the next attempt; with
-  `mayFail` the run goes on with the step's result `failed`; otherwise the
-  run stops and names the step (its `failure`), exactly as for a failed
-  agent step.
+  reason. With `mayFail` the run goes on with the step's result `failed`;
+  otherwise the run stops and names the step (its `failure`), exactly as for
+  a failed agent step. A person's step takes no `retry` yet (the engine
+  refuses one, `unsupported_retry`).
 - **Pausing**: a paused run opens no new person's step. One already open can
   still be finished; what it makes ready waits for the resume.
 - **Cancelling**: cancelling the run, or a sibling branch failing it,

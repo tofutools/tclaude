@@ -250,9 +250,12 @@ export function inheritLabel(fallback, defaultSpawnProfile = '') {
   return action === 'fail' ? 'as the process: fail' : 'as the process: wait';
 }
 
+// YOU_DECISION_ANSWERS are a step's first answers when it becomes your decision.
+const YOU_DECISION_ANSWERS = Object.freeze(['yes', 'no']);
+
 // Answers edits a decision step's answers: a person's, or the verdicts an
 // agent decider picks between. Emptying an agent's verdicts makes it a plain
-// agent step again; a person always keeps one answer.
+// agent step again, and emptying your answers makes it a step you perform.
 function Answers({ list, step, onChange }) {
   const gate = isGateStep(step);
   const agent = step.node.performer?.kind !== 'human';
@@ -272,7 +275,8 @@ function Answers({ list, step, onChange }) {
       return;
     }
     setRefused('');
-    onChange(setStepChoices(step, next.length || agent ? next : [YOU_CONTINUE], following));
+    // A person's step with no outcomes is a task they perform, done or failed.
+    onChange(setStepChoices(step, next, following));
   };
   const back = backTargets(list, step.id);
   const linkFor = (answer) => (answer === step.cont ? following : step.links.find((link) => link.outcome === answer)?.to || '');
@@ -338,17 +342,19 @@ function StepRow({ list, step, index, roster, roles, now, problems, fallbackInfo
   const noMoreDeciders = decision && kind !== 'gate' && kind !== 'command' ? canAddStepDecider(list, step) : '';
   // Prompts read {{name}}, the step list's shorthand; edits expand it back.
   const text = collapseParamShorthand(stepText(step));
-  const placeholder = { agent: 'What should the agent do? {{name}} makes a start input', you: 'What do you decide?', command: 'Command line, e.g. make test',
+  const placeholder = { agent: 'What should the agent do? {{name}} makes a start input', you: decision ? 'What do you decide?' : 'What should you do?', command: 'Command line, e.g. make test',
     message: 'What to tell them. {{name}} is a start input, {{ outputs.pr }} a step\'s output', gate: 'What do the deciders decide?' }[kind];
   const following = list.steps[index + 1]?.id || list.mainEnd;
   // A decision keeps its answers across a switch between a person and an
-  // agent (an agent's lone "continue" is no decision); a command does not
-  // decide.
+  // agent (an older "you" step's lone "continue" is no decision); a command
+  // does not decide.
   const setWho = (who) => {
     let next = setStepWho(step, who);
     const answers = stepAnswers(step);
-    if (who.mode === 'you' && next.node.type !== 'decision') next = setStepChoices({ ...next, cont: YOU_CONTINUE }, [YOU_CONTINUE], '');
-    else if (who.mode === 'you') next = setStepChoices(next, answers, following);
+    // A task stays a task: yours is a step you perform, which takes no retry
+    // yet (the engine runs none on it).
+    if (who.mode === 'you' && next.node.type === 'decision') next = setStepChoices(next, answers, following);
+    else if (who.mode === 'you' && next.node.retry) next = { ...next, node: Object.fromEntries(Object.entries(next.node).filter(([key]) => key !== 'retry')) };
     else if (next.node.type === 'decision' && (who.mode === 'command' || (answers.length === 1 && answers[0] === YOU_CONTINUE))) next = setStepChoices(next, [], '');
     else if (next.node.type === 'decision') next = setStepChoices(next, answers, following);
     onChange(next);
@@ -371,6 +377,9 @@ function StepRow({ list, step, index, roster, roles, now, problems, fallbackInfo
       ${!decision && kind === 'agent' && html`<${Button} size="sm" variant="link" class="gq-link gq-decides" data-step-decides=${step.id}
         title="The agent reports a verdict (approve or changes) instead of just finishing; send changes back to an earlier step for a review loop"
         onClick=${() => onChange(setStepChoices({ ...step, cont: AGENT_VERDICTS[0] }, [...AGENT_VERDICTS], following))}>◇ agent decides<//>`}
+      ${!decision && kind === 'you' && html`<${Button} size="sm" variant="link" class="gq-link gq-decides" data-step-decides=${step.id}
+        title="You pick an answer (yes or no to start) instead of finishing it as done or failed; each answer can go its own way"
+        onClick=${() => onChange(setStepChoices({ ...step, cont: YOU_DECISION_ANSWERS[0] }, [...YOU_DECISION_ANSWERS], following))}>◇ you decide<//>`}
       ${taskLinks && html`<div class="gq-then gq-then-ro">then: ${step.links.map((link) => `${link.outcome} → ${stepTargetLabel(list, link.to)}`).join(' · ')}</div>`}
       ${problems.map((problem) => html`<div key=${problem} class="gq-problem" role="note">${problem}</div>`)}
     </div>

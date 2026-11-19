@@ -427,8 +427,11 @@ test('editing steps: who, answers and their targets, order and removal', async (
   await setValue(work.querySelector('.gq-step-text'), 'Fix {{ticket}}', 'change');
   assert.ok(editor.querySelector('[data-start-param="ticket"]'), '{{ticket}} becomes a start input');
   [work, decide, cmd] = steps(root);
+  assert.equal(decide.querySelector('.gq-answers-in input'), null, 'a step you perform has no answers: done or failed');
+  await click(decide.querySelector('[data-step-decides]'));
+  [work, decide, cmd] = steps(root);
   const answers = decide.querySelector('.gq-answers-in input');
-  assert.equal(answers.value, 'continue');
+  assert.equal(answers.value, 'yes, no', 'your decision starts with yes and no');
   await setValue(answers, 'ship, hold');
   await harness_blur(answers);
   await settle();
@@ -440,15 +443,15 @@ test('editing steps: who, answers and their targets, order and removal', async (
   assert.match(options[2].textContent, /^↺ back to 1 · /);
   await setValue(selects[1], 'end', 'change');
   await click(steps(root)[2].querySelector('[aria-label="Move step 3 up"]'));
-  assert.deepEqual(steps(root).map((el) => el.dataset.step), ['step', 'command', 'approve']);
+  assert.deepEqual(steps(root).map((el) => el.dataset.step), ['step', 'command', 'your-step']);
   await click(steps(root)[1].querySelector('[aria-label="Remove step 2"]'));
-  assert.deepEqual(steps(root).map((el) => el.dataset.step), ['step', 'approve']);
+  assert.deepEqual(steps(root).map((el) => el.dataset.step), ['step', 'your-step']);
   await setValue(steps(root)[1].querySelector('.gq-step-text'), 'Ship it?', 'change');
   await setValue(editor.querySelector('[data-start-param="ticket"]'), 'T-1');
   await click(editor.querySelector('[data-step-save-library]'));
   const view = api.calls.save.at(-1).view;
   assert.deepEqual(view.template.nodes.step.performer, { kind: 'agent', assignee: 'search', prompt: 'Fix {{params.ticket}}' });
-  assert.deepEqual(view.edges.filter((e) => e.from === 'approve').map((e) => `${e.outcome}>${e.to}`).sort(), ['hold>end', 'ship>end'],
+  assert.deepEqual(view.edges.filter((e) => e.from === 'your-step').map((e) => `${e.outcome}>${e.to}`).sort(), ['hold>end', 'ship>end'],
     'a removed target retargets to what followed it');
   assert.equal(api.calls.start.length, 0, 'saving to the library starts nothing');
 });
@@ -460,6 +463,7 @@ test('an answer that goes back is a bounded loop with its rounds and what follow
   await setValue(editor.querySelector('.gq-name'), 'review-loop');
   await click(editor.querySelector('[data-add-step="agent"]'));
   await click(editor.querySelector('[data-add-step="you"]'));
+  await click(steps(root)[1].querySelector('[data-step-decides]'));
   let decide = steps(root)[1];
   const answers = decide.querySelector('.gq-answers-in input');
   await setValue(answers, 'approved, changes, escalate');
@@ -483,8 +487,8 @@ test('an answer that goes back is a bounded loop with its rounds and what follow
   await setValue(steps(root)[1].querySelector('[aria-label="When changes has used its rounds"]'), 'escalate', 'change');
   await click(editor.querySelector('[data-step-save-library]'));
   const view = api.calls.save.at(-1).view;
-  assert.deepEqual(view.template.nodes.approve.loops, { changes: { maxIterations: 4, onExhausted: 'escalate' } });
-  assert.ok(view.edges.some((e) => e.from === 'approve' && e.outcome === 'changes' && e.to === 'step'));
+  assert.deepEqual(view.template.nodes['your-step'].loops, { changes: { maxIterations: 4, onExhausted: 'escalate' } });
+  assert.ok(view.edges.some((e) => e.from === 'your-step' && e.outcome === 'changes' && e.to === 'step'));
 });
 
 test('an agent step can decide: its verdicts loop like a person\'s answers', async (t) => {
@@ -925,6 +929,25 @@ test('✎ opens a saved process in place as a graph of the same steps', async (t
   assert.equal(card().querySelector('[data-mini-changes]'), null);
 });
 
+test('a "you" step added in the graph is a step you perform, with outputs you fill in', async (t) => {
+  const { api, card, node, click, fire, setValue } = await openMini(t);
+  await fire(node('implement'), 'mouseenter');
+  await click(card().querySelector('[data-mini-handles="implement"] [data-mini-handle="after"]'));
+  await click(card().querySelector('[data-mini-picker="after"] [data-mini-kind="you"]'));
+  assert.ok(node('your-step'), 'the new step is drawn');
+  const inspector = card().querySelector('[data-mini-inspector="your-step"]');
+  assert.ok(inspector, 'and opened in the inspector');
+  const outputs = inspector.querySelector('[data-mini-outputs="your-step"] input');
+  assert.ok(outputs, 'a step you perform declares what you fill in');
+  assert.equal(outputs.getAttribute('placeholder'), 'none (e.g. weight)');
+  await setValue(outputs, 'weight', 'change');
+  await click(card().querySelector('[data-mini-save]'));
+  const saved = api.calls.save.at(-1).view.template.nodes['your-step'];
+  assert.equal(saved.type, 'task');
+  assert.equal(saved.performer.kind, 'human');
+  assert.deepEqual(saved.captures, ['weight']);
+});
+
 test('hover handles add a step after; undo takes it back', async (t) => {
   const { card, node, click, fire } = await openMini(t);
   await fire(node('implement'), 'mouseenter');
@@ -1184,9 +1207,9 @@ test('☰ Steps and ◈ Graph switch views over the same unsaved draft', async (
   await click(card().querySelector('[data-mini-steps]'));
   const editor = root.querySelector('[data-step-editor-saved="tmpl_ship"]');
   assert.ok(editor, 'the step list shows the draft');
-  assert.ok(steps(root).some((el) => el.dataset.step === 'decide'), 'with the step added in the graph');
+  assert.ok(steps(root).some((el) => el.dataset.step === 'your-step'), 'with the step added in the graph');
   await click(editor.querySelector('[data-mini-graph]'));
-  assert.ok(node('decide'), 'and back in the graph');
+  assert.ok(node('your-step'), 'and back in the graph');
   assert.ok(card().querySelector('[data-mini-changes]'), 'still unsaved');
   await click(card().querySelector('[data-mini-cancel]'));
   await click(card().querySelector('[data-mini-discard]'));

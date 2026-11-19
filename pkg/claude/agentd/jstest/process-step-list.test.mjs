@@ -6,7 +6,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  FAILURE_RETRIES_MAX, setStepFailure, stepFailure,
+  FAILURE_RETRIES_MAX, YOU_CONTINUE, setStepFailure, stepFailure,
   blankStepList, expandParamShorthand, forwardTargets, joinCommand, splitCommand, insertStep, moveStep, newStep, removeStep, replaceStep,
   setStepChoices, setStepLinks, setStepText, setStepWho, stepListFlow, stepListParams,
   stepListToView, stepTargetLabel, stepText, stepWho, viewToStepList,
@@ -135,11 +135,11 @@ test('a blank list grows into a valid linear template', () => {
   const view = stepListToView(list);
   assert.equal(view.template.start, 'start');
   assert.deepEqual(view.edges.map((e) => `${e.from}|${e.outcome}|${e.to}`), [
-    '|start|start', 'start|next|implement', 'implement|next|approve', 'approve|continue|merge', 'merge|next|end',
+    '|start|start', 'start|next|implement', 'implement|next|approve', 'approve|next|merge', 'merge|next|end',
   ]);
   assert.deepEqual(view.template.nodes.implement.performer, { kind: 'agent', assignee: 'checkout', prompt: 'Implement {{params.issue}} on a branch.' });
-  assert.equal(view.template.nodes.approve.type, 'decision', 'a human performs decisions only, so a you step is one');
-  assert.deepEqual(view.template.nodes.approve.performer, { kind: 'human', ask: 'Ship it?', choices: ['continue'] });
+  assert.equal(view.template.nodes.approve.type, 'task', 'a you step is a task the person performs');
+  assert.deepEqual(view.template.nodes.approve.performer, { kind: 'human', ask: 'Ship it?' });
   assert.deepEqual(view.template.nodes.merge.performer, { kind: 'program', run: 'gh', args: ['pr', 'merge', '--squash'] });
   assert.deepEqual(view.template.params, { issue: { type: 'string', required: true } }, '{{issue}} became a start input');
   assert.deepEqual(normalized(roundTrip(view)), normalized(view));
@@ -309,12 +309,23 @@ test('link targets are forward only: later steps and the ends', () => {
   assert.deepEqual(forwardTargets(list, 'c'), ['end']);
 });
 
+test('a step that becomes a decision drops what only a task has: outputs, retries, going on as failed', () => {
+  const list = blankStepList('x');
+  const step = newStep(list, { kind: 'you', name: 'Pack', text: 'Pack it.' });
+  const task = { ...step, node: { ...step.node, captures: ['weight'], retry: { maxAttempts: 2 }, mayFail: true } };
+  const decided = setStepChoices({ ...task, cont: 'yes' }, ['yes', 'no'], 'end');
+  assert.equal(decided.node.type, 'decision');
+  assert.equal(decided.node.captures, undefined);
+  assert.equal(decided.node.retry, undefined);
+  assert.equal(decided.node.mayFail, undefined);
+});
+
 test('renaming the continuing answer keeps it continuing only while it is an answer', () => {
   let list = blankStepList('x');
-  list = insertStep(list, newStep(list, { kind: 'you', name: 'Gate', text: 'Go?' }));
+  list = insertStep(list, setStepChoices({ ...newStep(list, { kind: 'you', name: 'Gate', text: 'Go?' }), cont: YOU_CONTINUE }, [YOU_CONTINUE], ''));
   list = insertStep(list, newStep(list, { name: 'Work' }));
   const gate = list.steps[0];
-  assert.equal(gate.cont, 'continue');
+  assert.equal(gate.cont, 'continue', 'a decision of yours with one answer goes on by it');
   const two = setStepChoices(gate, ['continue', 'stop'], 'end');
   assert.equal(two.cont, 'continue');
   assert.deepEqual(two.links, [{ outcome: 'stop', to: 'end' }]);

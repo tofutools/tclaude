@@ -1627,6 +1627,23 @@ export const PALETTE_SNIPPETS = [
     },
   },
   {
+    key: 'person-step',
+    label: 'Step done by a person',
+    hint: 'A step you perform: finished as done or failed, filling in what it asks for',
+    nodes: {
+      'person-step': {
+        type: 'task',
+        name: 'Your step',
+        performer: { kind: 'human', ask: 'Pack the order.', prompt: 'Weigh it before you close it.' },
+        captures: ['weight'],
+      },
+    },
+    edges: [],
+    layout: {
+      'person-step': { x: 0, y: 0 },
+    },
+  },
+  {
     key: 'human-approval-gate',
     label: 'Human approval gate',
     hint: 'A human decision with approve/reject branches',
