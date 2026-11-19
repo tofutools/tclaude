@@ -36,7 +36,8 @@ func TestWaitDeadline(t *testing.T) {
 		{"until", "", "2026-11-20T09:00:00Z", time.Date(2026, 11, 20, 9, 0, 0, 0, time.UTC)},
 		{"until sooner than the duration", "3 days", "2026-11-20T09:00:00Z", time.Date(2026, 11, 20, 9, 0, 0, 0, time.UTC)},
 		{"duration sooner than until", "1h", "2026-11-20T09:00:00Z", start.Add(time.Hour)},
-		{"until already past", "", "2026-11-01T00:00:00Z", time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)},
+		{"until already past ends at once", "", "2026-11-01T00:00:00Z", start},
+		{"until the epoch ends at once", "", "1970-01-01T00:00:00Z", start},
 	}
 	for _, c := range cases {
 		got, err := WaitDeadline(c.duration, c.until, start)
@@ -44,7 +45,7 @@ func TestWaitDeadline(t *testing.T) {
 			t.Errorf("%s: WaitDeadline = %v, %v; want %v", c.name, got, err, c.want)
 		}
 	}
-	for _, bad := range [][2]string{{"", ""}, {"soon", ""}, {"", "next week"}, {"", "{{ outputs.when }}"}} {
+	for _, bad := range [][2]string{{"", ""}, {"soon", ""}, {"", "next week"}, {"", "{{ outputs.when }}"}, {"", "2300-01-01T00:00:00Z"}} {
 		if _, err := WaitDeadline(bad[0], bad[1], start); err == nil {
 			t.Errorf("WaitDeadline(%q, %q) should fail", bad[0], bad[1])
 		}

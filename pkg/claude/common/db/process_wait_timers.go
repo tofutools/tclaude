@@ -76,13 +76,32 @@ func ListProcessWaitTimersForRun(runID string) ([]ProcessWaitTimer, error) {
 	return queryProcessWaitTimers(`WHERE run_id = ? ORDER BY node_id LIMIT ?`, runID, MaxProcessWaitPage)
 }
 
+// processRunDoomedSQL holds for a run's checkpoint that has been given up
+// (engine.Draining): canceled, ended early, or a step failed or canceled.
+const processRunDoomedSQL = `(json_valid(checkpoint_json) = 1 AND (
+	COALESCE(json_extract(checkpoint_json, '$.canceled'), 0) = 1
+	OR COALESCE(json_extract(checkpoint_json, '$.endedEarly'), '') != ''
+	OR (json_type(checkpoint_json, '$.nodes') = 'object' AND EXISTS (
+		SELECT 1 FROM json_each(checkpoint_json, '$.nodes') WHERE value IN ('failed', 'canceled')))))`
+
+// processWaitTakerSQL selects the runs whose due waits end: running, bound to
+// their scope, not paused, and not given up (whose waits are withdrawn).
+const processWaitTakerSQL = `SELECT id FROM process_runs WHERE status = 'running' AND scope_state = 'bound'
+	AND paused_at IS NULL AND NOT ` + processRunDoomedSQL
+
 // ListDueProcessWaitTimers is the waits due at now whose run can take them:
 // running, bound to its scope, and not paused. A paused run's due wait ends
 // once the run is resumed.
 func ListDueProcessWaitTimers(now time.Time) ([]ProcessWaitTimer, error) {
-	return queryProcessWaitTimers(`WHERE due_at <= ? AND run_id IN (
-			SELECT id FROM process_runs WHERE status = 'running' AND scope_state = 'bound' AND paused_at IS NULL)
+	return queryProcessWaitTimers(`WHERE due_at <= ? AND run_id IN (`+processWaitTakerSQL+`)
 		ORDER BY due_at, run_id, command_id LIMIT ?`, dbTimeBoundary(now.UTC()), MaxProcessWaitPage)
+}
+
+// ListDrainingProcessWaitTimers is the waits of running runs that have been
+// given up, which are withdrawn rather than waited out.
+func ListDrainingProcessWaitTimers() ([]ProcessWaitTimer, error) {
+	return queryProcessWaitTimers(`WHERE run_id IN (SELECT id FROM process_runs WHERE status = 'running' AND `+
+		processRunDoomedSQL+`) ORDER BY run_id, command_id LIMIT ?`, MaxProcessWaitPage)
 }
 
 // NextProcessWaitDue is the earliest deadline among the waits a run can take,
@@ -93,8 +112,7 @@ func NextProcessWaitDue() (time.Time, bool, error) {
 		return time.Time{}, false, err
 	}
 	var due dbTimestamp
-	err = d.QueryRow(`SELECT MIN(due_at) FROM process_wait_timers WHERE run_id IN (
-		SELECT id FROM process_runs WHERE status = 'running' AND scope_state = 'bound' AND paused_at IS NULL)`).Scan(&due)
+	err = d.QueryRow(`SELECT MIN(due_at) FROM process_wait_timers WHERE run_id IN (` + processWaitTakerSQL + `)`).Scan(&due)
 	if errors.Is(err, sql.ErrNoRows) {
 		return time.Time{}, false, nil
 	}

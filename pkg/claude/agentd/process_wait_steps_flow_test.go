@@ -204,7 +204,7 @@ func TestProcessWait_ADeadlineThatIsNotATimeFailsTheRun(t *testing.T) {
 	require.Equal(t, engine.RunFailed, view.Status)
 	require.NotNil(t, view.Failure)
 	assert.Equal(t, "hold", view.Failure.NodeID)
-	assert.True(t, strings.Contains(view.Failure.Reason, "wait 'hold'") && strings.Contains(view.Failure.Reason, "not a time"),
+	assert.True(t, strings.Contains(view.Failure.Reason, "wait 'hold'") && strings.Contains(view.Failure.Reason, `no step has reported output "when"`),
 		view.Failure.Reason)
 }
 
@@ -223,4 +223,53 @@ func TestProcessWait_CancelWithdrawsTheWait(t *testing.T) {
 	evidence := waitEvidence(t, f, "run_wait_cancel")
 	require.Len(t, evidence, 1)
 	assert.Equal(t, "withdrawn", evidence[0]["how"])
+}
+
+// Scenario: an agent step reports a time as an output, and the wait after it
+// waits until that time.
+func TestProcessWait_UntilATimeAnEarlierStepReported(t *testing.T) {
+	f, root := processRuntimeFlow(t)
+	clock := &waitClock{now: time.Date(2026, 11, 19, 10, 0, 0, 0, time.UTC)}
+	t.Cleanup(agentd.SetProcessWaitNowForTest(clock.Now))
+	g := f.HaveGroup("crew")
+	const conv = "plan-1111-2222-3333-4444"
+	havePerformerAgent(t, f, "crew", conv, "alice", "dev", "idle")
+	tmpl := performerTemplate("wait-output", devPerformer(), nil)
+	work := tmpl.Nodes[performerNode]
+	work.Captures = []string{"when"}
+	work.Next = model.Next{"next": "hold"}
+	tmpl.Nodes[performerNode] = work
+	tmpl.Nodes["hold"] = model.Node{Type: model.NodeTypeWait, Wait: &model.WaitConfig{Until: "{{ outputs.when }}"},
+		Next: model.Next{"next": "end"}}
+	startPerformerRun(t, f, root, "run_wait_output", tmpl, agentd.ProcessRunScopeForTest{Kind: "group", GroupID: g.ID})
+	when := clock.Now().Add(45 * time.Minute)
+	rec := reportAs(t, f, conv, map[string]any{"runId": "run_wait_output", "nodeId": performerNode, "attempt": 1,
+		"outcome": "succeeded", "outputs": map[string]any{"when": " " + when.Format(time.RFC3339) + "\n"}})
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	agentd.SweepProcessWaitsForTest()
+	view := showWaitRun(t, f, "run_wait_output")
+	require.Equal(t, engine.RunRunning, view.Status, "%+v", view.Failure)
+	require.Len(t, view.Commands, 1)
+	require.NotNil(t, view.Commands[0].Wait.DueAt)
+	assert.True(t, view.Commands[0].Wait.DueAt.Equal(when), "due %v", view.Commands[0].Wait.DueAt)
+	clock.Advance(45 * time.Minute)
+	agentd.SweepProcessWaitsForTest()
+	assert.Equal(t, engine.RunCompleted, showWaitRun(t, f, "run_wait_output").Status)
+}
+
+// Scenario: a run was given up but its owner never withdrew the wait (the
+// daemon stopped in between). The sweep withdraws it, so the run finishes
+// canceled instead of waiting out its 30 days.
+func TestProcessWait_AGivenUpRunsWaitIsWithdrawnBySweep(t *testing.T) {
+	f, clock := waitFlow(t, "run_wait_doomed", model.WaitConfig{Duration: "30 days"}, nil)
+	agentd.MarkProcessRunCanceledForTest(t, "run_wait_doomed")
+	agentd.SweepProcessWaitsForTest()
+	view := showWaitRun(t, f, "run_wait_doomed")
+	assert.Equal(t, engine.RunCanceled, view.Status)
+	evidence := waitEvidence(t, f, "run_wait_doomed")
+	require.Len(t, evidence, 1)
+	assert.Equal(t, "withdrawn", evidence[0]["how"])
+	clock.Advance(31 * 24 * time.Hour)
+	agentd.SweepProcessWaitsForTest()
+	assert.Len(t, waitEvidence(t, f, "run_wait_doomed"), 1, "nothing more happens at its old deadline")
 }

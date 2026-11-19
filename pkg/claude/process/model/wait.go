@@ -75,8 +75,9 @@ func InterpolateWait(wait WaitConfig, params map[string]string) WaitConfig {
 }
 
 // WaitDeadline is when a wait that started at start ends: start+duration,
-// until, or the earlier of the two. Both fields are already bound. A deadline
-// in the past is allowed; the wait then ends straight away.
+// until, or the earlier of the two. Both fields are already bound. An until in
+// the past ends the wait straight away (the deadline is start); one more than
+// maxWaitDuration away is refused.
 func WaitDeadline(duration, until string, start time.Time) (time.Time, error) {
 	duration, until = strings.TrimSpace(duration), strings.TrimSpace(until)
 	if duration == "" && until == "" {
@@ -95,9 +96,15 @@ func WaitDeadline(duration, until string, start time.Time) (time.Time, error) {
 		if err != nil {
 			return time.Time{}, fmt.Errorf("until: %q is not a time such as 2026-07-14T10:00:00Z", until)
 		}
+		if at.After(start.Add(maxWaitDuration)) {
+			return time.Time{}, fmt.Errorf("until: %q is more than 10 years away", until)
+		}
 		if deadline.IsZero() || at.Before(deadline) {
 			deadline = at
 		}
+	}
+	if deadline.Before(start) {
+		deadline = start
 	}
 	return deadline, nil
 }

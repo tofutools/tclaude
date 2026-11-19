@@ -1382,13 +1382,24 @@ func processCommandCaptures(row db.ProcessAgentDispatch) []string {
 	return nil
 }
 
-// processCaptureValue is the latest value a run's performers reported for a
-// step output, and whether one was.
+// processCaptureValues is the latest value a run's performers reported for a
+// step output, marked as reported content for a prompt, or a note that none
+// was reported yet.
 func processCaptureValues(runID, nodeID string) func(name string) (string, bool) {
-	return processCaptureValuesFor(runID, nodeID, true)
+	return processCaptureValuesFor(runID, nodeID, true, false)
 }
 
-func processCaptureValuesFor(runID, nodeID string, marked bool) func(name string) (string, bool) {
+// processCaptureRawValues is the latest value a run's performers reported for
+// a step output as reported, and whether one was: what a wait step reads its
+// time from.
+func processCaptureRawValues(runID, nodeID string) func(name string) (string, bool) {
+	return processCaptureValuesFor(runID, nodeID, false, true)
+}
+
+// processCaptureValuesFor reads outputs: marked for an agent's prompt, plain
+// for a person, and raw (plain, with no note for one not reported) for a
+// wait's time.
+func processCaptureValuesFor(runID, nodeID string, marked, raw bool) func(name string) (string, bool) {
 	rows, err := db.ListProcessAgentDispatchesForRun(runID)
 	if err != nil {
 		rows = nil
@@ -1419,6 +1430,9 @@ func processCaptureValuesFor(runID, nodeID string, marked bool) func(name string
 			}
 		}
 		if latest == nil {
+			if raw {
+				return "", false
+			}
 			return fmt.Sprintf("[output %s: none reported yet]", name), true
 		}
 		if !marked {
@@ -1434,7 +1448,7 @@ func processCaptureValuesFor(runID, nodeID string, marked bool) func(name string
 // processPlainCaptureValues is processCaptureValues for a person to read:
 // the value itself, without the markers that tell an agent it is data.
 func processPlainCaptureValues(runID, nodeID string) func(name string) (string, bool) {
-	return processCaptureValuesFor(runID, nodeID, false)
+	return processCaptureValuesFor(runID, nodeID, false, false)
 }
 
 // processHumanReportRows are the latest successful report of each step a

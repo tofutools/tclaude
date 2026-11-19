@@ -5,6 +5,9 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"slices"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -28,6 +31,9 @@ const processWaitActor = "system:process-runtime"
 // processWaitMaxSleep bounds how long the wake loop sleeps without looking,
 // so a deadline it was not told about is still met within this.
 const processWaitMaxSleep = time.Minute
+
+// processWaitMinSleep is the shortest the wake loop sleeps between sweeps.
+const processWaitMinSleep = time.Second
 
 var (
 	// processWaitNow is the clock waits are timed by; tests swap it.
@@ -63,7 +69,9 @@ func runProcessWaitLoop(stop <-chan struct{}) {
 		sleep := processWaitMaxSleep
 		if !next.IsZero() {
 			if until := next.Sub(processWaitNow()); until < sleep {
-				sleep = max(until, 0)
+				// A wait that is due but could not be ended (its run refused
+				// it) stays due: the floor keeps that from spinning.
+				sleep = max(until, processWaitMinSleep)
 			}
 		}
 		if !timer.Stop() {
@@ -90,6 +98,17 @@ func sweepProcessWaits() time.Time {
 	}
 	for _, wait := range untimed {
 		startProcessWaitTimer(wait)
+	}
+	// A run given up withdraws its waits through its owner as it is given up.
+	// One the owner did not get to (the daemon stopped in between, say) is
+	// withdrawn here, so the run drains instead of waiting out the deadline.
+	draining, err := db.ListDrainingProcessWaitTimers()
+	if err != nil {
+		slog.Warn("process waits: listing given-up runs' waits failed", "error", err)
+	}
+	for _, timer := range draining {
+		_ = finishProcessWait(timer, processWaitActor, executor.WaitWithdrawn,
+			"withdrawn: the run was given up while this step waited")
 	}
 	due, err := db.ListDueProcessWaitTimers(processWaitNow())
 	if err != nil {
@@ -119,10 +138,16 @@ func startProcessWaitTimer(wait db.ProcessUntimedWait) {
 		RunID: wait.RunID, CommandID: wait.CommandID, NodeID: wait.NodeID, Attempt: wait.Attempt,
 		StartedAt: now, DueAt: now,
 	}
-	values := processCaptureValues(wait.RunID, wait.NodeID)
+	raw := processCaptureRawValues(wait.RunID, wait.NodeID)
+	values := func(name string) (string, bool) {
+		value, ok := raw(name)
+		return strings.TrimSpace(value), ok
+	}
 	duration := model.InterpolateCaptures(wait.Duration, values)
 	until := model.InterpolateCaptures(wait.Until, values)
-	if due, err := model.WaitDeadline(duration, until, now); err != nil {
+	if missing := slices.Concat(model.CaptureReferences(duration), model.CaptureReferences(until)); len(missing) > 0 {
+		timer.Failure = "wait '" + wait.NodeID + "': no step has reported output " + strconv.Quote(missing[0]) + " to wait on"
+	} else if due, err := model.WaitDeadline(duration, until, now); err != nil {
 		timer.Failure = "wait '" + wait.NodeID + "': " + err.Error()
 	} else {
 		timer.DueAt = due.UTC()
