@@ -19856,6 +19856,9 @@ body.wizard .md-ed .tok-heading { color: var(--ui-wizard-gold, #d9b45a); }
 .gm-wait-row { display: flex; flex-wrap: wrap; gap: 8px; padding-left: 78px; }
 .gm-wait-field { display: flex; flex-direction: column; gap: 2px; font-size: 12px; color: #8b949e; min-width: 0; flex: 1 1 90px; }
 .gm-wait-field input, .gm-wait-field select { min-width: 0; width: 100%; }
+.gm-wait-field input { font: inherit; font-size: 12px; border: 1px solid #30363d; border-radius: 6px; padding: 3px 7px; background: #0d1117; color: #e6edf3; }
+.gm-wait-field input[aria-invalid="true"] { border-color: #f85149; }
+body.wizard .gm-wait-field input { background: #1a1430; border-color: rgba(122, 93, 176, 0.5); color: #e7d9f5; }
 .gm-wait-feedback { color: #7ee787; }
 .gm-wait-feedback.is-error, .gm-wait-problem { color: #ff7b72; }
 .gm-wait-problem { margin: 0; font-size: 12px; }

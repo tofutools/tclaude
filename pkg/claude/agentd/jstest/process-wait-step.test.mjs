@@ -131,3 +131,20 @@ test('the inline editor adds a wait and keeps its routes right as its limit chan
   view = setMiniWaitMode(view, id, 'time').view;
   assert.deepEqual(view.edges.filter((edge) => edge.from === id).map((edge) => `${edge.outcome}->${edge.to}`), ['next->done']);
 });
+
+test('inside a loop, a wait\'s timed-out route stays in the loop', async () => {
+  const { setMiniWaitMode, setWaitLimit } = await import('../dashboard/js/process-mini-edit.js');
+  let view = {
+    template: { start: 'start', nodes: {
+      start: { type: 'start' }, build: { type: 'task', name: 'Build', performer: { kind: 'agent', prompt: 'x' } },
+      hold: { type: 'wait', name: 'Wait', wait: { duration: '1h' } },
+      review: { type: 'decision', name: 'Review', performer: { kind: 'agent', prompt: 'ok?' }, loops: { changes: { maxIterations: 3 } } },
+      done: { type: 'end', result: 'success' }, failed: { type: 'end', result: 'failure' } } },
+    edges: [{ from: 'start', outcome: 'next', to: 'build' }, { from: 'build', outcome: 'next', to: 'hold' }, { from: 'hold', outcome: 'next', to: 'review' },
+      { from: 'review', outcome: 'approve', to: 'done' }, { from: 'review', outcome: 'changes', to: 'build' }],
+    layout: {},
+  };
+  view = setMiniWaitMode(view, 'hold', 'check').view;
+  view = setWaitLimit(view, 'hold', 'timedOut').view;
+  assert.deepEqual(view.edges.filter((edge) => edge.from === 'hold').map((edge) => `${edge.outcome}->${edge.to}`).sort(), ['met->review', 'timedOut->review']);
+});

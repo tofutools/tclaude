@@ -1572,8 +1572,10 @@ function syncWaitRoutes(view, id) {
   if (waitCheckTimesOut(node)) {
     main.outcome = WAIT_MET;
     if (!outgoing(view, id).some((edge) => edge.outcome === WAIT_TIMED_OUT)) {
-      // Giving up goes to a failed end if the process has one.
-      const failed = Object.keys(view.template.nodes).find((nodeID) => isFailedEnd(view.template.nodes[nodeID]));
+      // Giving up goes to a failed end if the process has one it may reach
+      // (inside a loop only a decision leads out), else where it goes on.
+      const allowed = new Set(targetsFor(view, id, WAIT_TIMED_OUT).map((target) => target.id));
+      const failed = Object.keys(view.template.nodes).find((nodeID) => isFailedEnd(view.template.nodes[nodeID]) && allowed.has(nodeID));
       view.edges.push({ from: id, outcome: WAIT_TIMED_OUT, to: failed || main.to });
     }
     view.edges = view.edges.filter((edge) => edge.from !== id || edge === main || edge.outcome === WAIT_TIMED_OUT);

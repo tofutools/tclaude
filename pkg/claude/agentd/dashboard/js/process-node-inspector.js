@@ -250,6 +250,16 @@ const CHECK_PERFORMER_FIELDS = { program: ['profile', 'run', 'args'], agent: ['p
 function WaitBlock({ node, nodeId, controller, commit, readOnly, edges }) {
   const mode = waitMode(node);
   const [more, setMore] = useState(() => checkMoreSet(node.wait?.check));
+  // A wait that no longer times out goes on one way: its timedOut route
+  // goes, and met becomes next.
+  const oneWayOn = () => {
+    const outcomes = (edges || []).map((edge) => edge.outcome);
+    if (!outcomes.includes(WAIT_TIMED_OUT)) return;
+    controller.mutate?.(() => {
+      controller.model.deleteEdge(nodeId, WAIT_TIMED_OUT);
+      if (outcomes.includes(WAIT_MET) && !outcomes.includes('next')) controller.model.setEdgeOutcome(nodeId, WAIT_MET, 'next');
+    });
+  };
   const check = node.wait?.check;
   // A bad value is refused with its reason, and the field snaps back.
   const field = (fieldKey, raw) => {
@@ -260,7 +270,10 @@ function WaitBlock({ node, nodeId, controller, commit, readOnly, edges }) {
     ${[['time', 'For a time'], ['check', 'Until a condition']].map(([key, text]) => html`<${Button} size="sm" key=${key}
       class=${`pni-wait-mode-option${mode === key ? ' is-selected' : ''}`} role="radio" aria-checked=${mode === key ? 'true' : 'false'}
       data-wait-mode=${key} disabled=${readOnly}
-      onClick=${() => { if (mode !== key) commit('wait.mode', (draft) => setWaitMode(draft, key)); }}>${text}<//>`)}
+      onClick=${() => {
+        if (mode === key) return;
+        if (commit('wait.mode', (draft) => setWaitMode(draft, key)).accepted && key === 'time') oneWayOn();
+      }}>${text}<//>`)}
   </div>`;
   if (mode === 'time') {
     return html`${toggle}<div class="pni-row">
@@ -304,6 +317,7 @@ function WaitBlock({ node, nodeId, controller, commit, readOnly, edges }) {
           if (result.accepted && raw === WAIT_TIMED_OUT && only && only.outcome !== WAIT_MET) {
             controller.renameEdgeOutcome?.(nodeId, only.outcome, WAIT_MET);
           }
+          if (result.accepted && raw !== WAIT_TIMED_OUT) oneWayOn();
           return result;
         }} />
     </div>
