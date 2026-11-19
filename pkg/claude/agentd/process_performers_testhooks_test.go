@@ -1,6 +1,10 @@
 package agentd
 
-import "github.com/tofutools/tclaude/pkg/claude/process/executor"
+import (
+	"time"
+
+	"github.com/tofutools/tclaude/pkg/claude/process/executor"
+)
 
 // ProcessRunScopeForTest is the run scope a flow test binds a run to without
 // going through scoped run creation, so a test can pick an owner or an
@@ -61,4 +65,19 @@ func SetProcessSpawnedSettledForTest(t interface{ Cleanup(func()) }, settled fun
 	previous := processSpawnedSettledFn
 	processSpawnedSettledFn = settled
 	t.Cleanup(func() { processSpawnedSettledFn = previous })
+}
+
+// SetProcessWaitNowForTest swaps the clock wait steps are timed by.
+func SetProcessWaitNowForTest(now func() time.Time) func() {
+	previous := processWaitNow
+	processWaitNow = now
+	return func() { processWaitNow = previous }
+}
+
+// SweepProcessWaitsForTest runs the wait sweep once (fix new deadlines, end
+// due waits), then waits for what ending them set going.
+func SweepProcessWaitsForTest() {
+	WaitForProcessDispatchForTest()
+	sweepProcessWaits()
+	WaitForProcessDispatchForTest()
 }

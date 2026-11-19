@@ -437,15 +437,15 @@ func TestDirectEntryDoesNotRelaxUnsupportedShapes(t *testing.T) {
 			},
 		},
 		{
-			name: "wait as the entry",
+			name: "signal wait as the entry",
 			code: "unsupported_wait",
-			path: "nodes.hold.type",
+			path: "nodes.hold.wait.signal",
 			tmpl: func() *model.Template {
 				return &model.Template{
 					APIVersion: model.APIVersion, Kind: model.Kind, ID: "direct-wait-entry", Start: "hold",
 					Nodes: map[string]model.Node{
 						"hold": {
-							Type: model.NodeTypeWait, Wait: &model.WaitConfig{Duration: "1s"},
+							Type: model.NodeTypeWait, Wait: &model.WaitConfig{Signal: "go"},
 							Next: model.Next{model.DefaultOutcome: "end"},
 						},
 						"end": {Type: model.NodeTypeEnd},

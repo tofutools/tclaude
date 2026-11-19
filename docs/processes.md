@@ -1027,6 +1027,34 @@ node, and that row bounds node ids at 256 bytes. Run creation refuses a
 template whose node ids — authored, derived from compound stages, or
 namespaced into a subprocess body — exceed it; editing and storing such a template still works.
 
+### Wait steps
+
+A wait step (`type: wait`) holds its branch until its time comes, then goes
+on along its one route:
+
+```yaml
+cool_off:
+  type: wait
+  wait:
+    duration: 3 days                  # 90m, 2h, 1d12h, "1 hour 30 minutes", "2 weeks"
+    until: "{{ params.launch_at }}"   # an RFC3339 time; or {{ outputs.x }} from an earlier step
+  next: ship
+```
+
+- `duration` counts from when the step starts; `until` is a time. With both,
+  the wait ends at whichever comes first ("until X, but at most Y").
+- `{{ params.x }}` is bound when the run starts, `{{ outputs.x }}` when the
+  step starts. An `until` already past ends the wait straight away.
+- The deadline is fixed when the step starts and kept by the daemon, so a
+  restart does not move it.
+- The clock keeps running while the run is paused: a wait whose time came
+  meanwhile ends when the run is resumed.
+- `tclaude process show` says how long a waiting step has left. Someone with
+  `process.runs.manage` can end it now with `tclaude process skip-wait <run>
+  --node <step>`, and the run goes on. Canceling the run withdraws the wait.
+- A wait whose time cannot be worked out (an output that is not a time, say)
+  fails the step, and the run fails naming the step and why.
+
 ## What does not execute yet
 
 These CLI verbs are stubs that return a "process runtime is temporarily
@@ -1039,8 +1067,8 @@ person's step assigned to anyone but the operator, or with a `timeout` or
 compound stages; agent performer `timeout`; retry backoff waits; same-session retry feedback
 for program tasks (`retry.onFail: feedback-same-session` is executable only
 for agent tasks); retries on compound stages; `plan.approvalRetry`; human
-stage performers; poison handling; wait nodes; outputs (`captures`) on
-anything but a plain agent task or a person's step.
+stage performers; poison handling; waiting for a signal (`wait.signal`);
+outputs (`captures`) on anything but a plain agent task or a person's step.
 
 ## Agent performers
 

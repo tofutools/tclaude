@@ -176,7 +176,14 @@ warns when placed in inert fields such as profile, timeout, or backoff.
   deciders vote at once, so a gate is how several reviewers review in
   parallel and must all approve; on a dissent that goes back, the re-run
   work is told every decider's vote and note.
-- `wait`: require `wait.duration`, `wait.until`, or `wait.signal`, plus `next`.
+- `wait`: require `wait.duration` and/or `wait.until`, plus exactly one `next`.
+  `duration` counts from when the step starts (`90m`, `2h`, `3d`, `"3 days"`,
+  `"1 hour 30 minutes"`); `until` is an RFC3339 time. With both, the wait
+  ends at whichever comes first. Both may use `{{ params.x }}` (bound at run
+  start) and `{{ outputs.x }}` (bound when the step starts). A time that
+  cannot be worked out fails the step and the run. The deadline survives
+  restarts, and the clock keeps running while a run is paused. `wait.signal`
+  does not execute yet.
 - `parallel`: fan out to concurrent branches, one `next` outcome per branch,
   which all meet at one node carrying `join: all` (wait for every branch) or
   `join: any` (the first wins):
@@ -425,8 +432,9 @@ attached file in full before modelling. Then:
    what happens on a rejection, how many rounds before escalating — rather
    than guessing. Keep building the parts that are clear while you wait.
 3. When done, list in chat what you could not model, each with the engine
-   gap that blocks it, for example: a deadline, a meeting day or "within 4
-   hours" (no timers; wait nodes and agent `timeout` do not execute), "notify the on-call" (no notification step; use an agent
+   gap that blocks it, for example: "within 4 hours" as a limit on someone's
+   work (agent `timeout` does not execute; a wait step can only hold the
+   run until a time), waiting for an external signal (`wait.signal`), "notify the on-call" (no notification step; use an agent
    or program task). Leave such parts as an agent or
    decision step named after what it stands for, rather than dropping them
    silently.
