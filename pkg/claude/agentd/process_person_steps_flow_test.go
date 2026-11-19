@@ -222,3 +222,36 @@ func TestProcessPersonStep_OtherAssigneeIsRefused(t *testing.T) {
 	assert.Equal(t, http.StatusUnprocessableEntity, created.Code, created.Body.String())
 	assert.Contains(t, created.Body.String(), "only the operator performs a person's step today")
 }
+
+// Scenario: a program step finishes straight into a person's step. The step
+// opens and waits on the person; it is never run as a program.
+func TestProcessPersonStep_AfterProgramWaitsOnThePerson(t *testing.T) {
+	f, root := processRuntimeFlow(t)
+	person := model.Performer{Kind: model.PerformerHuman, Ask: "Check the build."}
+	putProcessRuntimeTemplate(t, root, &model.Template{
+		APIVersion: model.APIVersion, Kind: model.Kind, ID: "person-after-program", Start: "start",
+		Nodes: map[string]model.Node{
+			"start": {Type: model.NodeTypeStart, Next: model.Next{"next": "build"}},
+			"build": {Type: model.NodeTypeTask, Performer: &model.Performer{Kind: model.PerformerProgram, Run: "true"},
+				Next: model.Next{"next": "check"}},
+			"check": {Type: model.NodeTypeTask, Performer: &person, Next: model.Next{"next": "end"}},
+			"end":   {Type: model.NodeTypeEnd, Result: "success"},
+		},
+	})
+	created := processRuntimeRequest(t, f, http.MethodPost, "/v1/process/runs", map[string]any{
+		"id": "run_person_after_program", "templateId": "person-after-program", "authorizeProgramProfiles": []string{""},
+	})
+	require.Equal(t, http.StatusCreated, created.Code, created.Body.String())
+	agentd.WaitForProcessRunRuntimeForTest()
+
+	view := showPersonStepRun(t, f, "run_person_after_program")
+	assert.Equal(t, engine.RunRunning, view.Status)
+	require.Len(t, view.AwaitingDecisions, 1, "%+v", view)
+	assert.Equal(t, "check", view.AwaitingDecisions[0].NodeID)
+	assert.Equal(t, 1, view.AwaitingDecisions[0].Attempt, "the step was not attempted as a program")
+
+	assert.Equal(t, http.StatusAccepted, decidePersonStep(t, f, "run_person_after_program",
+		map[string]any{"nodeId": "check", "verdict": "done"}))
+	agentd.WaitForProcessRunRuntimeForTest()
+	assert.Equal(t, engine.RunCompleted, showPersonStepRun(t, f, "run_person_after_program").Status)
+}

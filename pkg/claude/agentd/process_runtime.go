@@ -802,9 +802,16 @@ func startProcessAgentDispatches(runID string, run *executor.Run, pending []*exe
 	programs := pending[:0:0]
 	agents := false
 	for _, dispatch := range pending {
-		if dispatch.Command().Kind == engine.CommandAgent {
+		switch dispatch.Command().Kind {
+		case engine.CommandAgent:
 			executor.Abandon(run, dispatch)
 			agents = true
+			continue
+		case engine.CommandHuman:
+			// Never a worker's: a person's step waits on the person. The
+			// executor grants none; this keeps one from ever running as a
+			// program.
+			executor.Abandon(run, dispatch)
 			continue
 		}
 		programs = append(programs, dispatch)

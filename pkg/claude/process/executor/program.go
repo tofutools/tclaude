@@ -232,6 +232,11 @@ func Observe(run *Run, dispatch *Dispatch, result Result) (*Dispatch, error) {
 		Abandon(run, dispatch)
 		return nil, fmt.Errorf("program observation is not durable; reconciliation required: %w", err)
 	}
+	if planned != nil && planned.Kind == engine.CommandHuman {
+		// A person's step is open once committed and needs no worker, so the
+		// follow-on is whatever planning finds past it.
+		return Prepare(run)
+	}
 	if planned != nil {
 		return run.grant(*planned, plannedBounds), nil
 	}
