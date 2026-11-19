@@ -1784,6 +1784,11 @@ func missingProcessProgramAuthorizations(tmpl *model.Template, authorized []stri
 	// WalkNodes descends into subprocess bodies: their programs run as part of
 	// this run, so they need the same authorization up front.
 	model.WalkNodes(tmpl, func(_ string, node model.Node) {
+		// A wait's check may be a program, run once per check.
+		if node.Type == model.NodeTypeWait && node.Wait != nil && node.Wait.Check != nil {
+			require(node.Wait.Check.Performer)
+			return
+		}
 		if node.Type != model.NodeTypeTask {
 			return
 		}
@@ -1870,7 +1875,7 @@ func processRunViewWith(record *db.ProcessRun, accounted map[string]struct{}, cl
 				waitTimers = processWaitTimersOf(record.ID)
 			}
 			view.State, waiting = processCommandWaiting, true
-			view.Wait = processRunWaitViewOf(command, waitTimers)
+			view.Wait = processRunWaitViewOf(command, waitTimers, checkpoint.WaitChecks)
 			commands = append(commands, view)
 			continue
 		}

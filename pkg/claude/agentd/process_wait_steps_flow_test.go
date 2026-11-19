@@ -53,6 +53,10 @@ type waitRunView struct {
 			Until     string     `json:"until"`
 			StartedAt *time.Time `json:"startedAt"`
 			DueAt     *time.Time `json:"dueAt"`
+			Check     *struct {
+				Checks int    `json:"checks"`
+				Last   string `json:"last"`
+			} `json:"check"`
 		} `json:"wait"`
 	} `json:"commands"`
 }
@@ -272,4 +276,113 @@ func TestProcessWait_AGivenUpRunsWaitIsWithdrawnBySweep(t *testing.T) {
 	clock.Advance(31 * 24 * time.Hour)
 	agentd.SweepProcessWaitsForTest()
 	assert.Len(t, waitEvidence(t, f, "run_wait_doomed"), 1, "nothing more happens at its old deadline")
+}
+
+// checkWaitFlow starts a run of start → hold (a wait for check) → done, or
+// with onLimit timedOut, hold → done (met) / late (timedOut).
+func checkWaitFlow(t *testing.T, runID string, check model.WaitCheck, params map[string]string) (*testharness.Flow, *waitClock) {
+	t.Helper()
+	f, root := processRuntimeFlow(t)
+	clock := &waitClock{now: time.Date(2026, 11, 19, 10, 0, 0, 0, time.UTC)}
+	t.Cleanup(agentd.SetProcessWaitNowForTest(clock.Now))
+	hold := model.Node{Type: model.NodeTypeWait, Wait: &model.WaitConfig{Check: &check}, Next: model.Next{"next": "done"}}
+	if check.TimesOut() {
+		hold.Next = model.Next{model.WaitOutcomeMet: "done", model.WaitOutcomeTimedOut: "late"}
+	}
+	tmpl := &model.Template{
+		APIVersion: model.APIVersion, Kind: model.Kind, ID: runID + "-tmpl", Start: "start",
+		Params: map[string]model.Param{"ok": {Type: "boolean"}},
+		Nodes: map[string]model.Node{
+			"start": {Type: model.NodeTypeStart, Next: model.Next{"next": "hold"}},
+			"hold":  hold,
+			"done":  {Type: model.NodeTypeEnd, Result: "success"},
+			"late":  {Type: model.NodeTypeEnd, Result: "failure"},
+		},
+	}
+	if !check.TimesOut() {
+		delete(tmpl.Nodes, "late")
+	}
+	putProcessRuntimeTemplate(t, root, tmpl)
+	created := processRuntimeRequest(t, f, http.MethodPost, "/v1/process/runs", map[string]any{
+		"id": runID, "templateId": tmpl.ID, "params": params, "authorizeProgramProfiles": []string{},
+	})
+	require.Equal(t, http.StatusCreated, created.Code, created.Body.String())
+	return f, clock
+}
+
+// Scenario: a wait until a condition that already holds goes on at its first
+// check, made straight away.
+func TestProcessCheckWait_AConditionThatHoldsEndsAtTheFirstCheck(t *testing.T) {
+	f, _ := checkWaitFlow(t, "run_check_now", model.WaitCheck{When: "params.ok == true", Every: "10m", MaxChecks: 3},
+		map[string]string{"ok": "true"})
+	agentd.SweepProcessWaitsForTest()
+	assert.Equal(t, engine.RunCompleted, showWaitRun(t, f, "run_check_now").Status)
+}
+
+// Scenario: a condition that never holds is checked every 10 minutes; after
+// maxChecks the wait takes its timedOut route. Between checks the run view
+// says how many checks it has made and when the next is due.
+func TestProcessCheckWait_TimesOutAfterItsChecks(t *testing.T) {
+	f, clock := checkWaitFlow(t, "run_check_out", model.WaitCheck{When: "params.ok == true", Every: "10m", MaxChecks: 2,
+		OnLimit: model.WaitOnLimitTimedOut}, map[string]string{"ok": "false"})
+	agentd.SweepProcessWaitsForTest()
+	view := showWaitRun(t, f, "run_check_out")
+	require.Equal(t, engine.RunRunning, view.Status)
+	require.Len(t, view.Commands, 1)
+	require.NotNil(t, view.Commands[0].Wait)
+	require.NotNil(t, view.Commands[0].Wait.DueAt)
+	assert.True(t, view.Commands[0].Wait.DueAt.Equal(clock.Now().Add(10*time.Minute)), "next check %v", view.Commands[0].Wait.DueAt)
+	require.NotNil(t, view.Commands[0].Wait.Check)
+	assert.Equal(t, 1, view.Commands[0].Wait.Check.Checks)
+	assert.Equal(t, "no", view.Commands[0].Wait.Check.Last)
+	clock.Advance(10 * time.Minute)
+	agentd.SweepProcessWaitsForTest()
+	view = showWaitRun(t, f, "run_check_out")
+	assert.Equal(t, engine.RunFailed, view.Status, "it took its timedOut route, to the failure end")
+	assert.Nil(t, view.Failure, "the wait itself did not fail: the route it took ends the run")
+}
+
+// Scenario: an agent is asked "is it ready?" and answers no, then, at the
+// next check, yes: the run goes on.
+func TestProcessCheckWait_AnAgentAnswersNoThenYes(t *testing.T) {
+	const conv = "chek-1111-2222-3333-4444"
+	f, root := processRuntimeFlow(t)
+	clock := &waitClock{now: time.Date(2026, 11, 19, 10, 0, 0, 0, time.UTC)}
+	t.Cleanup(agentd.SetProcessWaitNowForTest(clock.Now))
+	g := f.HaveGroup("crew")
+	havePerformerAgent(t, f, "crew", conv, "alice", "dev", "idle")
+	tmpl := &model.Template{
+		APIVersion: model.APIVersion, Kind: model.Kind, ID: "check-agent", Start: "start",
+		Nodes: map[string]model.Node{
+			"start": {Type: model.NodeTypeStart, Next: model.Next{"next": "hold"}},
+			"hold": {Type: model.NodeTypeWait, Next: model.Next{"next": "done"}, Wait: &model.WaitConfig{Check: &model.WaitCheck{
+				Performer: &model.Performer{Kind: model.PerformerAgent, Prompt: "Is the release ready?", Role: "dev"},
+				Every:     "5m", MaxChecks: 4,
+			}}},
+			"done": {Type: model.NodeTypeEnd, Result: "success"},
+		},
+	}
+	startPerformerRun(t, f, root, "run_check_agent", tmpl, agentd.ProcessRunScopeForTest{Kind: "group", GroupID: g.ID})
+	answer := func(verdict string) {
+		t.Helper()
+		agentd.SweepProcessWaitsForTest()
+		view := showPerformerRun(t, f, "run_check_agent")
+		require.Len(t, view.Commands, 1, "%+v", view)
+		require.Equal(t, engine.CommandAgent, view.Commands[0].Kind, "the check is out to the agent")
+		rec := reportAs(t, f, conv, map[string]any{"runId": "run_check_agent", "nodeId": "hold",
+			"attempt": view.Commands[0].Attempt, "outcome": "succeeded", "verdict": verdict})
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+		setConvStatus(t, conv, "idle")
+	}
+	answer("no")
+	// Planning the next timer kicks the sweep, which fixes its deadline.
+	agentd.SweepProcessWaitsForTest()
+	view := showWaitRun(t, f, "run_check_agent")
+	require.Equal(t, engine.RunRunning, view.Status)
+	require.Equal(t, engine.CommandWait, view.Commands[0].Kind, "after a no it waits for the next check")
+	require.NotNil(t, view.Commands[0].Wait.DueAt)
+	assert.True(t, view.Commands[0].Wait.DueAt.Equal(clock.Now().Add(5*time.Minute)), "next check %v", view.Commands[0].Wait.DueAt)
+	clock.Advance(5 * time.Minute)
+	answer("yes")
+	assert.Equal(t, engine.RunCompleted, showWaitRun(t, f, "run_check_agent").Status)
 }

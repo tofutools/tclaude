@@ -66,6 +66,9 @@ func spawnProfileDiagnostics(tmpl *model.Template) []processEditDiag {
 				stage(&node.Checks[i], fmt.Sprintf("its check %d", i+1))
 			}
 			stage(node.Review, "its review stage")
+			if node.Wait != nil && node.Wait.Check != nil && node.Wait.Check.Performer != nil {
+				check(node.Wait.Check.Performer.Fallback, "node", target, "its wait check")
+			}
 			if node.Subprocess != nil && node.Subprocess.IsInline() {
 				walk(node.Subprocess.Nodes, target+model.SubprocessNodeIDSeparator)
 			}

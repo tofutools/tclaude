@@ -259,6 +259,9 @@ func processRunCanSpawn(run *db.ProcessRun) bool {
 		if node.Review != nil {
 			check(&node.Review.Performer)
 		}
+		if node.Wait != nil && node.Wait.Check != nil {
+			check(node.Wait.Check.Performer)
+		}
 	})
 	return spawns
 }

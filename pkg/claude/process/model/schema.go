@@ -17,7 +17,8 @@ var (
 	fallbackFields   = stringSet("action", "profile", "lifetime")
 	contactFields    = stringSet("cadence", "budget", "escalationTarget")
 	retryFields      = stringSet("maxAttempts", "backoff", "onFail")
-	waitFields       = stringSet("duration", "until", "signal")
+	waitFields       = stringSet("duration", "until", "signal", "check")
+	waitCheckFields  = stringSet("when", "performer", "every", "backoff", "factor", "maxEvery", "timeout", "maxChecks", "maxFailedChecks", "within", "onLimit")
 	loopFields       = stringSet("maxIterations", "onExhausted")
 	layoutFields     = stringSet("direction", "nodes", "edges")
 	layoutNodeFields = stringSet("x", "y")
@@ -48,6 +49,7 @@ const (
 	schemaFallback
 	schemaRetry
 	schemaWait
+	schemaWaitCheck
 	schemaNext
 	schemaSubprocess
 	schemaLoopMap
@@ -325,6 +327,8 @@ func schemaAllowedFields(schema schemaID) map[string]struct{} {
 		return retryFields
 	case schemaWait:
 		return waitFields
+	case schemaWaitCheck:
+		return waitCheckFields
 	case schemaLoop:
 		return loopFields
 	case schemaRuleCase:
@@ -365,6 +369,14 @@ func schemaChild(schema schemaID, key string) (schemaID, bool) {
 			return schemaLoopMap, true
 		case "subprocess":
 			return schemaSubprocess, true
+		}
+	case schemaWait:
+		if key == "check" {
+			return schemaWaitCheck, true
+		}
+	case schemaWaitCheck:
+		if key == "performer" {
+			return schemaPerformer, true
 		}
 	case schemaSubprocess:
 		switch key {

@@ -98,6 +98,8 @@ func (k CommandKind) External() bool { return k != CommandProgram }
 type WaitCommand struct {
 	Duration string `json:"duration,omitempty"`
 	Until    string `json:"until,omitempty"`
+	// Now is a check wait's first timer, due at once (waitcheck.go).
+	Now bool `json:"now,omitempty"`
 }
 
 // Checkpoint is the complete v3 reducer state. The pinned template and run
@@ -185,6 +187,8 @@ type Checkpoint struct {
 	// evaluation (rules.go). Both are sparse.
 	Steps map[string]StepRecord `json:"steps,omitempty"`
 	Rules map[string]RuleChoice `json:"rules,omitempty"`
+	// WaitChecks is where each wait for a criterion is (waitcheck.go).
+	WaitChecks map[string]WaitCheckState `json:"waitChecks,omitempty"`
 }
 
 // FirstCommand returns the lowest-node-id entry of the command outbox, or nil.
@@ -420,6 +424,8 @@ type ProgramObservation struct {
 	// Outputs are the outputs an agent task reported, on a successful
 	// observation; the checkpoint keeps those a rule reads.
 	Outputs map[string]string `json:"outputs,omitempty"`
+	// Wait is the daemon's account of a check wait's timer that ended.
+	Wait *WaitObservation `json:"wait,omitempty"`
 }
 
 // DecisionRecord is the reducer payload for one decision verdict: for an

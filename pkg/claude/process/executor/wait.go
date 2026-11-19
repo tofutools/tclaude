@@ -70,6 +70,8 @@ func FinishWait(run *Run, actor string, finish WaitFinish) error {
 	switch finish.How {
 	case WaitElapsed, WaitSkipped:
 		observation.Outcome = engine.ProgramSucceeded
+		// A wait for a criterion reads when its timer started and was due.
+		observation.Wait = &engine.WaitObservation{How: finish.How, StartedAt: finish.StartedAt.UTC(), DueAt: finish.DueAt.UTC()}
 	case WaitFailed, WaitWithdrawn:
 		observation.Outcome, observation.ExitCode = engine.ProgramFailed, 1
 		observation.Error = truncateWaitReason(finish.Reason)

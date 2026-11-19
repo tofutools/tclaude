@@ -76,7 +76,9 @@ func RecordAgentReport(run *Run, actor string, report AgentReport) error {
 	// as a failed program gate does.
 	causal := append([]db.ProcessRunEvent{event("agent_reported", &command, actor, payload)},
 		causedStageReset(run.definition, command.NodeID, run.checkpoint, next)...)
-	if observation.Verdict != "" {
+	// A wait's check answers yes or no: the agent_reported row is its evidence,
+	// and no decision edge is chosen.
+	if observation.Verdict != "" && !run.definition.IsWaitCheck(command.NodeID) {
 		// The note is the decider's reasoning, and the next round's performer
 		// is handed it exactly as a person's evidence.
 		decided, err := verdictEvidence(run.definition, run.checkpoint, next, actor,

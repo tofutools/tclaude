@@ -266,6 +266,8 @@ func iterateLoop(next *Checkpoint, definition *Definition, li int) error {
 	for _, index := range loop.body {
 		node := definition.nodes[index]
 		next.Nodes[node.id] = NodePending
+		// A wait for a criterion starts its checks afresh each round.
+		delete(next.WaitChecks, node.id)
 		switch {
 		case node.awaitsHuman() && node.parent < 0:
 			// An authored decision's window counter: a verdict formed in an

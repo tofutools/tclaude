@@ -29,6 +29,8 @@ type ProcessUntimedWait struct {
 	Attempt   int
 	Duration  string
 	Until     string
+	// Now is a wait due at once: a check wait's first check.
+	Now bool
 }
 
 // MaxProcessWaitPage bounds one page of wait timers.
@@ -154,7 +156,8 @@ func ListProcessUntimedWaits() ([]ProcessUntimedWait, error) {
 	}
 	rows, err := d.Query(`SELECT r.id,
 			json_extract(c.value, '$.id'), json_extract(c.value, '$.nodeId'), json_extract(c.value, '$.attempt'),
-			COALESCE(json_extract(c.value, '$.wait.duration'), ''), COALESCE(json_extract(c.value, '$.wait.until'), '')
+			COALESCE(json_extract(c.value, '$.wait.duration'), ''), COALESCE(json_extract(c.value, '$.wait.until'), ''),
+			COALESCE(json_extract(c.value, '$.wait.now'), 0)
 		FROM process_runs AS r, json_each(r.checkpoint_json, '$.commands') AS c
 		WHERE r.status = 'running' AND json_valid(r.checkpoint_json) = 1
 			AND json_type(r.checkpoint_json, '$.commands') = 'array'
@@ -171,7 +174,7 @@ func ListProcessUntimedWaits() ([]ProcessUntimedWait, error) {
 		var wait ProcessUntimedWait
 		var commandID, nodeID sql.NullString
 		var attempt sql.NullInt64
-		if err := rows.Scan(&wait.RunID, &commandID, &nodeID, &attempt, &wait.Duration, &wait.Until); err != nil {
+		if err := rows.Scan(&wait.RunID, &commandID, &nodeID, &attempt, &wait.Duration, &wait.Until, &wait.Now); err != nil {
 			return nil, err
 		}
 		if !commandID.Valid || !nodeID.Valid || !attempt.Valid || attempt.Int64 < 1 {

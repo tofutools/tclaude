@@ -40,7 +40,11 @@ const RULE_CASE_FIELDS = new Set(['when', 'then']);
 const FALLBACK_FIELDS = new Set(['action', 'profile']);
 const CONTACT_FIELDS = new Set(['cadence', 'budget', 'escalationTarget']);
 const RETRY_FIELDS = new Set(['maxAttempts', 'backoff', 'onFail']);
-const WAIT_FIELDS = new Set(['duration', 'until', 'signal']);
+const WAIT_FIELDS = new Set(['duration', 'until', 'signal', 'check']);
+const WAIT_CHECK_FIELDS = new Set([
+  'when', 'performer', 'every', 'backoff', 'factor', 'maxEvery', 'timeout',
+  'maxChecks', 'maxFailedChecks', 'within', 'onLimit',
+]);
 const FAIL_OUTCOMES = ['fail', 'failed', 'failure', 'error'];
 
 export class ProcessClipboardError extends Error {
@@ -102,6 +106,16 @@ function validateRetry(value) {
   validateWireRecord(value, RETRY_FIELDS);
   if (Object.hasOwn(value, 'maxAttempts') && !Number.isSafeInteger(value.maxAttempts)) wireShapeReject();
   validateOptionalStrings(value, ['backoff', 'onFail']);
+}
+
+function validateWaitCheck(value) {
+  validateWireRecord(value, WAIT_CHECK_FIELDS);
+  validateOptionalStrings(value, ['when', 'every', 'backoff', 'maxEvery', 'timeout', 'within', 'onLimit']);
+  for (const field of ['maxChecks', 'maxFailedChecks']) {
+    if (Object.hasOwn(value, field) && !Number.isSafeInteger(value[field])) wireShapeReject();
+  }
+  if (Object.hasOwn(value, 'factor') && !Number.isFinite(value.factor)) wireShapeReject();
+  if (Object.hasOwn(value, 'performer')) validatePerformer(value.performer);
 }
 
 function validateContact(value) {
@@ -169,7 +183,8 @@ export function validateProcessEditNode(value) {
   if (Object.hasOwn(value, 'retry')) validateRetry(value.retry);
   if (Object.hasOwn(value, 'wait')) {
     validateWireRecord(value.wait, WAIT_FIELDS);
-    validateOptionalStrings(value.wait, WAIT_FIELDS);
+    validateOptionalStrings(value.wait, ['duration', 'until', 'signal']);
+    if (Object.hasOwn(value.wait, 'check')) validateWaitCheck(value.wait.check);
   }
   if (Object.hasOwn(value, 'next')) validateStringMap(value.next);
   if (Object.hasOwn(value, 'loops')) {

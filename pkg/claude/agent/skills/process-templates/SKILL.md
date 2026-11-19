@@ -184,6 +184,18 @@ warns when placed in inert fields such as profile, timeout, or backoff.
   cannot be worked out fails the step and the run. The deadline survives
   restarts, and the clock keeps running while a run is paused. `wait.signal`
   does not execute yet.
+- A `wait` can instead wait for a criterion with `wait.check` (no
+  `duration`/`until` beside it), checked again and again: exactly one of
+  `when` (a rule condition, e.g. `outputs.state == "ready"` or
+  `steps.build.result == succeeded`; re-checked at each interval and as soon
+  as the run changes) or `performer` (`kind: program`: exit 0 yes, 1 not yet,
+  else a failed check; `kind: agent`: verdict `yes`/`no`). Knobs: `every`
+  (required), `backoff: fixed|exponential` with `factor` (default 2) and
+  `maxEvery`, `timeout` (per program check), `maxChecks` and/or `within`
+  (at least one), `maxFailedChecks` (in a row, default 3), and `onLimit:
+  fail` (default: the step fails, naming it) or `timedOut` (then `next` has
+  exactly `met` and `timedOut`). The first check is made straight away;
+  `skip-wait` ends it as met (between checks, not while one is out).
 - `parallel`: fan out to concurrent branches, one `next` outcome per branch,
   which all meet at one node carrying `join: all` (wait for every branch) or
   `join: any` (the first wins):
@@ -446,8 +458,8 @@ attached file in full before modelling. Then:
    than guessing. Keep building the parts that are clear while you wait.
 3. When done, list in chat what you could not model, each with the engine
    gap that blocks it, for example: "within 4 hours" as a limit on someone's
-   work (agent `timeout` does not execute; a wait step can only hold the
-   run until a time), waiting for an external signal (`wait.signal`), "notify the on-call" (no notification step; use an agent
+   work (agent `timeout` does not execute; a wait step can hold the run
+   until a time or a criterion, not bound another step), waiting for an external signal (`wait.signal`), "notify the on-call" (no notification step; use an agent
    or program task). Leave such parts as an agent or
    decision step named after what it stands for, rather than dropping them
    silently.

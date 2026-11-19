@@ -64,3 +64,88 @@ func TestWaitDurationValidation(t *testing.T) {
 		t.Fatalf("an output is bound when the step starts: %#v", d)
 	}
 }
+
+func TestWaitCheckInterval(t *testing.T) {
+	fixed := WaitCheck{Every: "5m"}
+	exp := WaitCheck{Every: "1m", Backoff: WaitBackoffExponential, MaxEvery: "10m"}
+	triple := WaitCheck{Every: "1m", Backoff: WaitBackoffExponential, Factor: 3}
+	for _, c := range []struct {
+		check  WaitCheck
+		checks int
+		want   time.Duration
+	}{
+		{fixed, 1, 5 * time.Minute}, {fixed, 9, 5 * time.Minute},
+		{exp, 1, time.Minute}, {exp, 2, 2 * time.Minute}, {exp, 4, 8 * time.Minute}, {exp, 5, 10 * time.Minute}, {exp, 50, 10 * time.Minute},
+		{triple, 3, 9 * time.Minute},
+	} {
+		if got := c.check.Interval(c.checks); got != c.want {
+			t.Errorf("%+v Interval(%d) = %v, want %v", c.check, c.checks, got, c.want)
+		}
+	}
+	if (WaitCheck{}).MaxFailed() != DefaultMaxFailedChecks || (WaitCheck{MaxFailedChecks: 5}).MaxFailed() != 5 {
+		t.Fatal("maxFailedChecks defaults to 3")
+	}
+}
+
+// A wait for a criterion validates its shape, its knobs and its routes.
+func TestWaitCheckValidation(t *testing.T) {
+	program := &Performer{Kind: PerformerProgram, Profile: "safe", Run: "./ready.sh"}
+	valid := WaitCheck{Performer: program, Every: "5m", MaxChecks: 3}
+	tmpl := func(check WaitCheck, next Next) *Template {
+		return &Template{APIVersion: APIVersion, Kind: Kind, ID: "check", Start: "start",
+			Params: map[string]Param{"ok": {Type: "boolean"}},
+			Nodes: map[string]Node{
+				"start": {Type: NodeTypeStart, Next: Next{"next": "hold"}},
+				"hold":  {Type: NodeTypeWait, Wait: &WaitConfig{Check: &check}, Next: next},
+				"done":  {Type: NodeTypeEnd, Result: "success"},
+				"late":  {Type: NodeTypeEnd, Result: "failure"},
+			}}
+	}
+	one := Next{"next": "done"}
+	both := Next{WaitOutcomeMet: "done", WaitOutcomeTimedOut: "late"}
+	codes := func(check WaitCheck, next Next) []string {
+		var out []string
+		t0 := tmpl(check, next)
+		for _, d := range Validate(t0, NormalizeEdges(t0)) {
+			if d.Severity == SeverityError && d.Code != "unreachable_node" {
+				out = append(out, d.Code+"@"+d.Path)
+			}
+		}
+		return out
+	}
+	if got := codes(valid, one); len(got) != 0 {
+		t.Fatalf("valid check: %v", got)
+	}
+	timedOut := valid
+	timedOut.OnLimit = WaitOnLimitTimedOut
+	if got := codes(timedOut, both); len(got) != 0 {
+		t.Fatalf("timedOut with met and timedOut routes: %v", got)
+	}
+	when := WaitCheck{When: "params.ok == true", Every: "1m", Within: "1h"}
+	if got := codes(when, one); len(got) != 0 {
+		t.Fatalf("when check: %v", got)
+	}
+	bad := []struct {
+		name  string
+		check WaitCheck
+		next  Next
+	}{
+		{"nothing to check", WaitCheck{Every: "1m", MaxChecks: 2}, one},
+		{"both when and performer", WaitCheck{When: "params.ok == true", Performer: program, Every: "1m", MaxChecks: 2}, one},
+		{"no every", WaitCheck{Performer: program, MaxChecks: 2}, one},
+		{"no limit", WaitCheck{Performer: program, Every: "1m"}, one},
+		{"bad backoff", WaitCheck{Performer: program, Every: "1m", MaxChecks: 2, Backoff: "linear"}, one},
+		{"factor without exponential", WaitCheck{Performer: program, Every: "1m", MaxChecks: 2, Factor: 2}, one},
+		{"factor not above 1", WaitCheck{Performer: program, Every: "1m", MaxChecks: 2, Backoff: WaitBackoffExponential, Factor: 1}, one},
+		{"timedOut needs both routes", WaitCheck{Performer: program, Every: "1m", MaxChecks: 2, OnLimit: WaitOnLimitTimedOut}, one},
+		{"two routes without timedOut", WaitCheck{Performer: program, Every: "1m", MaxChecks: 2}, both},
+		{"unknown param", WaitCheck{When: "params.nope == true", Every: "1m", MaxChecks: 2}, one},
+		{"agent timeout", WaitCheck{Performer: &Performer{Kind: PerformerAgent, Prompt: "Ready?", Anyone: true}, Every: "1m", MaxChecks: 2, Timeout: "1m"}, one},
+		{"bad every", WaitCheck{Performer: program, Every: "soon", MaxChecks: 2}, one},
+	}
+	for _, c := range bad {
+		if got := codes(c.check, c.next); len(got) == 0 {
+			t.Errorf("%s: expected an error", c.name)
+		}
+	}
+}

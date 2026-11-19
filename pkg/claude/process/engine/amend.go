@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 
@@ -221,6 +222,7 @@ func Amend(checkpoint Checkpoint, oldDef *Definition, current, amended *model.Te
 		Commands:          slices.Clone(checkpoint.Commands),
 		Blocked:           slices.Clone(checkpoint.Blocked),
 		Canceled:          checkpoint.Canceled,
+		WaitChecks:        maps.Clone(checkpoint.WaitChecks),
 	}
 	for _, node := range newDef.nodes {
 		status, ok := checkpoint.Nodes[node.id]

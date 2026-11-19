@@ -279,6 +279,30 @@ func validateSnippetRetryWire(value any) error {
 	return snippetOptionalStrings(record, "backoff", "onFail")
 }
 
+func validateSnippetWaitCheckWire(value any) error {
+	record, err := snippetWireRecord(value, "when", "performer", "every", "backoff", "factor", "maxEvery",
+		"timeout", "maxChecks", "maxFailedChecks", "within", "onLimit")
+	if err != nil {
+		return err
+	}
+	for _, field := range []string{"maxChecks", "maxFailedChecks"} {
+		if err := normalizeSnippetSafeInteger(record, field); err != nil {
+			return err
+		}
+	}
+	if factor, present := record["factor"]; present {
+		if _, ok := factor.(json.Number); !ok {
+			return errors.New("custom snippet contains incompatible process node data")
+		}
+	}
+	if performer, present := record["performer"]; present {
+		if err := validateSnippetPerformerWire(performer); err != nil {
+			return err
+		}
+	}
+	return snippetOptionalStrings(record, "when", "every", "backoff", "maxEvery", "timeout", "within", "onLimit")
+}
+
 func validateSnippetPerformerWire(value any) error {
 	record, err := snippetWireRecord(value,
 		"kind", "profile", "prompt", "ask", "choices", "choiceOutcomes", "assignee",
@@ -388,12 +412,17 @@ func validateSnippetNodeWire(value any) error {
 		}
 	}
 	if wait, present := record["wait"]; present {
-		config, err := snippetWireRecord(wait, "duration", "until", "signal")
+		config, err := snippetWireRecord(wait, "duration", "until", "signal", "check")
 		if err != nil {
 			return err
 		}
 		if err := snippetOptionalStrings(config, "duration", "until", "signal"); err != nil {
 			return err
+		}
+		if check, present := config["check"]; present {
+			if err := validateSnippetWaitCheckWire(check); err != nil {
+				return err
+			}
 		}
 	}
 	if captures, present := record["captures"]; present {
