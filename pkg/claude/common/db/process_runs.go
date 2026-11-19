@@ -893,7 +893,9 @@ func ListRunnableProcessRunIDs(afterID string, limit int) ([]string, string, err
 	// reconciliation, not a resume. An outstanding AGENT command does not: it is
 	// accounted for by its dispatch record and simply occupies a slot while its
 	// performer works, so a sibling ready branch keeps the run runnable. A WAIT
-	// command is the same, accounted for by its timer record.
+	// command is the same, accounted for by its timer record, and so is a HUMAN
+	// command (a step a person performs): it waits on the person, takes no slot
+	// and needs no reconcile.
 	// An outstanding MESSAGE command makes the run runnable on its own: a message
 	// is safe to send again, so a resume picks it up (executor.Prepare) rather
 	// than leaving it for reconciliation. A live owner already sending it
@@ -929,7 +931,7 @@ func ListRunnableProcessRunIDs(afterID string, limit int) ([]string, string, err
 			AND paused_at IS NULL
 			AND CASE WHEN json_type(checkpoint_json, '$.commands') = 'array'
 					THEN (SELECT COUNT(*) FROM json_each(checkpoint_json, '$.commands')
-						WHERE COALESCE(json_extract(value, '$.kind'), '') NOT IN ('agent', 'wait', 'message'))
+						WHERE COALESCE(json_extract(value, '$.kind'), '') NOT IN ('agent', 'wait', 'message', 'human'))
 					ELSE 0 END = 0
 			AND (CASE WHEN json_type(checkpoint_json, '$.commands') = 'array'
 					THEN (SELECT COUNT(*) FROM json_each(checkpoint_json, '$.commands')
