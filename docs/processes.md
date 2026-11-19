@@ -1034,12 +1034,13 @@ unavailable: no engine is installed" error: `preview`, `apply`, `worklist`,
 `advance`, `unblock`, `observe`, `resolve`, `verify`, `repair`.
 
 These authoring features are valid in a stored template but refused at run
-creation with a path-specific diagnostic, rather than failing later: human
-task performers; agent performer `timeout`; retry backoff waits; same-session retry feedback
+creation with a path-specific diagnostic, rather than failing later: a
+person's step assigned to anyone but the operator, or with a `timeout` or
+compound stages; agent performer `timeout`; retry backoff waits; same-session retry feedback
 for program tasks (`retry.onFail: feedback-same-session` is executable only
 for agent tasks); retries on compound stages; `plan.approvalRetry`; human
 stage performers; poison handling; wait nodes; outputs (`captures`) on
-anything but a plain agent task.
+anything but a plain agent task or a person's step.
 
 ## Agent performers
 
@@ -1382,6 +1383,63 @@ loop. While votes are out the run view lists the gate under `gates` with a
 tally — `2/3 agreed, waiting on rita` — which `tclaude process show` prints
 and the dashboard shows on the gate node. A `differentFrom` or `sameAs`
 naming the gate means its agent deciders.
+
+## Steps done by a person
+
+A plain task with `performer.kind: human` is a step a person performs: pack
+the order, check the delivery, sign the form. Nothing is dispatched to an
+agent. The step waits on the person exactly as a decision does, and they
+finish it with one of its choices:
+
+```yaml
+nodes:
+  pack:
+    type: task
+    performer:
+      kind: human
+      ask: "Pack the order for {{ params.customer }}."   # one line; ask, prompt or both
+      prompt: "Use the small box, and weigh it."         # the longer instructions
+      choices: [packed, out of stock]                    # optional: done / failed otherwise
+      choiceOutcomes: {packed: pass, out of stock: fail}
+    captures: [weight]                                  # what the person fills in
+    next: ship
+```
+
+`ask` and `prompt` take `{{ params.<name> }}` and `{{ outputs.<name> }}` like
+an agent's prompt. With no `choices` the step finishes as `done` or
+`failed`. Own choices map each to `pass` or `fail`, and a passing choice
+must fill in every output the step declares (with one output, the note
+stands in for it), which a later prompt reads as `{{ outputs.<name> }}`.
+
+Finish it with `decide`:
+
+```bash
+tclaude process decide <run-id> --node pack --verdict packed --evidence "18 kg" --output weight=18kg
+```
+
+`show` lists the step under `awaitingDecisions` with `KIND task`, its ask
+and instructions, and the outputs it asks for; its command reads
+`awaiting_person`. A choice the step does not offer, a missing output, or a
+stale `--attempt` is refused and records nothing. The person, or anyone with
+`process.runs.manage`, finishes it; `record-outcome` settles it too.
+
+- **Failing it**: a failing choice is a failed attempt, with the note as the
+  reason. With retries left the step opens again as the next attempt; with
+  `mayFail` the run goes on with the step's result `failed`; otherwise the
+  run stops and names the step (its `failure`), exactly as for a failed
+  agent step.
+- **Pausing**: a paused run opens no new person's step. One already open can
+  still be finished; what it makes ready waits for the resume.
+- **Cancelling**: cancelling the run, or a sibling branch failing it,
+  withdraws every open person's step (`human_withdrawn` in the run's
+  events). A late `decide` for it is refused.
+- **Daemon restart**: the open step is part of the run's saved state, so it
+  is still open afterwards; nothing is re-sent.
+- An open person's step takes none of the run's four concurrency slots.
+
+Only the operator performs a person's step today: `assignee` may be empty or
+`operator`, and a run naming anyone else is refused when it starts. A person's
+step takes no `timeout` and no plan, check or review stages.
 
 ## Crashes and reconciliation
 

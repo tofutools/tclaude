@@ -336,10 +336,46 @@ func processRunPauseViewOf(scope db.ProcessRunScope) *processRunPauseView {
 // reducer checks against, so a caller reading it here and deciding with it can
 // never be told one number and refused for another. An authored decision opens
 // exactly once, so its window is always zero and the field stays absent.
+//
+// A step a person performs is listed here too, with Kind "task": its verdicts
+// are the choices they finish it with, Attempt is the step's attempt, and
+// Outputs are what a passing choice must fill in. Ask and Prompt are what the
+// person is asked and told, with parameters and earlier outputs filled in.
 type processRunDecisionView struct {
 	NodeID   string   `json:"nodeId"`
 	Verdicts []string `json:"verdicts"`
 	Attempt  int      `json:"attempt,omitempty"`
+	// Kind is "decision" or "task".
+	Kind   string `json:"kind"`
+	Ask    string `json:"ask,omitempty"`
+	Prompt string `json:"prompt,omitempty"`
+	// Passing is, for a task, the choices that finish it as done; the rest
+	// fail it.
+	Passing []string `json:"passing,omitempty"`
+	Outputs []string `json:"outputs,omitempty"`
+}
+
+const (
+	processAwaitingDecision = "decision"
+	processAwaitingTask     = "task"
+)
+
+// processHumanStepView presents an open step a person performs.
+func processHumanStepView(runID string, command engine.Command) processRunDecisionView {
+	human := command.Human
+	view := processRunDecisionView{
+		NodeID: command.NodeID, Verdicts: slices.Clone(human.Choices), Attempt: command.Attempt,
+		Kind: processAwaitingTask, Outputs: slices.Clone(human.Captures),
+	}
+	for _, choice := range human.Choices {
+		if outcome, _ := human.Outcome(choice); outcome == engine.ProgramSucceeded {
+			view.Passing = append(view.Passing, choice)
+		}
+	}
+	values := processPlainCaptureValues(runID, command.NodeID)
+	view.Ask = model.InterpolateCaptures(human.Ask, values)
+	view.Prompt = model.InterpolateCaptures(human.Prompt, values)
+	return view
 }
 
 // processRunBlockedView presents one parked branch with the exact attempt a
@@ -381,6 +417,8 @@ const (
 	processCommandNeedsReconcile = "needs_reconcile"
 	processCommandNeedsPerformer = "needs_performer"
 	processCommandAwaitPerformer = "awaiting_performer"
+	// processCommandAwaitingPerson is an open step a person performs.
+	processCommandAwaitingPerson = "awaiting_person"
 )
 
 type processRunSummaryView struct {
@@ -462,6 +500,9 @@ type processRunDecideRequest struct {
 	// zero: omitted, an authored decision takes its current window, which a
 	// loop's decision moves on every round (tcl-eu70x9).
 	Attempt *int `json:"attempt,omitempty"`
+	// Outputs are what a person fills in when the node is a step they
+	// perform and they finish it with a passing choice (its captures).
+	Outputs map[string]string `json:"outputs,omitempty"`
 }
 
 type processRunResolveBlockedRequest struct {
@@ -761,9 +802,16 @@ func startProcessAgentDispatches(runID string, run *executor.Run, pending []*exe
 	programs := pending[:0:0]
 	agents := false
 	for _, dispatch := range pending {
-		if dispatch.Command().Kind == engine.CommandAgent {
+		switch dispatch.Command().Kind {
+		case engine.CommandAgent:
 			executor.Abandon(run, dispatch)
 			agents = true
+			continue
+		case engine.CommandHuman:
+			// Never a worker's: a person's step waits on the person. The
+			// executor grants none; this keeps one from ever running as a
+			// program.
+			executor.Abandon(run, dispatch)
 			continue
 		}
 		programs = append(programs, dispatch)
@@ -1429,6 +1477,7 @@ func handleProcessRunDecide(w http.ResponseWriter, r *http.Request) {
 		decision: &executor.DecisionInput{
 			NodeID: request.NodeID, Verdict: request.Verdict,
 			Evidence: request.Evidence, Attempt: attempt, CurrentWindow: request.Attempt == nil,
+			Outputs: request.Outputs,
 		}})
 	if err != nil {
 		writeProcessRuntimeError(w, err)
@@ -1820,6 +1869,11 @@ func processRunViewWith(record *db.ProcessRun, accounted map[string]struct{}, cl
 			commands = append(commands, view)
 			continue
 		}
+		if command.Kind == engine.CommandHuman {
+			view.State = processCommandAwaitingPerson
+			commands = append(commands, view)
+			continue
+		}
 		view.State = processCommandNeedsReconcile
 		if _, live := accounted[command.NodeID]; live {
 			view.State, anyExecuting = processCommandExecuting, true
@@ -1863,8 +1917,18 @@ func processRunViewWith(record *db.ProcessRun, accounted map[string]struct{}, cl
 				// A loop's decision reopens every round under a new window.
 				attempt = definition.RequiredDecisionAttempt(checkpoint, obligation.NodeID)
 			}
-			awaitingDecisions = append(awaitingDecisions,
-				processRunDecisionView{NodeID: obligation.NodeID, Verdicts: verdicts, Attempt: attempt})
+			ask, prompt := definition.DecisionAsk(obligation.NodeID)
+			awaitingDecisions = append(awaitingDecisions, processRunDecisionView{
+				NodeID: obligation.NodeID, Verdicts: verdicts, Attempt: attempt,
+				Kind: processAwaitingDecision, Ask: ask, Prompt: prompt,
+			})
+		}
+	}
+	// A step a person performs waits on them as a decision does, so it is
+	// listed with the decisions, after them.
+	for _, command := range checkpoint.Commands {
+		if command.Kind == engine.CommandHuman && command.Human != nil {
+			awaitingDecisions = append(awaitingDecisions, processHumanStepView(record.ID, command))
 		}
 	}
 	var awaiting *processRunDecisionView

@@ -410,13 +410,13 @@ func TestDirectEntryDoesNotRelaxUnsupportedShapes(t *testing.T) {
 			},
 		},
 		{
-			name: "human performer on a direct task entry",
-			code: "unsupported_performer",
-			path: "nodes.task.performer.kind",
+			name: "person's step for someone else on a direct task entry",
+			code: "unsupported_assignee",
+			path: "nodes.task.performer.assignee",
 			tmpl: func() *model.Template {
 				tmpl := directTaskEntryTemplate()
 				node := tmpl.Nodes["task"]
-				node.Performer = &model.Performer{Kind: model.PerformerHuman, Ask: "Do it?"}
+				node.Performer = &model.Performer{Kind: model.PerformerHuman, Ask: "Do it?", Assignee: "bob"}
 				tmpl.Nodes["task"] = node
 				return tmpl
 			},

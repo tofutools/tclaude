@@ -186,13 +186,19 @@ func recordStep(checkpoint *Checkpoint, node definitionNode, result string, obse
 		return
 	}
 	record := StepRecord{Result: result}
-	if node.agent == nil {
+	var captures []string
+	switch {
+	case node.agent != nil:
+		captures = node.agent.Captures
+	case node.human != nil:
+		captures = node.human.Captures
+	default:
 		exitCode := observation.ExitCode
 		record.ExitCode = &exitCode
 	}
-	if len(observation.Outputs) > 0 && node.agent != nil {
+	if len(observation.Outputs) > 0 && len(captures) > 0 {
 		record.Outputs = map[string]string{}
-		for _, name := range node.agent.Captures {
+		for _, name := range captures {
 			if value, ok := observation.Outputs[name]; ok {
 				record.Outputs[name] = value
 			}

@@ -48,7 +48,7 @@ type ProgramBoundsResolver func(command engine.Command) *ProgramBounds
 func (r *Run) SetProgramBounds(resolver ProgramBoundsResolver) { r.bounds = resolver }
 
 func (r *Run) programBounds(command *engine.Command) *ProgramBounds {
-	if r.bounds == nil || command == nil || command.Kind == engine.CommandAgent {
+	if r.bounds == nil || command == nil || command.Kind != engine.CommandProgram {
 		return nil
 	}
 	return r.bounds(*command)

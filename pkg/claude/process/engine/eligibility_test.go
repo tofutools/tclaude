@@ -353,12 +353,23 @@ func TestEligibilityRejectsUnsupportedAuthoringValidFeatures(t *testing.T) {
 			},
 		},
 		{
-			name: "human performer",
-			code: "unsupported_performer",
+			name: "person's step assigned to someone other than the operator",
+			code: "unsupported_assignee",
 			tmpl: func() *model.Template {
 				tmpl := sequentialTemplate("task")
 				node := tmpl.Nodes["task"]
-				node.Performer = &model.Performer{Kind: model.PerformerHuman, Ask: "Do it?"}
+				node.Performer = &model.Performer{Kind: model.PerformerHuman, Ask: "Do it?", Assignee: "bob"}
+				tmpl.Nodes["task"] = node
+				return tmpl
+			},
+		},
+		{
+			name: "person's step timeout",
+			code: "unsupported_timeout",
+			tmpl: func() *model.Template {
+				tmpl := sequentialTemplate("task")
+				node := tmpl.Nodes["task"]
+				node.Performer = &model.Performer{Kind: model.PerformerHuman, Ask: "Do it?", Timeout: "1h"}
 				tmpl.Nodes["task"] = node
 				return tmpl
 			},

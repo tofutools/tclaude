@@ -292,8 +292,16 @@ Every performer starts with `kind` and may use shared `profile`, `timeout`, and
   one; the default for a gate's deciders) or `keep` (never retired by the
   run). E.g. `fallback: {action: spawn, profile: sonnet-dev, lifetime: run}`.
 - `kind: human`: require `ask` or `prompt`; optional `profile`, `assignee`,
-  `choices`. Decision choices route through exact `next` outcomes. Human task
-  choices require `choiceOutcomes` mapping each label to `pass` or `fail`.
+  `choices`. Decision choices route through exact `next` outcomes. On a
+  `task` it is a step a person performs (pack the order, check the PR, sign
+  the form): `ask` is the one-line instruction, `prompt` the longer one, and
+  the person finishes it with `done` or `failed`. Own `choices` need
+  `choiceOutcomes` mapping each label to `pass` or `fail`, e.g. `choices:
+  [packed, out of stock]` with `choiceOutcomes: {packed: pass, out of stock:
+  fail}`. `captures` on it are what the person fills in, read later as
+  `{{ outputs.<name> }}`; `retry` and `mayFail` work as on any task. Only
+  the operator performs one today: leave `assignee` empty (or `operator`).
+  No `timeout`, and no plan, check or review stages on it.
 - `kind: program`: require `run`; optional literal `args` and `timeout`.
   Saving still executes nothing. A later run needs its separate explicit
   program-execution opt-in and security review.
@@ -418,8 +426,7 @@ attached file in full before modelling. Then:
    than guessing. Keep building the parts that are clear while you wait.
 3. When done, list in chat what you could not model, each with the engine
    gap that blocks it, for example: a deadline, a meeting day or "within 4
-   hours" (no timers; wait nodes and agent `timeout` do not execute), a step a person performs that is not a decision (no human
-   task performers), "notify the on-call" (no notification step; use an agent
+   hours" (no timers; wait nodes and agent `timeout` do not execute), "notify the on-call" (no notification step; use an agent
    or program task). Leave such parts as an agent or
    decision step named after what it stands for, rather than dropping them
    silently.

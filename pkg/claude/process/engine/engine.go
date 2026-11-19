@@ -1179,7 +1179,8 @@ func doomed(checkpoint Checkpoint) bool {
 // program that may still be running, and its outcome has to be accounted for
 // before the run can be called over.
 //
-// The two human outboxes are the opposite case and are abandoned at once. The
+// The human outboxes are the opposite case and are abandoned at once: awaited
+// decisions, parked branches, and open steps a person performs. The
 // run is already destined to end badly, so accepting further human work for it
 // would be dishonest; dropping the obligations is also what makes a later
 // verdict or resolution fail closed as stale, and what keeps a crash mid-drain
@@ -1194,6 +1195,20 @@ func abandonAfterDoom(checkpoint *Checkpoint, definition *Definition) {
 		return
 	}
 	checkpoint.AwaitingDecisions = nil
+	// A step a person performs is a human outbox too, not running work: it is
+	// withdrawn at once, and ends as the failure it now cannot avoid.
+	kept := checkpoint.Commands[:0]
+	for _, command := range checkpoint.Commands {
+		if command.Kind == CommandHuman {
+			checkpoint.Nodes[command.NodeID] = NodeFailed
+			if checkpoint.Canceled {
+				checkpoint.Nodes[command.NodeID] = NodeCanceled
+			}
+			continue
+		}
+		kept = append(kept, command)
+	}
+	checkpoint.Commands = kept
 	for _, obligation := range checkpoint.Blocked {
 		if checkpoint.Nodes[obligation.NodeID] == NodeBlocked {
 			checkpoint.Nodes[obligation.NodeID] = NodeFailed
@@ -1378,17 +1393,20 @@ func taskCommand(checkpoint Checkpoint, definition *Definition, node definitionN
 	if node.kind == definitionDecision {
 		command.Verdicts = slices.Clone(node.verdicts)
 	}
-	if node.agent != nil {
+	switch {
+	case node.agent != nil:
 		agent := *node.agent
 		command.Agent = &agent
-	} else {
+	case node.human != nil:
+		command.Human = cloneHumanCommand(node.human)
+	default:
 		command.Program = cloneProgramCommand(node.program)
 	}
 	return command
 }
 
 // runsCommand reports whether a node is executed through the command outbox:
-// every task, and a decision an agent decides.
+// every task (a person's step included), and a decision an agent decides.
 func (node definitionNode) runsCommand() bool {
 	return node.kind == definitionTask || (node.kind == definitionDecision && node.agent != nil)
 }
@@ -1401,8 +1419,11 @@ func (node definitionNode) awaitsHuman() bool {
 
 // commandKind is the outbox kind a prepared task node plans.
 func (node definitionNode) commandKind() CommandKind {
-	if node.agent != nil {
+	switch {
+	case node.agent != nil:
 		return CommandAgent
+	case node.human != nil:
+		return CommandHuman
 	}
 	return CommandProgram
 }
@@ -1521,8 +1542,20 @@ func cloneCommand(command Command) Command {
 		agent.Captures = slices.Clone(command.Agent.Captures)
 		clone.Agent = &agent
 	}
+	clone.Human = cloneHumanCommand(command.Human)
 	clone.Verdicts = slices.Clone(command.Verdicts)
 	return clone
+}
+
+func cloneHumanCommand(human *HumanCommand) *HumanCommand {
+	if human == nil {
+		return nil
+	}
+	clone := *human
+	clone.Choices = slices.Clone(human.Choices)
+	clone.ChoiceOutcomes = maps.Clone(human.ChoiceOutcomes)
+	clone.Captures = slices.Clone(human.Captures)
+	return &clone
 }
 
 func cloneProgramCommand(program ProgramCommand) ProgramCommand {

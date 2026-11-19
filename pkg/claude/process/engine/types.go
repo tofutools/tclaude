@@ -69,6 +69,11 @@ const (
 	// the daemon's dispatch record, and it settles through the same observation
 	// transition a program does once the performer reports back.
 	CommandAgent CommandKind = "agent"
+	// CommandHuman is a step a person performs. Nothing is dispatched: the
+	// durable outbox entry IS the open step, shown to the person until they
+	// settle it through the same observation transition (or the run drops it
+	// once it is doomed). It takes none of the run's concurrency slots.
+	CommandHuman CommandKind = "human"
 )
 
 // Checkpoint is the complete v3 reducer state. The pinned template and run
@@ -250,8 +255,8 @@ type BlockedResolution struct {
 // on is now per attempt rather than per node.
 //
 // Exactly one payload matches Kind: Program for a program command, Agent for an
-// agent command. Program is omitted when zero so an agent command does not
-// carry an empty program request.
+// agent command, Human for a person's step. Program is omitted when zero so an
+// agent or human command does not carry an empty program request.
 type Command struct {
 	ID      string         `json:"id"`
 	Kind    CommandKind    `json:"kind"`
@@ -259,6 +264,7 @@ type Command struct {
 	Attempt int            `json:"attempt"`
 	Program ProgramCommand `json:"program,omitzero"`
 	Agent   *AgentCommand  `json:"agent,omitempty"`
+	Human   *HumanCommand  `json:"human,omitempty"`
 	// Round and Rounds place a command of a loop body: the round of its
 	// innermost loop and that loop's limit. Zero outside loops.
 	Round  int `json:"round,omitempty"`
@@ -270,6 +276,41 @@ type Command struct {
 	// Verdicts are the outcomes an agent decider's command chooses between;
 	// its report names one of them. Empty for every task.
 	Verdicts []string `json:"verdicts,omitempty"`
+}
+
+// HumanCommand is the fully bound request for one attempt at a step a person
+// performs: what to tell them, the choices they finish it with, and the
+// outputs they fill in.
+type HumanCommand struct {
+	Ask    string `json:"ask,omitempty"`
+	Prompt string `json:"prompt,omitempty"`
+	// Choices are what the person finishes the step with, never empty: the
+	// authored choices, or done / failed. ChoiceOutcomes maps each to pass or
+	// fail.
+	Choices        []string          `json:"choices"`
+	ChoiceOutcomes map[string]string `json:"choiceOutcomes"`
+	// Captures are the outputs the person fills in on success.
+	Captures []string `json:"captures,omitempty"`
+}
+
+// Default choices of a step a person performs with none authored.
+const (
+	HumanChoiceDone   = "done"
+	HumanChoiceFailed = "failed"
+)
+
+// Outcome is what choice settles the step as, and whether choice is one.
+func (h *HumanCommand) Outcome(choice string) (ProgramOutcome, bool) {
+	if h == nil {
+		return "", false
+	}
+	switch h.ChoiceOutcomes[choice] {
+	case "pass":
+		return ProgramSucceeded, true
+	case "fail":
+		return ProgramFailed, true
+	}
+	return "", false
 }
 
 // AgentCommand is the fully bound request for one agent performer attempt.
