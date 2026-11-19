@@ -62,7 +62,7 @@ let dockDragSource = null;
 // Real-group drop target: a group's <details> box (header or expanded body).
 // Same boxes dnd.js's member drag targets, but only the REAL groups — a profile
 // can't be spawned into the virtual Ungrouped / Retired groups.
-const GROUP_TARGET_SEL = 'details[data-dnd-target-group]';
+const GROUP_TARGET_SEL = '.group-box[data-dnd-target-group]';
 // Empty-space drop target: the groups-list container itself (a drop NOT over
 // any group box → a plain spawn with the profile prefilled, no group).
 const EMPTY_TARGET_SEL = '#groups-list';
@@ -83,13 +83,13 @@ function dockTarget(e) {
   // but on an obvious surface rather than the background gaps. Light the box
   // itself so the affordance reads. Checked BEFORE the generic .group-virtual
   // inert guard below (the Ungrouped box carries both classes/attrs).
-  const ungrouped = e.target.closest('details[data-dnd-target-ungrouped]');
+  const ungrouped = e.target.closest('.group-box[data-dnd-target-ungrouped]');
   if (ungrouped) return { group: '', box: ungrouped };
   // Every OTHER virtual group box (Retired / Conversations / Generations /
   // Pending — all carry .group-virtual) is not a spawn target: "spawn into
   // Retired" is meaningless. Treat it as inert so hovering it neither flashes
   // the whole groups-list nor drops.
-  if (e.target.closest('details.group-virtual')) return null;
+  if (e.target.closest('.group-box.group-virtual')) return null;
   const list = e.target.closest(EMPTY_TARGET_SEL);
   if (list) return { group: '', box: list };
   return null;

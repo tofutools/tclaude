@@ -62,12 +62,12 @@ const NODE_ID = /^inst_[A-Za-z0-9]{4,64}$/;
 // overview. A control outside any node's group is refused.
 export function limitsCSS(nodes, { self, home = '' }) {
   const always = [...VIEW_ONLY_ACTS, 'send-elsewhere'];
-  const rules = [refusedActsRule(ROOT, always.map((a) => `[data-act="${a}"]`), '[data-act]:not(details[data-fleet-node] [data-act])')];
+  const rules = [refusedActsRule(ROOT, always.map((a) => `[data-act="${a}"]`), '[data-act]:not(.group-box[data-fleet-node] [data-act])')];
   // Controls carry each node's name as the merged view shows it.
   const names = uniqueNodeNames(nodes.map(({ id, name, local }) => ({ node: { id, name, local } })));
   for (const { id, peerView } of nodes) {
     if (!NODE_ID.test(id || '') || id === home) continue;
-    const scope = `${ROOT} details[data-fleet-node="${id}"]`;
+    const scope = `${ROOT} .group-box[data-fleet-node="${id}"]`;
     const merged = (g) => `${g}@${names.get(id)}`;
     // This node's groups on a peer's page take its group controls directly
     // (node-api.js), as though this node trusted itself unrestricted.
@@ -84,7 +84,7 @@ export function limitsCSS(nodes, { self, home = '' }) {
 // dragSource reads a dragged member row in the merged view: the agent and the
 // node and group it is in. Only real group members can move.
 function dragSource(row) {
-  const group = row?.closest?.('details[data-fleet-node]');
+  const group = row?.closest?.('.group-box[data-fleet-node]');
   const agent = row?.getAttribute?.('data-dnd-agent');
   const merged = row?.getAttribute?.('data-dnd-source-group');
   if (!group || !agent || !merged || !/^agt_[A-Za-z0-9]+$/.test(agent)) return null;
@@ -96,7 +96,7 @@ function dragSource(row) {
 // group (Ungrouped@node, …) is no move target: its node's own drop (dnd.js)
 // takes it there.
 function dropTarget(el) {
-  const group = el?.closest?.('details[data-fleet-node]');
+  const group = el?.closest?.('.group-box[data-fleet-node]');
   if (!group || group.classList.contains('group-virtual')) return null;
   const name = group.dataset.fleetNodeName || '';
   return { el: group, node: group.dataset.fleetNode, name, group: ownGroup(group.dataset.groupKey || '', name) };
@@ -339,7 +339,7 @@ const fusedOrder = (list) => sortGroupsByPref(list, dashPrefs, FUSED_GROUP_ORDER
 
 // FOLLOW_CLICK_TARGETS are the clicks in a group that move the toolbar to its
 // node: on something that acts, not on the group's plain text or empty space.
-const FOLLOW_CLICK_TARGETS = 'summary, button, a[href], input, select, textarea, label, [data-act], [role="button"], [role="menuitem"]';
+const FOLLOW_CLICK_TARGETS = 'summary, .group-summary, button, a[href], input, select, textarea, label, [data-act], [role="button"], [role="menuitem"]';
 
 // MergedGroups is the fused Groups view: the Groups listing (GroupsLensList,
 // as on one node's view, under the same toolbar and its filter, view and
@@ -554,7 +554,7 @@ export function MergedGroups({
     if (!host) return undefined;
     const follow = (event) => {
       if (event.type === 'click' && !event.target?.closest?.(FOLLOW_CLICK_TARGETS)) return;
-      followToolbarNode(event.target?.closest?.('details[data-fleet-node]')?.dataset.fleetNode || '');
+      followToolbarNode(event.target?.closest?.('.group-box[data-fleet-node]')?.dataset.fleetNode || '');
     };
     const kinds = ['click', 'contextmenu', 'drop'];
     for (const kind of kinds) host.addEventListener(kind, follow, true);
@@ -580,7 +580,7 @@ export function MergedGroups({
     // it on the control (reasonTitles), as a peer's own page does.
     const refusal = (act) => {
       if (!act || !host.contains(act) || VIEW_ONLY_ACTS.has(act.dataset.act) || act.dataset.act === 'send-elsewhere') return null;
-      const group = act.closest('details[data-fleet-node]');
+      const group = act.closest('.group-box[data-fleet-node]');
       const instance = group?.dataset.fleetNode || '';
       const name = group?.dataset.fleetNodeName || '';
       const self = state.view.value.fleet?.self?.id;
@@ -616,7 +616,7 @@ export function MergedGroups({
       }
       const act = actOf(event.target, event);
       if (!act || !host.contains(act) || VIEW_ONLY_ACTS.has(act.dataset.act)) return;
-      const group = act.closest('details[data-fleet-node]');
+      const group = act.closest('.group-box[data-fleet-node]');
       const instance = group?.dataset.fleetNode || '';
       // ⚙ "Send elsewhere" opens the same launch-target dialog as a drop.
       if (act.dataset.act === 'send-elsewhere' && group) {
@@ -667,7 +667,7 @@ export function MergedGroups({
       onClick(event);
     };
     const onContext = (event) => {
-      if (homeRef.current && event.target?.closest?.('details[data-fleet-node]')?.dataset.fleetNode === homeRef.current) return;
+      if (homeRef.current && event.target?.closest?.('.group-box[data-fleet-node]')?.dataset.fleetNode === homeRef.current) return;
       if (!event.target?.closest?.('[data-act]') || !host.contains(event.target)) return;
       event.preventDefault(); event.stopImmediatePropagation();
       // macOS turns Ctrl-click into this event: a peer row's attach still
@@ -697,20 +697,20 @@ export function MergedGroups({
       // tree and only ever shows a home group (a peer's has no runs here).
       if (!src && homeRef.current && event.target.closest?.(PROCESS_DRAGS)
         && (event.target.closest('[data-run-dock]')
-          || event.target.closest('details[data-fleet-node]')?.dataset.fleetNode === homeRef.current)) return;
+          || event.target.closest('.group-box[data-fleet-node]')?.dataset.fleetNode === homeRef.current)) return;
       if (!src) {
         // A home virtual group's rows (an ungrouped agent, a conversation to
         // promote) drag as on this node's own view (dnd.js).
-        const virt = event.target.closest?.('details.group-virtual[data-fleet-node]');
+        const virt = event.target.closest?.('.group-box.group-virtual[data-fleet-node]');
         if (virt && homeRef.current && virt.dataset.fleetNode === homeRef.current) return;
         // A group header drags as on its node's Groups view (group-reorder.js)
         // where this node may act there.
-        const header = event.target.closest?.('summary[data-group-reorder]');
-        const box = header?.closest('details[data-fleet-node]');
+        const header = event.target.closest?.('.group-summary[data-group-reorder]');
+        const box = header?.closest('.group-box[data-fleet-node]');
         if (header && box && nodeAllowsActing(isPageNode(box.dataset.fleetNode) ? '' : box.dataset.fleetNode)) return;
         // A pending or queued spawn drags to the bin only (dnd.js), on a node
         // this one may act on.
-        const spawn = event.target.closest?.('tr.dnd-draggable[data-dnd-pending]')?.closest('details[data-fleet-node]');
+        const spawn = event.target.closest?.('tr.dnd-draggable[data-dnd-pending]')?.closest('.group-box[data-fleet-node]');
         if (spawn && nodeAllowsActing(isPageNode(spawn.dataset.fleetNode) ? '' : spawn.dataset.fleetNode)) return;
         event.preventDefault(); return;
       }
@@ -747,7 +747,7 @@ export function MergedGroups({
       if (plan.kind === 'same') { dragging = null; unmark(); return; }
       // A home member dropped on a home virtual group (remove from its group,
       // retire) is dnd.js's, as on this node's own view.
-      const virt = event.target.closest?.('details.group-virtual[data-fleet-node]');
+      const virt = event.target.closest?.('.group-box.group-virtual[data-fleet-node]');
       if (virt && homeRef.current && virt.dataset.fleetNode === homeRef.current && dragging.source.node === homeRef.current) { dragging = null; unmark(); return; }
       event.preventDefault(); event.stopPropagation();
       dndGesture.cancelClone();

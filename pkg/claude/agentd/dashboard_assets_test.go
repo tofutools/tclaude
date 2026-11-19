@@ -273,7 +273,7 @@ func TestDashboardJS_PendingSpawnsRenderInTargetGroups(t *testing.T) {
 		"function PendingTable({ rows, group = '' })",
 		"group.pending?.length ? html`<span class=\"group-pending-chip\"",
 		"group.pending?.length ? html`<div class=\"group-pending-block\"",
-		"open=${realGroupOpen(group, dashPrefs)}",
+		"openOf=${() => realGroupOpen(group, dashPrefs)}",
 		".group-pending-block",
 	} {
 		if !strings.Contains(dashboardAssets, needle) {
@@ -619,9 +619,9 @@ func TestDashboardAssets_GroupQuickFoldWired(t *testing.T) {
 		// pinned groups) and reveal on header hover.
 		// The accordion is scoped to collapsed groups (:not([open])) so an
 		// expanded group keeps its quick options fully shown.
-		"body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]) > summary .qo-text",
-		"body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]) > summary:hover .qo-text",
-		"body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]).quick-hover > summary .qo-text",
+		"body.group-quick-fold .group-box:not(.quick-pinned):not(.open) > .group-summary .qo-text",
+		"body.group-quick-fold .group-box:not(.quick-pinned):not(.open) > .group-summary:hover .qo-text",
+		"body.group-quick-fold .group-box:not(.quick-pinned):not(.open).quick-hover > .group-summary .qo-text",
 		"@media (hover: hover) {",
 	} {
 		if !strings.Contains(dashboardAssets, needle) {
@@ -642,8 +642,8 @@ func TestDashboardAssets_GroupProfileIconDimming(t *testing.T) {
 		`<span class="group-profile-icon">${sandbox ? '🛡' : '🧠'}</span>`,
 		".group-default-model:hover > .group-profile-icon,",
 		".group-sandbox-profile:hover > .group-profile-icon,",
-		"details[data-group-key][open] > summary .group-default-model:not(.unset) > .group-profile-icon",
-		"details[data-group-key][open] > summary .group-sandbox-profile:not(.unset) > .group-profile-icon",
+		".group-box.open > .group-summary .group-default-model:not(.unset) > .group-profile-icon",
+		".group-box.open > .group-summary .group-sandbox-profile:not(.unset) > .group-profile-icon",
 	} {
 		if !strings.Contains(groups+css, needle) {
 			t.Errorf("dashboard assets missing %q — group profile icon dimming regressed", needle)
@@ -712,7 +712,7 @@ func TestDashboardAssets_QuickChipKeyboardOperability(t *testing.T) {
 		"`Set ${name.toLowerCase()}`",
 		// dashboard.css — tabbing onto a collapsed group's chips reveals the
 		// folded labels (keyboard mirror of the hover reveal)…
-		"body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]) > summary:focus-within .qo-text",
+		"body.group-quick-fold .group-box:not(.quick-pinned):not(.open) > .group-summary:focus-within .qo-text",
 		// …and the chips share the focus ring of the other focusable icons.
 		".group-descr:focus-visible, .group-default-cwd:focus-visible, .gdc-pick:focus-visible,",
 	} {

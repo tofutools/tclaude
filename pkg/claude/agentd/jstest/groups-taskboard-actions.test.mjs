@@ -306,13 +306,14 @@ test('a task dragged onto an agent row of its own card is assigned; the unassign
   const name = 'tba-dragassign';
   const { harness, c, api, rowOf } = await mountBoard(t, name);
   // The group card's member rows, as groups-member-table.js draws them.
-  const card = document.createElement('details');
+  const card = document.createElement('div');
+  card.className = 'group-box';
   card.dataset.groupKey = name;
   card.innerHTML = `<table><tbody>
     <tr data-dnd-agent="agt_builder" data-dnd-source-group="${name}"><td class="name-cell">builder</td></tr>
     <tr data-dnd-agent="conv-no-agent" data-dnd-source-group="${name}"><td class="name-cell">plain</td></tr>
-  </tbody></table><details data-group-key="sub"><table><tbody>
-    <tr data-dnd-agent="agt_sub" data-dnd-source-group="sub"><td class="name-cell">sub</td></tr></tbody></table></details>`;
+  </tbody></table><div class="group-box" data-group-key="sub"><table><tbody>
+    <tr data-dnd-agent="agt_sub" data-dnd-source-group="sub"><td class="name-cell">sub</td></tr></tbody></table></div>`;
   document.body.appendChild(card);
   t.after(() => card.remove());
   const transfer = { setData() {}, setDragImage() {}, effectAllowed: '', dropEffect: '' };

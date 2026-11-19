@@ -12,7 +12,7 @@ import (
 // the load-bearing wiring against a silent refactor break.
 //
 // The pieces that must stay connected:
-//   - groups-list.js makes each real group's HEADER (<summary>) the draggable
+//   - groups-list.js makes each real group's HEADER (.group-summary) the draggable
 //     reorder handle, carrying the group name as the Preact attribute value;
 //   - group-reorder.js suppresses that drag for a press on an interactive
 //     header child (so the title still folds and the chips still edit), drives
@@ -25,14 +25,14 @@ import (
 func TestDashboardJS_GroupReorderWired(t *testing.T) {
 	for _, c := range []struct{ needle, why string }{
 		// groups-list.js: the group HEADER is the reorder drag handle, disabled
-		// only while a keyed group editor owns the summary.
-		{`<summary draggable=${!groupEditing} data-group-reorder=${group.name}`,
+		// only while a keyed group editor owns the header.
+		{`draggable: !groupEditing, 'data-group-reorder': group.name,`,
 			"groups-list.js makes each real group's header the native draggable reorder handle"},
 		{`const groupEditing = interactions.editorKey.startsWith(`,
 			"native editors temporarily disable only their owning group drag handle"},
 		// group-reorder.js: a press on an interactive header child suppresses the
 		// drag so the click (fold / edit) lands instead of starting a reorder.
-		{`const summary = e.target.closest('summary[data-group-reorder]');`,
+		{`const summary = e.target.closest('.group-summary[data-group-reorder]');`,
 			"group-reorder.js suppresses the header drag for clicks on interactive children"},
 		// group-reorder.js: the custom MIME and the persisted pref key.
 		{`'application/x-tclaude-group'`, "group-reorder.js uses a dedicated drag MIME"},

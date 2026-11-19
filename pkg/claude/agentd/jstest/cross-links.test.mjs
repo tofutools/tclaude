@@ -54,12 +54,12 @@ async function mount(t, name, { by = 'agent', tasks = [], view = 'lanes' } = {})
   const group = { name, members: [{ agent_id: 'agt_builder', title: 'builder', role: 'dev', online: true }] };
   // The agent's row, as the Groups view draws it, with its task indicator.
   const mounted = await harness.mount(harness.html`<div>
-    <details data-group-key=${name} open><summary>${name}</summary>
+    <div class="disclosure group-box open" data-group-key=${name}><div class="disclosure-head group-summary">${name}</div>
       <table><tbody><tr data-dnd-agent="agt_builder"><td>builder
         <${AgentTaskIndicator} group=${group} member=${group.members[0]} source=${source} />
       </td></tr></tbody></table>
       <${TaskboardSection} group=${group} snapshot=${{ groups: [group] }} source=${source} api=${fakeApi()} />
-    </details>
+    </div>
   </div>`);
   return { harness, c: mounted.container, dashPrefs };
 }
@@ -213,11 +213,11 @@ test('a click on an offline agent\'s task unfolds the offline lanes; hovering ou
   const entry = { group: name, group_id: 1, counts: { live: 1 }, tasks, closed: [] };
   const source = { context: harness.signals.signal({ groups: [entry] }), status: harness.signals.signal('ready'), attach: () => () => {}, refresh: async () => {} };
   const group = { name, members: [{ agent_id: 'agt_builder', title: 'builder', online: true }, { agent_id: 'agt_sleeper', title: 'sleeper', online: false }] };
-  const { container: c } = await harness.mount(harness.html`<details data-group-key=${name} open><summary>${name}</summary>
+  const { container: c } = await harness.mount(harness.html`<div class="disclosure group-box open" data-group-key=${name}><div class="disclosure-head group-summary">${name}</div>
     <table><tbody><tr data-dnd-agent="agt_sleeper"><td>sleeper
       <${AgentTaskIndicator} group=${group} member=${group.members[1]} source=${source} /></td></tr></tbody></table>
     <${TaskboardSection} group=${group} snapshot=${{ groups: [group] }} source=${source} api=${fakeApi()} />
-  </details>`);
+  </div>`);
   const scrolled = layout(t, harness);
   const fold = c.querySelector('.tb-lane-fold');
   assert.equal(fold.getAttribute('aria-expanded'), 'false', 'the offline lanes start folded');

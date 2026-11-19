@@ -51,7 +51,7 @@ export function cloneGesture(event) {
 // realGroupBox is the <details> of a real group (not a virtual one) that
 // holds el.
 function realGroupBox(el) {
-  const box = el?.closest?.('details[data-group-key]');
+  const box = el?.closest?.('.group-box[data-group-key]');
   if (!box || !(box.hasAttribute('data-dnd-target-group') || box.hasAttribute('data-fleet-node'))) return null;
   // The fleet view marks a virtual group (Ungrouped, Retired) with its node
   // too; it is no group a task can go to.
@@ -81,7 +81,7 @@ export function transferTarget(el, fromShown, fromBox) {
     box = realGroupBox(section) || null;
     into = section;
   } else {
-    const summary = el?.closest?.('summary');
+    const summary = el?.closest?.('.group-summary');
     box = summary && realGroupBox(summary);
     if (!box || summary.parentElement !== box) return null;
     shown = box.dataset.groupKey;
@@ -102,9 +102,9 @@ export function transferTarget(el, fromShown, fromBox) {
 // page, as a drop could reach it (in the fleet view, a linked node's too).
 // Each is { shown, group, node, nodeName, cross }.
 export function transferTargets(fromShown) {
-  const boxes = [...document.querySelectorAll('details[data-group-key]')].filter((box) => realGroupBox(box) === box);
+  const boxes = [...document.querySelectorAll('.group-box[data-group-key]')].filter((box) => realGroupBox(box) === box);
   const fromBox = [...document.querySelectorAll('[data-fused-taskboard]')]
-    .find((el) => el.dataset.fusedTaskboard === fromShown)?.closest('details[data-group-key]') || null;
+    .find((el) => el.dataset.fusedTaskboard === fromShown)?.closest('.group-box[data-group-key]') || null;
   const fromNode = fromBox?.getAttribute('data-fleet-node') || '';
   const seen = new Set();
   const out = [];
@@ -250,7 +250,7 @@ export function listenForTransfer({ task, group, tasks = [], actions, droppable 
   const state = { over: null, box: null };
   if (droppable) showBin();
   const fromBox = () => [...document.querySelectorAll('[data-fused-taskboard]')]
-    .find((el) => el.dataset.fusedTaskboard === fromShown)?.closest('details[data-group-key]') || null;
+    .find((el) => el.dataset.fusedTaskboard === fromShown)?.closest('.group-box[data-group-key]') || null;
   const onOver = (event) => {
     if (!isTaskDrag(event)) { clearOver(state); return; }
     // The bin: no clone meaning there, as for an agent.

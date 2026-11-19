@@ -3,8 +3,8 @@
 // pointer path on camera. Evaluated by `drive eval` as drag.js(agent, group key).
 (async (agentName, groupKey) => {
   const row = [...document.querySelectorAll('tr.dnd-draggable[data-dnd-agent]')].find((r) => r.offsetParent && r.getAttribute('data-dnd-label') === agentName);
-  const group = document.querySelector(`details[data-group-key="${groupKey}"]`);
-  const target = group && group.querySelector(':scope > summary');
+  const group = document.querySelector(`.group-box[data-group-key="${groupKey}"]`);
+  const target = group && group.querySelector(':scope > .group-summary');
   if (!row || !target) return 'NOTFOUND';
   row.scrollIntoView({ block: 'center' });
   await new Promise((r) => setTimeout(r, 400));

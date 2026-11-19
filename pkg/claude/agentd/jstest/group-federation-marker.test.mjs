@@ -27,7 +27,7 @@ test('marker popover opens without toggling the group and jumps to the node', as
   const mod = await harness.importDashboardModule('js/group-federation-marker.js');
   const opened = []; let toggles = 0;
   const group = { name: 'builders', federation_links: links };
-  const mounted = await harness.mount(harness.html`<details onClick=${() => { toggles++; }}><summary><${mod.GroupFederationMarker} group=${group} openNode=${(id) => opened.push(id)} /></summary></details>`);
+  const mounted = await harness.mount(harness.html`<div class="group-box" onClick=${() => { toggles++; }}><div class="group-summary"><${mod.GroupFederationMarker} group=${group} openNode=${(id) => opened.push(id)} /></div></div>`);
   const chip = getByRole(mounted.container, 'button', { name: /🌐/ });
   assert.equal(chip.getAttribute('aria-expanded'), 'false');
   await harness.act(() => harness.fireEvent(chip, 'click'));

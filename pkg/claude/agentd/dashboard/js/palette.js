@@ -45,7 +45,8 @@ import { openGitRepositories } from './git-repositories-controller.js';
 import { $, $$ } from './helpers.js';
 import { featureState } from './feature-state-registry.js';
 import { setActivitySubtab } from './activity-state.js';
-import { toast, noteGroupDisclosureIntent } from './refresh.js';
+import { toast } from './refresh.js';
+import { announceFusedSections, setGroupBoxOpen } from './groups-fused-sections.js';
 import {
   openWindowModal,
   openRetireAllPreview, openRetirePreview, openRetireUngroupedPreview,
@@ -130,10 +131,9 @@ async function hideAgent(conv, label) {
 }
 
 // -- Group fold helpers — collapse/expand the Groups-tab listing. Each
-//    group renders as <details data-group-key>; assigning .open fires a
-//    native toggle event that bindDetailsPersistence (refresh.js) catches,
-//    so the state sticks across the 2s re-render. We switch to the Groups
-//    tab first so the change is actually visible.
+//    group's fold is its tclaude.dash.group.<key> pref (groups-list.js's
+//    GroupBox); setting it and announcing redraws the boxes. We switch to
+//    the Groups tab first so the change is actually visible.
 
 function gotoGroupsTab() {
   const btn = $('nav [data-tab="groups"]');
@@ -160,27 +160,35 @@ function pageNodeName(remote) {
 
 function setGroupOpen(name, open) {
   gotoGroupsTab();
-  const d = $(`#tab-groups details[data-group-key="${CSS.escape(name)}"]`);
-  if (!d) { toast(`group ${name}: not listed on the Groups tab`, true); return; }
+  const box = $(`#tab-groups .group-box[data-group-key="${CSS.escape(name)}"]`);
+  if (!box) { toast(`group ${name}: not listed on the Groups tab`, true); return; }
   // Record only once we know the fold will actually happen — symmetric with
   // the modal record sites, which stamp after their success point.
   recordGroupInteraction(name);
-  if (d.open !== open) {
-    noteGroupDisclosureIntent(name);
-    d.open = open; // fires toggle → bindDetailsPersistence persists the state
+  if (box.classList.contains('open') !== open) {
+    setGroupBoxOpen(name, open);
+    redrawGroupFolds();
   }
-  const sum = d.querySelector('summary');
-  if (sum) sum.scrollIntoView({ block: 'nearest' });
+  box.querySelector(':scope > .group-summary')?.scrollIntoView({ block: 'nearest' });
+}
+
+// redrawGroupFolds redraws the boxes and, since a fold moves activity bots
+// onto (or off) a parent's header, the trees (Groups, the fused view) that
+// decide which header owns them.
+function redrawGroupFolds() {
+  announceFusedSections();
+  featureState('groups')?.rerender?.();
+  // The fused view is its own island and re-renders on its own event.
+  document.getElementById('fleetview-fused-groups-root')?.dispatchEvent(new CustomEvent('tclaude:group-disclosure'));
 }
 
 function setAllGroupsOpen(open) {
   gotoGroupsTab();
-  const all = $$('#tab-groups details[data-group-key]');
-  for (const d of all) {
-    if (d.open === open) continue;
-    noteGroupDisclosureIntent(d.getAttribute('data-group-key'));
-    d.open = open;
+  const all = $$('#tab-groups .group-box[data-group-key]');
+  for (const box of all) {
+    if (box.classList.contains('open') !== open) setGroupBoxOpen(box.getAttribute('data-group-key'), open);
   }
+  redrawGroupFolds();
   const n = `${all.length} group${all.length === 1 ? '' : 's'}`;
   toast(open ? `expanded ${n}` : `collapsed ${n}`);
 }

@@ -74,7 +74,7 @@ test('group attachments enforce http(s) again at the render boundary', async (t)
   const mounted = await harness.mount(view('off'), host);
 
   const attachment = (name) => host.querySelector(
-    `details[data-group-key="${name}"] > summary .group-attachment`);
+    `.group-box[data-group-key="${name}"] > .group-summary .group-attachment`);
   const assertTabReachable = (element) => {
     assert.ok(element?.matches('a[href], button:not([disabled])'));
     assert.notEqual(element?.getAttribute('tabindex'), '-1');
@@ -105,7 +105,7 @@ test('group attachments enforce http(s) again at the render boundary', async (t)
   assert.equal(empty?.tagName, 'BUTTON');
   assert.equal(empty?.textContent, '📎');
   assertTabReachable(empty);
-  const emptySummary = host.querySelector('details[data-group-key="empty"] > summary');
+  const emptyToggle = host.querySelector('.group-box[data-group-key="empty"] > .group-summary > .group-toggle');
   empty.click();
   await harness.act(() => new Promise((resolve) => setTimeout(resolve, 0)));
   assert.ok(host.querySelector('#task-link-modal'), 'the paperclip opens the real attachment editor');
@@ -117,8 +117,8 @@ test('group attachments enforce http(s) again at the render boundary', async (t)
   assertAbsent(host.querySelector('#task-link-modal'), 'Escape closes the attachment editor');
   assertSameNode(
     harness.document.activeElement,
-    emptySummary,
-    'Escape restores focus to the summary instead of pinning the overlay open',
+    emptyToggle,
+    "Escape restores focus to the group's fold button instead of pinning the overlay open",
   );
 
   empty.click();
@@ -150,7 +150,7 @@ test('group attachments enforce http(s) again at the render boundary', async (t)
     'the decorative paperclip and status marker do not duplicate the explicit link label');
   assertSameNode(fixedSafe.querySelector('.qo-text'), fixedSafe.querySelector('.group-attachment-label'),
     'the fixed label participates in quick-item auto-folding');
-  const safeSummary = host.querySelector('details[data-group-key="safe"] > summary');
+  const safeSummary = host.querySelector('.group-box[data-group-key="safe"] > .group-summary');
   assertSameNode(safeSummary.lastElementChild, fixedSafe,
     'fixed mode is the far-right group quick item');
 

@@ -155,7 +155,8 @@ test('the Groups tab: a drawing board or page row dragged onto another group\'s 
   const dnd = await harness.importDashboardModule('js/resource-dnd.js');
   const doc = harness.document;
   const box = (attr, name) => {
-    const el = doc.body.appendChild(doc.createElement('details'));
+    const el = doc.body.appendChild(doc.createElement('div'));
+    el.className = 'group-box';
     el.setAttribute(attr, name);
     return el.appendChild(doc.createElement('div'));
   };
@@ -264,7 +265,8 @@ test('the Groups tab: a resource row with a 🗑 dragged onto the trash bin is t
 
   // A drag that ends in a move (dragged already let go) still hides the bin.
   t.after(dnd.registerResourceRemover('drawing_board:plan', async () => removed.push('drawing_board')));
-  const ops = doc.body.appendChild(doc.createElement('details'));
+  const ops = doc.body.appendChild(doc.createElement('div'));
+  ops.className = 'group-box';
   ops.setAttribute('data-dnd-target-group', 'ops');
   const opsBox = ops.appendChild(doc.createElement('div'));
   fire('dragstart', drawingBoard);
@@ -327,7 +329,8 @@ test('the Groups tab: a Ctrl/Cmd-drag onto a group box copies, tinted as a clone
   const dnd = await harness.importDashboardModule('js/resource-dnd.js');
   const doc = harness.document;
   const box = (name) => {
-    const el = doc.body.appendChild(doc.createElement('details'));
+    const el = doc.body.appendChild(doc.createElement('div'));
+    el.className = 'group-box';
     el.setAttribute('data-dnd-target-group', name);
     return el.appendChild(doc.createElement('div'));
   };

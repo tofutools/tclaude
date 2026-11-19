@@ -2802,21 +2802,21 @@ details > summary {
 details > summary::-webkit-details-marker { display: none; }
 details > summary::before { content: "▶ "; color: #7d8590; font-size: 10px; }
 details[open] > summary::before { content: "▼ "; }
-/* Group headers fold/unfold only from the title (see bindGroupTitleToggle):
-   the disclosure triangle rides on .group-name so triangle + name read and
-   click as one unit, and the rest of the wide summary (chips, badges, empty
-   space) drops the pointer cursor so it doesn't advertise a fold it won't
-   perform. Non-group <details> (permissions, advanced config) carry no
-   data-group-key and keep the generic whole-summary marker + pointer above. */
-details[data-group-key] > summary {
-  cursor: default; position: relative; overflow: visible;
+/* Group boxes (groups-list.js's GroupBox, a disclosure.js Disclosure): a
+   header row (.group-summary) whose fold button (.group-toggle) wraps the
+   triangle and the name, with every chip and control beside the button,
+   never inside it. Only the button folds; the rest of the wide header
+   (chips, badges, empty space) is the drag handle and drop zone, so it
+   drops the pointer cursor rather than advertise a fold it won't perform.
+   The header keeps the padding the <summary> it replaced had. */
+.group-box { margin: 4px 0; }
+.group-box > .group-summary {
+  cursor: default; position: relative; overflow: visible; padding: 6px 0;
 }
-details[data-group-key] > summary::before { content: none; }
-details[data-group-key] > summary .group-name {
-  cursor: pointer; user-select: none;
-}
-details[data-group-key] > summary .group-name::before { content: "▶ "; color: #7d8590; font-size: 10px; }
-details[data-group-key][open] > summary .group-name::before { content: "▼ "; }
+.group-box > .group-summary > .group-toggle { font: inherit; user-select: none; }
+/* Bold, as it was when it rode on the <strong> name. */
+.group-box > .group-summary > .group-toggle::before { content: "▶ "; color: #7d8590; font-size: 10px; font-weight: 700; }
+.group-box.open > .group-summary > .group-toggle::before { content: "▼ "; }
 .group-attachment-float {
   /* Float the paperclip above the first name letter: the disclosure glyph
      consumes roughly the first 12px, while the 24px target centres its visible
@@ -2857,7 +2857,7 @@ details[data-group-key][open] > summary .group-name::before { content: "▼ "; }
    Opacity keeps the hidden controls in the tab order. */
 @media (hover: hover) and (pointer: fine) {
   .group-attachment-float { opacity: 0; pointer-events: none; }
-  details[data-group-key] > summary:hover .group-attachment-float,
+  .group-box > .group-summary:hover .group-attachment-float,
   .group-attachment-float:focus-visible,
   .group-attachment-float:has(:focus-visible) { opacity: 0.92; pointer-events: auto; }
   .group-attachment-float .group-attachment-edit { opacity: 0; pointer-events: none; }
@@ -3327,8 +3327,8 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
    on the left rail marks the nesting depth without competing with .subtable's
    own rail (which each nested group brings recursively). */
 .group-subgroups { margin: 6px 0 10px 0; }
-.group-subgroups > details[data-group-key] { margin: 4px 0; }
-.group-subgroups > details[data-group-key] > summary { border-left: 2px solid #3d4a5c; padding-left: 6px; margin-left: -6px; }
+.group-subgroups > .group-box { margin: 4px 0; }
+.group-subgroups > .group-box > .group-summary { border-left: 2px solid #3d4a5c; padding-left: 6px; margin-left: -6px; }
 .group-links-section { margin-top: 8px; padding: 6px 0 4px 0; border-top: 1px dashed #2a3340; }
 .group-links-section > strong { display: inline-block; color: #8aa0b8; margin-right: 8px; }
 .group-links-section > table { margin: 4px 0 6px 0; }
@@ -4560,8 +4560,8 @@ body.show-agent-hide-btn .row-actions .icon-btn[data-act="hide"] { display: inli
   display: inline-flex; gap: 4px; margin-left: 8px; position: relative;
   opacity: 0.4; transition: opacity 0.15s ease;
 }
-details > summary:hover .group-actions,
-details[open] > summary .group-actions { opacity: 1; }
+.group-box > .group-summary:hover .group-actions,
+.group-box.open > .group-summary .group-actions { opacity: 1; }
 /* When the action cluster lives in the expanded body (.subtable)
    rather than the summary, it is only ever rendered after the user
    opened the group — the dim-at-rest fade no longer applies. Drop
@@ -4615,54 +4615,54 @@ details[open] > summary .group-actions { opacity: 1; }
    Inside @media (hover: hover) like the fold: touch devices keep everything
    full. */
 @media (hover: hover) {
-  body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]) > summary .group-descr,
-  body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]) > summary .group-default-cwd,
-  body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]) > summary .group-max-members,
-  body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]) > summary .group-sandbox-profile,
-  body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]) > summary .group-link-chips,
-  body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]) > summary .group-header-cog {
+  body.group-quick-fold .group-box:not(.quick-pinned):not(.open) > .group-summary .group-descr,
+  body.group-quick-fold .group-box:not(.quick-pinned):not(.open) > .group-summary .group-default-cwd,
+  body.group-quick-fold .group-box:not(.quick-pinned):not(.open) > .group-summary .group-max-members,
+  body.group-quick-fold .group-box:not(.quick-pinned):not(.open) > .group-summary .group-sandbox-profile,
+  body.group-quick-fold .group-box:not(.quick-pinned):not(.open) > .group-summary .group-link-chips,
+  body.group-quick-fold .group-box:not(.quick-pinned):not(.open) > .group-summary .group-header-cog {
     opacity: 0.4;
   }
-  body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]) > summary:hover .group-descr,
-  body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]) > summary:hover .group-default-cwd,
-  body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]) > summary:hover .group-max-members,
-  body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]) > summary:hover .group-sandbox-profile,
-  body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]) > summary:hover .group-link-chips,
-  body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]) > summary:hover .group-header-cog,
-  body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]).quick-hover > summary .group-descr,
-  body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]).quick-hover > summary .group-default-cwd,
-  body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]).quick-hover > summary .group-max-members,
-  body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]).quick-hover > summary .group-sandbox-profile,
-  body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]).quick-hover > summary .group-link-chips,
-  body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]).quick-hover > summary .group-header-cog,
+  body.group-quick-fold .group-box:not(.quick-pinned):not(.open) > .group-summary:hover .group-descr,
+  body.group-quick-fold .group-box:not(.quick-pinned):not(.open) > .group-summary:hover .group-default-cwd,
+  body.group-quick-fold .group-box:not(.quick-pinned):not(.open) > .group-summary:hover .group-max-members,
+  body.group-quick-fold .group-box:not(.quick-pinned):not(.open) > .group-summary:hover .group-sandbox-profile,
+  body.group-quick-fold .group-box:not(.quick-pinned):not(.open) > .group-summary:hover .group-link-chips,
+  body.group-quick-fold .group-box:not(.quick-pinned):not(.open) > .group-summary:hover .group-header-cog,
+  body.group-quick-fold .group-box:not(.quick-pinned):not(.open).quick-hover > .group-summary .group-descr,
+  body.group-quick-fold .group-box:not(.quick-pinned):not(.open).quick-hover > .group-summary .group-default-cwd,
+  body.group-quick-fold .group-box:not(.quick-pinned):not(.open).quick-hover > .group-summary .group-max-members,
+  body.group-quick-fold .group-box:not(.quick-pinned):not(.open).quick-hover > .group-summary .group-sandbox-profile,
+  body.group-quick-fold .group-box:not(.quick-pinned):not(.open).quick-hover > .group-summary .group-link-chips,
+  body.group-quick-fold .group-box:not(.quick-pinned):not(.open).quick-hover > .group-summary .group-header-cog,
   /* Cog-menu-open brighten: must out-specify the 0.4 dim rule above, so it
      carries the SAME collapsed/unpinned fold prefix as the hover branches
      (the dim rule is (0,5,3); a bare `details > summary:has(…)` selector is
      only (0,5,2) and LOSES the cascade — the open menu, a DOM descendant of
      the dimmed .group-header-cog, would then composite at 40%). Scoping it to
      the fold context is exact: that's the only place the cog ever dims. */
-  body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]) > summary:has(.group-header-cog .action-menu.open) .group-header-cog {
+  body.group-quick-fold .group-box:not(.quick-pinned):not(.open) > .group-summary:has(.group-header-cog .action-menu.open) .group-header-cog {
     opacity: 1;
   }
   /* Dim the marker as one unit so its status dot matches the paperclip's color
      and intensity through the same reveal rhythm as the other quick options. */
-  body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]) > summary .group-attachment-set .group-attachment-marker {
+  body.group-quick-fold .group-box:not(.quick-pinned):not(.open) > .group-summary .group-attachment-set .group-attachment-marker {
     opacity: 0.4;
   }
-  body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]) > summary:hover .group-attachment-set .group-attachment-marker,
-  body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]) > summary:focus-within .group-attachment-set .group-attachment-marker,
-  body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]).quick-hover > summary .group-attachment-set .group-attachment-marker {
+  body.group-quick-fold .group-box:not(.quick-pinned):not(.open) > .group-summary:hover .group-attachment-set .group-attachment-marker,
+  body.group-quick-fold .group-box:not(.quick-pinned):not(.open) > .group-summary:focus-within .group-attachment-set .group-attachment-marker,
+  body.group-quick-fold .group-box:not(.quick-pinned):not(.open).quick-hover > .group-summary .group-attachment-set .group-attachment-marker {
     opacity: 1;
   }
   /* The dot only stands in for the folded label: light it while the label is
      collapsed, and drop it again on the same reveal triggers that slide the
      label open, so the rendered link never carries a redundant dot. */
-  body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]) > summary .group-attachment-set .group-attachment-status {
+  body.group-quick-fold .group-box:not(.quick-pinned):not(.open) > .group-summary .group-attachment-set .group-attachment-status {
     opacity: 1;
   }
-  body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]) > summary:hover .group-attachment-set .group-attachment-status,
-  body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]) > summary:focus-within .group-attachment-set .group-attachment-status,
-  body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]).quick-hover > summary .group-attachment-set .group-attachment-status {
+  body.group-quick-fold .group-box:not(.quick-pinned):not(.open) > .group-summary:hover .group-attachment-set .group-attachment-status,
+  body.group-quick-fold .group-box:not(.quick-pinned):not(.open) > .group-summary:focus-within .group-attachment-set .group-attachment-status,
+  body.group-quick-fold .group-box:not(.quick-pinned):not(.open).quick-hover > .group-summary .group-attachment-set .group-attachment-status {
     opacity: 0;
   }
 }
@@ -4690,8 +4690,8 @@ details[open] > summary .group-actions { opacity: 1; }
 }
 .spawn-btn:hover { background: #388bfd; }
 .spawn-btn .spawn-ico, .subgroup-btn .subgroup-ico { display: block; }
-details > summary:hover .spawn-btn,
-details[open] > summary .spawn-btn { opacity: 1; }
+.group-box > .group-summary:hover .spawn-btn,
+.group-box.open > .group-summary .spawn-btn { opacity: 1; }
 /* Icon swaps for the wizard theme. The opacity fade (0.4 at rest → 1 on
    summary hover/open, above) is theme-agnostic. */
 .spawn-btn-label-wizard, .subgroup-icon-wizard { display: none; }
@@ -4989,7 +4989,7 @@ body.wizard .force-fold-label-wizard { display: inline; }
    collapsed groups, so once you unfold a group its quick options stay open
    (you're already looking inside it — no reason to make you hover for them). */
 @media (hover: hover) {
-  body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]) > summary .qo-text {
+  body.group-quick-fold .group-box:not(.quick-pinned):not(.open) > .group-summary .qo-text {
     display: inline-block;
     /* text-bottom, NOT bottom: bottom tracks the LINE BOX bottom, which the
        30px sprite bots (.actbot-sprite, vertical-align: middle) drag ~10px
@@ -5012,9 +5012,9 @@ body.wizard .force-fold-label-wizard { display: inline; }
      component-owned .quick-hover (which follows the semantic group key across
      polls and reorders, so a stationary pointer keeps the same reveal even if
      its keyed details node moves). */
-  body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]) > summary:hover .qo-text,
-  body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]) > summary:focus-within .qo-text,
-  body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]).quick-hover > summary .qo-text {
+  body.group-quick-fold .group-box:not(.quick-pinned):not(.open) > .group-summary:hover .qo-text,
+  body.group-quick-fold .group-box:not(.quick-pinned):not(.open) > .group-summary:focus-within .qo-text,
+  body.group-quick-fold .group-box:not(.quick-pinned):not(.open).quick-hover > .group-summary .qo-text {
     /* Generous reveal cap — typical descr/dir/profile show in full; a
        pathological label clips to an ellipsis (the chip's title tooltip still
        carries the whole value) so a long one can't blow the row out to a
@@ -5029,32 +5029,32 @@ body.wizard .force-fold-label-wizard { display: inline; }
      member chip tightens too so the whole cluster stays even. The margin
      (1px) and halved horizontal padding (3px, from the base 6px) together
      roughly halve the visual gap between adjacent icon chips. */
-  body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]) > summary .group-descr,
-  body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]) > summary .group-default-cwd,
-  body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]) > summary .group-max-members,
-  body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]) > summary .group-default-model,
-  body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]) > summary .group-sandbox-profile,
-  body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]) > summary .group-usage-profile,
-  body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]) > summary .group-link-chips,
-  body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]) > summary .group-attachment-fixed {
+  body.group-quick-fold .group-box:not(.quick-pinned):not(.open) > .group-summary .group-descr,
+  body.group-quick-fold .group-box:not(.quick-pinned):not(.open) > .group-summary .group-default-cwd,
+  body.group-quick-fold .group-box:not(.quick-pinned):not(.open) > .group-summary .group-max-members,
+  body.group-quick-fold .group-box:not(.quick-pinned):not(.open) > .group-summary .group-default-model,
+  body.group-quick-fold .group-box:not(.quick-pinned):not(.open) > .group-summary .group-sandbox-profile,
+  body.group-quick-fold .group-box:not(.quick-pinned):not(.open) > .group-summary .group-usage-profile,
+  body.group-quick-fold .group-box:not(.quick-pinned):not(.open) > .group-summary .group-link-chips,
+  body.group-quick-fold .group-box:not(.quick-pinned):not(.open) > .group-summary .group-attachment-fixed {
     margin-left: 1px;
   }
   /* Halve the icon chips' own inner horizontal padding too — the base 6px
      dominates the inter-chip space once the labels are folded away. Scoped
      to the bordered-transparent icon chips; the .group-link-chips flex
      container has no padding of its own (its inner pills keep their look). */
-  body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]) > summary .group-descr,
-  body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]) > summary .group-default-cwd,
-  body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]) > summary .group-max-members,
-  body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]) > summary .group-default-model,
-  body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]) > summary .group-sandbox-profile,
-  body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]) > summary .group-usage-profile {
+  body.group-quick-fold .group-box:not(.quick-pinned):not(.open) > .group-summary .group-descr,
+  body.group-quick-fold .group-box:not(.quick-pinned):not(.open) > .group-summary .group-default-cwd,
+  body.group-quick-fold .group-box:not(.quick-pinned):not(.open) > .group-summary .group-max-members,
+  body.group-quick-fold .group-box:not(.quick-pinned):not(.open) > .group-summary .group-default-model,
+  body.group-quick-fold .group-box:not(.quick-pinned):not(.open) > .group-summary .group-sandbox-profile,
+  body.group-quick-fold .group-box:not(.quick-pinned):not(.open) > .group-summary .group-usage-profile {
     padding-left: 3px;
     padding-right: 3px;
   }
 }
 @media (prefers-reduced-motion: reduce) {
-  body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]) > summary .qo-text {
+  body.group-quick-fold .group-box:not(.quick-pinned):not(.open) > .group-summary .qo-text {
     transition: none;
   }
   .group-attachment-status { transition: none; }
@@ -5066,22 +5066,22 @@ body.wizard .force-fold-label-wizard { display: inline; }
    space. Reuse the tight spacing for [open] too so an open header stays as
    compact as a folded one, with no 1px→8px jump on toggle. Not gated on fold
    mode or hover — an open header is tight everywhere. */
-details[data-group-key][open] > summary .group-descr,
-details[data-group-key][open] > summary .group-default-cwd,
-details[data-group-key][open] > summary .group-max-members,
-details[data-group-key][open] > summary .group-default-model,
-details[data-group-key][open] > summary .group-sandbox-profile,
-details[data-group-key][open] > summary .group-usage-profile,
-details[data-group-key][open] > summary .group-link-chips,
-details[data-group-key][open] > summary .group-attachment-fixed {
+.group-box.open > .group-summary .group-descr,
+.group-box.open > .group-summary .group-default-cwd,
+.group-box.open > .group-summary .group-max-members,
+.group-box.open > .group-summary .group-default-model,
+.group-box.open > .group-summary .group-sandbox-profile,
+.group-box.open > .group-summary .group-usage-profile,
+.group-box.open > .group-summary .group-link-chips,
+.group-box.open > .group-summary .group-attachment-fixed {
   margin-left: 1px;
 }
-details[data-group-key][open] > summary .group-descr,
-details[data-group-key][open] > summary .group-default-cwd,
-details[data-group-key][open] > summary .group-max-members,
-details[data-group-key][open] > summary .group-default-model,
-details[data-group-key][open] > summary .group-sandbox-profile,
-details[data-group-key][open] > summary .group-usage-profile {
+.group-box.open > .group-summary .group-descr,
+.group-box.open > .group-summary .group-default-cwd,
+.group-box.open > .group-summary .group-max-members,
+.group-box.open > .group-summary .group-default-model,
+.group-box.open > .group-summary .group-sandbox-profile,
+.group-box.open > .group-summary .group-usage-profile {
   padding-left: 3px;
   padding-right: 3px;
 }
@@ -5192,9 +5192,9 @@ details[data-group-key][open] > summary .group-usage-profile {
 .group-sandbox-profile:hover > .group-profile-icon,
 .usage-profile-chip:hover > .group-profile-icon,
 .global-usage-profile:not(.unset) > .group-profile-icon,
-details[data-group-key][open] > summary .group-usage-profile:not(.unset) > .group-profile-icon,
-details[data-group-key][open] > summary .group-default-model:not(.unset) > .group-profile-icon,
-details[data-group-key][open] > summary .group-sandbox-profile:not(.unset) > .group-profile-icon {
+.group-box.open > .group-summary .group-usage-profile:not(.unset) > .group-profile-icon,
+.group-box.open > .group-summary .group-default-model:not(.unset) > .group-profile-icon,
+.group-box.open > .group-summary .group-sandbox-profile:not(.unset) > .group-profile-icon {
   opacity: 1;
 }
 .global-sandbox-profile, .user-default-model { background: transparent; }
@@ -5872,19 +5872,19 @@ details[data-group-key][open] > summary .group-sandbox-profile:not(.unset) > .gr
    (header + expanded body) so it's clear the drop targets the group,
    not one row; the tint is kept low-alpha so member rows stay readable
    under it. */
-details.dnd-drop-over {
+.group-box.dnd-drop-over {
   background: rgba(31, 49, 72, 0.4);
   outline: 2px dashed #58a6ff;
   outline-offset: -2px;
   border-radius: 4px;
 }
-details.dnd-drop-over.dnd-effect-clone {
+.group-box.dnd-drop-over.dnd-effect-clone {
   background: rgba(29, 44, 31, 0.45);
   outline-color: #3fb950;
 }
 /* A drop the target refuses (the fused view's move onto another node's
    group, without the grant): the same whole box, in red. */
-details.dnd-drop-over.dnd-drop-refused {
+.group-box.dnd-drop-over.dnd-drop-refused {
   background: rgba(72, 31, 31, 0.35);
   outline-color: #f85149;
 }
@@ -5894,8 +5894,8 @@ details.dnd-drop-over.dnd-drop-refused {
    strip only .dnd-drop-over) never fight this highlight. The dashed accent
    outline mirrors the member-drop highlight so the "drop lands on this whole
    box" affordance reads the same across both drag features. */
-details[data-dnd-target-group].dock-drop-over,
-details[data-dnd-target-ungrouped].dock-drop-over,
+.group-box[data-dnd-target-group].dock-drop-over,
+.group-box[data-dnd-target-ungrouped].dock-drop-over,
 #groups-list.dock-drop-over {
   background: rgba(31, 49, 72, 0.4);
   outline: 2px dashed #58a6ff;
@@ -5910,8 +5910,8 @@ details[data-dnd-target-ungrouped].dock-drop-over,
 /* Wizard skin: tint the drop highlight to the grimoire palette. Scoped to this
    feature's selectors (NOT an unscoped body.wizard rule) — see the dock's
    anti-pin invariant. */
-body.wizard details[data-dnd-target-group].dock-drop-over,
-body.wizard details[data-dnd-target-ungrouped].dock-drop-over,
+body.wizard .group-box[data-dnd-target-group].dock-drop-over,
+body.wizard .group-box[data-dnd-target-ungrouped].dock-drop-over,
 body.wizard #groups-list.dock-drop-over {
   background: rgba(63, 45, 90, 0.42);
   outline-color: #a371f7;
@@ -5956,31 +5956,31 @@ body.wizard #dock-toggle.dock-save-over {
    cursor back to pointer — plus a faint hover tint over the whole header
    together advertise that the header is draggable; the per-child pointer
    cursor still marks the title and chips as click targets. */
-details[data-group-key] > summary[data-group-reorder] { cursor: grab; }
-details[data-group-key] > summary[data-group-reorder]:active { cursor: grabbing; }
-details[data-group-key] > summary[data-group-reorder] [data-act] { cursor: pointer; }
-details[data-group-key] > summary[data-group-reorder]:hover {
+.group-box > .group-summary[data-group-reorder] { cursor: grab; }
+.group-box > .group-summary[data-group-reorder]:active { cursor: grabbing; }
+.group-box > .group-summary[data-group-reorder] [data-act] { cursor: pointer; }
+.group-box > .group-summary[data-group-reorder]:hover {
   background: rgba(88, 166, 255, 0.05);
   border-radius: 4px;
 }
 /* The group being dragged fades, like .dnd-source-row does for members. */
-details[data-group-key].group-reorder-source { opacity: 0.5; }
+.group-box.group-reorder-source { opacity: 0.5; }
 /* Insertion line: a 3px accent rule drawn just OUTSIDE the WHOLE target group
    box, on the edge the drop lands against (above = before, below = after).
    Outset (not inset) so it sits in the gap BETWEEN groups instead of inside
    the box — an inset line is painted under the group's own content (the
    expanded body's table / links) and gets hidden. For an expanded
    group the after-line therefore sits clearly below its full body. */
-details[data-group-key].group-drop-before {
+.group-box.group-drop-before {
   box-shadow: 0 -3px 0 0 #58a6ff;
 }
-details[data-group-key].group-drop-after {
+.group-box.group-drop-after {
   box-shadow: 0 3px 0 0 #58a6ff;
 }
-details[data-group-key].group-drop-before.group-drop-clone {
+.group-box.group-drop-before.group-drop-clone {
   box-shadow: 0 -3px 0 0 #3fb950;
 }
-details[data-group-key].group-drop-after.group-drop-clone {
+.group-box.group-drop-after.group-drop-clone {
   box-shadow: 0 3px 0 0 #3fb950;
 }
 /* Nest target: dropping over the BULK of the box (everything but the thin
@@ -5988,12 +5988,12 @@ details[data-group-key].group-drop-after.group-drop-clone {
    (n-level groups-in-groups, JOH-392). A ring + tint around the whole target
    box reads as "into this container", distinct from the thin before/after
    insertion line of a sibling reorder. */
-details[data-group-key].group-drop-into {
+.group-box.group-drop-into {
   box-shadow: inset 0 0 0 2px #58a6ff;
   background: rgba(88, 166, 255, 0.08);
   border-radius: 6px;
 }
-details[data-group-key].group-drop-into.group-drop-clone {
+.group-box.group-drop-into.group-drop-clone {
   box-shadow: inset 0 0 0 2px #3fb950;
   background: rgba(63, 185, 80, 0.08);
 }
@@ -6087,11 +6087,11 @@ details[data-group-key].group-drop-into.group-drop-clone {
 /* The virtual "Ungrouped" group: online agents in no group. Styled
    distinctly from real groups — a dashed left rule + muted name — so
    it reads as a derived bucket, not a real group you can operate on. */
-details.group-virtual > summary {
+.group-box.group-virtual > .group-summary {
   border-left: 2px dashed #2a3340;
   padding-left: 6px;
 }
-details.group-virtual .group-name { color: #8aa0b8; }
+.group-box.group-virtual .group-name { color: #8aa0b8; }
 .group-virtual-badge {
   display: inline-block; margin-left: 6px; padding: 0 5px;
   font-size: 9px; text-transform: uppercase; letter-spacing: 0.6px;
@@ -17389,7 +17389,7 @@ html:not([data-layout="phone"]) nav:has(#node-chips-root :is(.has-fleet, .has-ma
 .fleet-seg-btn { border: 0; font: inherit; font-size: 13px; cursor: pointer; }
 .fleet-seg-btn + .fleet-seg-btn { border-left: 1px solid #30363d; }
 .fleet-seg-btn.on { cursor: default; }
-.fleet-node-suffix { color: var(--nc); font-weight: 600; cursor: pointer; }
+.fleet-node-suffix { color: var(--nc); font: inherit; font-weight: 600; cursor: pointer; background: none; border: 0; padding: 0; margin: 0; }
 .fleet-node-suffix:hover { text-decoration: underline; }
 .fleet-stale-label { font-size: 11px; font-weight: normal; color: #e3b341; }
 /* Away marker (agent-presence.js, tcl-hocp2h): a visiting agent's badge and a
@@ -17495,7 +17495,7 @@ body.wizard #launch-target .lt-node.sel { background: #3a2a63; }
 body.wizard #launch-target .lt-node:disabled { color: #6b5a8a; }
 body.wizard #launch-target :is(.lt-k, .lt-carry-v, .lt-node-why, .lt-check) { color: #b39ddb; }
 body.wizard #launch-target :is(.lt-carry-k, .lt-consequence) { color: #e7d9f5; }
-details.fleet-stale > summary, details.fleet-stale > .subtable { opacity: .55; }
+.group-box.fleet-stale > .group-summary, .group-box.fleet-stale > .subtable { opacity: .55; }
 /* Its refused data-act controls are greyed by a generated rule
    (fleet-merged-island.js), per node from what that node shares. */
 /* Fleet administration (js/fleet-admin-island.js): this node's federation
@@ -18029,7 +18029,7 @@ body.wizard .groups-processes-placeholder-glyph { color: #d4af37; }
 .gp-member-runs-label { color: #8b949e; font-size: 11px; }
 .gp-member-run { display: inline-flex; align-items: center; gap: 4px; }
 .gp-subtree-total { color: #6e7681; font-size: 11px; }
-details[open]:not(.subgroups-folded) > summary .gp-subtree-total { display: none; }
+.group-box.open:not(.subgroups-folded) > .group-summary .gp-subtree-total { display: none; }
 .gp-run-glyph { width: 11px; height: 11px; fill: #c9d1d9; vertical-align: -1px; }
 
 /* Groups › Both (js/groups-processes.js FusedSection): each group's Agents
@@ -18071,10 +18071,10 @@ body.wizard .group-header-actions.gf-title-row { border-bottom-color: rgba(122, 
 .gf-label { color: #c9d1d9; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; font-size: 10.5px; }
 .gf-count { color: #6e7681; font-size: 10.5px; font-variant-numeric: tabular-nums; }
 .gf-count.zero { color: #484f58; }
-.gf-section > .gf-empty { margin: 0 0 6px; }
-.gf-section > .gp-group { padding: 0; }
-.gf-section > .gp-group .gp-card, .gf-section > .gp-group .gp-planned-list { margin-left: 0; }
-.gf-section > .gp-group .gp-empty { margin: 0 0 4px; }
+.gf-section > .gf-section-body > .gf-empty { margin: 0 0 6px; }
+.gf-section > .gf-section-body > .gp-group { padding: 0; }
+.gf-section > .gf-section-body > .gp-group .gp-card, .gf-section > .gf-section-body > .gp-group .gp-planned-list { margin-left: 0; }
+.gf-section > .gf-section-body > .gp-group .gp-empty { margin: 0 0 4px; }
 /* Both's hover links (js/groups-fused-links.js): a quiet dashed curve from
    an agent's state pill to each step it performs, drawn only on hover. */
 .gf-focus { position: relative; }

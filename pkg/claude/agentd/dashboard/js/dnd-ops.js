@@ -14,13 +14,13 @@ export const DRAG_GRANT_ACTS = Object.freeze({ clone: 'clone', retire: 'retire-a
 // targetGroupOf is the real group a box stands for, as it is listed.
 export function targetGroupOf(box) {
   return box.getAttribute('data-dnd-target-group')
-    || (box.matches('details[data-fleet-node]') ? box.getAttribute('data-group-key') || '' : '');
+    || (box.matches('.group-box[data-fleet-node]') ? box.getAttribute('data-group-key') || '' : '');
 }
 
 // dndNode reads the node a row or box is on: node '' for the page's own (and
 // outside the fused view), else the node's ID, with the name it shows.
 export function dndNode(el) {
-  const box = el?.closest?.('details[data-fleet-node]');
+  const box = el?.closest?.('.group-box[data-fleet-node]');
   const id = box?.getAttribute('data-fleet-node') || '';
   const name = box?.getAttribute('data-fleet-node-name') || '';
   return { node: id && !isPageNode(id) ? id : '', name };
@@ -71,7 +71,7 @@ export function nodeAllowsActing(node) {
 // own names (own). Its sibling order is the fused view's own.
 export function groupDragContext(el, { refresh = () => {}, fetchImpl = (...args) => globalThis.fetch(...args) } = {}) {
   const { node, name } = dndNode(el);
-  const fused = !!el?.closest?.('details[data-fleet-node]');
+  const fused = !!el?.closest?.('.group-box[data-fleet-node]');
   const at = fused && name ? `@${name}` : '';
   return {
     node, name, fused,

@@ -3,13 +3,11 @@
 // <summary> element"); a screen reader announces the summary as one button
 // with the controls folded into it. A foldable section whose header carries
 // controls is a disclosure.js section instead (a header row with a real toggle
-// button, the controls beside it), as the dock sections, a group's Triggers
-// and the fleet node sections are.
+// button, the controls beside it), as the dock sections, a group's Triggers,
+// the group boxes and the fleet node sections are.
 //
-// The group boxes of the Groups tree (and the sandbox profile editor's
-// sections, whose help button sits in the legend) still hold controls in their
-// <summary>: converting them reaches into drag and drop, reorder and the saved
-// fold state, and is its own piece of work. KNOWN holds them at today's count
+// The sandbox profile editor's sections, whose help button sits in the legend,
+// still hold controls in their <summary>. KNOWN holds them at today's count
 // per file, so no new <summary> takes a control and the count only goes down.
 
 import test from 'node:test';
@@ -21,7 +19,6 @@ const read = (file) => readFileSync(new URL(file, DASHBOARD), 'utf8');
 const lineOf = (source, index) => source.slice(0, index).split('\n').length;
 
 const KNOWN = {
-  'js/groups-list.js': 1, // RealGroupSummary: the group header
   'js/management-island.js': 2, // sandbox profile sections: the legend's help button
 };
 

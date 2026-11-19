@@ -74,9 +74,9 @@ export function revealDropTarget({ group = '', node = '', section = '', virtualK
 // groupBoxes are the drawn <details> of a group: the page's own view keys it
 // by its name; the fused view by group@node on the node's box.
 function groupBoxes({ group, node, virtualKey }) {
-  if (virtualKey) return [...document.querySelectorAll(`details[data-group-key="${esc(virtualKey)}"]`)].filter(visible);
+  if (virtualKey) return [...document.querySelectorAll(`.group-box[data-group-key="${esc(virtualKey)}"]`)].filter(visible);
   const page = isPageNode(node || '');
-  return [...document.querySelectorAll('details[data-group-key]')].filter((box) => {
+  return [...document.querySelectorAll('.group-box[data-group-key]')].filter((box) => {
     if (!visible(box)) return false;
     const key = box.getAttribute('data-group-key') || '';
     const fleet = box.getAttribute('data-fleet-node');
@@ -91,7 +91,7 @@ function groupBoxes({ group, node, virtualKey }) {
 // agent's placeholder.
 function boxRows(box) {
   return [...box.querySelectorAll('tr[data-dnd-agent], tr[data-conv]')].filter((row) =>
-    row.closest('details[data-group-key]') === box && !row.classList.contains('away-placeholder') && visible(row));
+    row.closest('.group-box[data-group-key]') === box && !row.classList.contains('away-placeholder') && visible(row));
 }
 
 const rowIDs = (row) => [row.getAttribute('data-dnd-agent'), row.getAttribute('data-conv')].filter(Boolean);
@@ -111,11 +111,11 @@ export function findLanded(target, fallback) {
     }
     if (target.process) {
       const chip = [...box.querySelectorAll(`[data-saved-process-drag="${esc(target.process)}"]`)]
-        .find((el) => el.closest('details[data-group-key]') === box && visible(el));
+        .find((el) => el.closest('.group-box[data-group-key]') === box && visible(el));
       if (chip) return { el: chip, thing: true };
     }
-    if (target.header) return { el: box.querySelector(':scope > summary') || box, thing: true };
-    if (fallback) return { el: box.querySelector(':scope > summary') || box, thing: false };
+    if (target.header) return { el: box.querySelector(':scope > .group-summary') || box, thing: true };
+    if (fallback) return { el: box.querySelector(':scope > .group-summary') || box, thing: false };
   }
   return null;
 }

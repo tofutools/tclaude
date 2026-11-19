@@ -39,7 +39,7 @@ function visibleBottom() {
   return top > 0 && top < window.innerHeight ? top : window.innerHeight;
 }
 
-const GROUP = 'details[data-group-key]';
+const GROUP = '.group-box[data-group-key]';
 
 function ownGroup(el) {
   return el?.closest?.(GROUP) || null;

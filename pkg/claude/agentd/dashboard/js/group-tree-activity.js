@@ -26,16 +26,6 @@ export function mergeActivityMembers(memberLists) {
   return merged;
 }
 
-// disclosurePreference preserves the distinction between a default-closed
-// group (no stored value) and an explicitly folded default-open group ('0').
-// Reconciliation can emit synthetic toggle events for recreated <details>, so
-// only a toggle known to come from an operator/programmatic command may create
-// the explicit-close sentinel.
-export function disclosurePreference(open, intentional, previous = null) {
-  if (!intentional) return previous;
-  return open ? '1' : '0';
-}
-
 // groupActivityAtDisclosure combines a group's direct members with the
 // already-computed subtree membership of its children. subtreeMembers always
 // travels upward for a folded ancestor; headerMembers follows this group's own

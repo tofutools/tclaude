@@ -90,7 +90,7 @@ func TestDashboardHTML_OptionsMenu(t *testing.T) {
 	must(`const sourceVisible = templateMode;`,
 		"template mirroring remains editable after entering through the subgroup shortcut")
 	must(".spawn-btn {", "the .spawn-btn CSS rule ships with the dashboard — without it the chip falls back to bare browser styling")
-	must("details[open] > summary .spawn-btn { opacity: 1; }",
+	must(".group-box.open > .group-summary .spawn-btn { opacity: 1; }",
 		"spawn-btn fades with the rest of the group-action chips when the group is collapsed, brightens on hover / when open")
 	for _, act := range []string{"jump", "hide"} {
 		presentAction(act, "agent row keeps focus/hide ("+act+") top-level")

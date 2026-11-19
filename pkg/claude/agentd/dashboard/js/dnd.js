@@ -90,7 +90,7 @@ let dndCloneHoverTarget = null;
 // In the fused Groups view each box is one node's group: its <details> carries
 // data-fleet-node, and data-group-key is the name it is listed by (a peer's
 // group@node). A drop there acts on that node (dndContext).
-const DND_TARGET_SEL = 'details[data-dnd-target-group],details[data-dnd-target-ungrouped],details[data-dnd-target-retired],#dnd-trash,details[data-fleet-node][data-group-key]';
+const DND_TARGET_SEL = '.group-box[data-dnd-target-group],.group-box[data-dnd-target-ungrouped],.group-box[data-dnd-target-retired],#dnd-trash,.group-box[data-fleet-node][data-group-key]';
 
 // dndSameNode: a drop onto a box on another node than its source's is a
 // move between nodes, which the fused view's own handler takes (the move

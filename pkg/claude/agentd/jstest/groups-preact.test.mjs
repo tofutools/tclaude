@@ -229,11 +229,12 @@ test('Groups list preserves keyed disclosure, focus and nodes across reorder/act
     />
   `, host);
 
-  const alpha = host.querySelector('details[data-group-key="alpha"]');
-  const beta = host.querySelector('details[data-group-key="beta"]');
+  const alpha = host.querySelector('.group-box[data-group-key="alpha"]');
+  const beta = host.querySelector('.group-box[data-group-key="beta"]');
   const inspect = getByRole(alpha, 'button', { name: 'Alpha member' });
   const descr = alpha.querySelector('.group-descr');
-  alpha.open = true;
+  await harness.act(() => alpha.querySelector(':scope > .group-summary > .group-toggle').click());
+  assert.equal(alpha.classList.contains('open'), true, 'the fold button opens the group');
   inspect.focus();
 
   await harness.act(() => harness.fireEvent(descr, 'click'));
@@ -245,10 +246,10 @@ test('Groups list preserves keyed disclosure, focus and nodes across reorder/act
     { name: 'alpha', descr: 'new', members: [{ conv_id: 'alpha-member', title: 'Alpha member', online: true, state: { status: 'working' } }] },
   ])));
 
-  assertSameNode(host.querySelector('details[data-group-key="alpha"]'), alpha);
-  assertSameNode(host.querySelector('details[data-group-key="beta"]'), beta);
-  assertSameNode(host.querySelector('details:first-child'), beta, 'snapshot reorder moves keyed nodes');
-  assert.equal(alpha.open, true, 'live disclosure state is not reset by a reorder');
+  assertSameNode(host.querySelector('.group-box[data-group-key="alpha"]'), alpha);
+  assertSameNode(host.querySelector('.group-box[data-group-key="beta"]'), beta);
+  assertSameNode(host.querySelector('.group-box[data-group-key]'), beta, 'snapshot reorder moves keyed nodes');
+  assert.equal(alpha.classList.contains('open'), true, 'disclosure state is not reset by a reorder');
   assertSameNode(alpha.querySelector('.group-descr-input'), editor, 'native inline editor identity survives publish');
   assert.equal(editor.value, 'draft survives poll', 'poll data cannot overwrite a live draft');
   assert.ok(beta.querySelector('.group-activity'));
@@ -260,7 +261,7 @@ test('Groups list preserves keyed disclosure, focus and nodes across reorder/act
   await harness.act(() => harness.document.dispatchEvent(new harness.window.CustomEvent(
     'tclaude:wizard', { detail: { active: true } },
   )));
-  assertSameNode(host.querySelector('details[data-group-key="alpha"]'), alpha,
+  assertSameNode(host.querySelector('.group-box[data-group-key="alpha"]'), alpha,
     'the theme repaint preserves keyed group disclosure identity');
 
   const machine = beta.querySelector('.slop-machine');
@@ -301,8 +302,8 @@ test('Groups hover state follows semantic keys across polls and clears on disapp
   };
   const beta = { name: 'beta', members: [] };
   const { state, host, mounted } = await mountGroups(t, harness, [alpha, beta], actions);
-  const alphaNode = host.querySelector('details[data-group-key="alpha"]');
-  const summary = alphaNode.querySelector('summary');
+  const alphaNode = host.querySelector('.group-box[data-group-key="alpha"]');
+  const summary = alphaNode.querySelector(':scope > .group-summary');
   const name = summary.querySelector('.group-name');
   const activity = summary.querySelector('.group-activity');
 
@@ -315,7 +316,7 @@ test('Groups hover state follows semantic keys across polls and clears on disapp
     'movement within one summary does not clear and reapply hover');
 
   await harness.act(() => state.publish(snapshot([beta, { ...alpha, descr: 'polled' }])));
-  assertSameNode(host.querySelector('details[data-group-key="alpha"]'), alphaNode,
+  assertSameNode(host.querySelector('.group-box[data-group-key="alpha"]'), alphaNode,
     'the keyed group node survives reorder polling');
   assert.equal(alphaNode.classList.contains('quick-hover'), true,
     'semantic hover state is re-stamped after polling reconciliation');
@@ -323,7 +324,7 @@ test('Groups hover state follows semantic keys across polls and clears on disapp
   await harness.act(() => state.publish(snapshot([beta])));
   assertAbsent(host.querySelector('.quick-hover'));
   await harness.act(() => state.publish(snapshot([alpha, beta])));
-  assert.equal(host.querySelector('details[data-group-key="alpha"]').classList.contains('quick-hover'), false,
+  assert.equal(host.querySelector('.group-box[data-group-key="alpha"]').classList.contains('quick-hover'), false,
     'a group that disappears clears its hover key before reinsertion');
 
   await mounted.unmount();
@@ -457,9 +458,9 @@ test('native group chrome preserves hierarchy, virtual DnD and shared menu contr
     }}
   />`, host);
 
-  const parent = host.querySelector('details[data-dnd-target-group="parent"]');
-  const child = host.querySelector('details[data-dnd-target-group="child"]');
-  await harness.act(() => harness.fireEvent(parent.querySelector('summary'), 'mouseover', {
+  const parent = host.querySelector('.group-box[data-dnd-target-group="parent"]');
+  const child = host.querySelector('.group-box[data-dnd-target-group="child"]');
+  await harness.act(() => harness.fireEvent(parent.querySelector(':scope > .group-summary'), 'mouseover', {
     relatedTarget: harness.document.body,
   }));
   assert.equal(parent.classList.contains('quick-hover'), true);
@@ -490,7 +491,7 @@ test('native group chrome preserves hierarchy, virtual DnD and shared menu contr
   assert.match(parent.querySelector('[data-act="stand-down-force"]').title, /Not a delete/);
   assert.match(parent.querySelector('[data-act="cleanup-worktrees-group"]').title, /protected/);
   assert.equal(parent.querySelector('[data-act="link-delete"]').title, 'Remove this link');
-  assert.equal(host.querySelector('details[data-dnd-target-ungrouped]').dataset.groupKey, ' ungrouped-virtual');
+  assert.equal(host.querySelector('.group-box[data-dnd-target-ungrouped]').dataset.groupKey, ' ungrouped-virtual');
   const loose = host.querySelector('tr[data-dnd-source-ungrouped][data-key="loose"]');
   assert.ok(loose);
   assert.equal(loose.querySelector('.rowname-text').dataset.editorKey,
@@ -516,7 +517,7 @@ test('native group chrome preserves hierarchy, virtual DnD and shared menu contr
   assertSameNode(host.querySelector('tr[data-key="retired-1"]'), retired,
     'retired row identity stays conv-id-keyed when agent metadata materializes');
 
-  assert.match(retired.closest('details').querySelector('.group-virtual-badge').title,
+  assert.match(retired.closest('.group-box').querySelector('.group-virtual-badge').title,
     /Drag an agent here to retire it/);
   const offlineToggle = harness.document.createElement('input');
   offlineToggle.id = 'filter-groups-offline';
@@ -527,7 +528,7 @@ test('native group chrome preserves hierarchy, virtual DnD and shared menu contr
   await harness.act(() => harness.document.dispatchEvent(new harness.window.CustomEvent(
     'tclaude:wizard', { detail: { active: true } },
   )));
-  const ungrouped = host.querySelector('details[data-dnd-target-ungrouped]');
+  const ungrouped = host.querySelector('.group-box[data-dnd-target-ungrouped]');
   assert.match(ungrouped.querySelector('.subtable .theme-copy-wizard').textContent,
     /slumbering hero.*show slumbering/);
   assert.match(ungrouped.querySelector('.group-virtual-badge').title,
@@ -643,7 +644,7 @@ test('a group menu cycles its offline override and the member list follows', asy
   assert.equal(offlineRow(), null, 'hidden for this group whatever the tab default says');
 
   await harness.act(() => state.publish(snapshot([{ ...group, members: [group.members[1]] }])));
-  assert.match(host.querySelector('details[data-group-key="alpha"]').textContent, /⚙ menu hides offline/,
+  assert.match(host.querySelector('.group-box[data-group-key="alpha"]').textContent, /⚙ menu hides offline/,
     'with nobody left to show, the note names the control that hid them');
   await harness.act(() => state.publish(snapshot([group])));
 
@@ -666,7 +667,7 @@ test('native group and member menus share dismissal, focus, flip and publish sta
     }],
   };
   const { state, host, mounted } = await mountGroups(t, harness, [group], actions);
-  const details = host.querySelector('details[data-group-key="alpha"]');
+  const details = host.querySelector('.group-box[data-group-key="alpha"]');
   const groupCog = details.querySelector('.group-header-cog .cog-btn');
   const groupMenu = details.querySelector('.group-header-cog .action-menu');
   const memberCog = details.querySelector('tr[data-key="member-1"] .cog-btn');
@@ -724,8 +725,8 @@ test('multi-group member copies isolate menus, editors, focus and unmount cleanu
     renameAgent: async () => true,
   };
   const { state, host, mounted } = await mountGroups(t, harness, [alpha, beta], actions);
-  const alphaDetails = host.querySelector('details[data-group-key="alpha"]');
-  const betaDetails = host.querySelector('details[data-group-key="beta"]');
+  const alphaDetails = host.querySelector('.group-box[data-group-key="alpha"]');
+  const betaDetails = host.querySelector('.group-box[data-group-key="beta"]');
   const alphaRow = alphaDetails.querySelector('tr[data-key="shared-member"]');
   const betaRow = betaDetails.querySelector('tr[data-key="shared-member"]');
   const alphaCog = alphaRow.querySelector('.cog-btn');
@@ -756,7 +757,7 @@ test('multi-group member copies isolate menus, editors, focus and unmount cleanu
   await harness.act(() => state.publish(snapshot([{
     ...beta, members: [{ ...member, title: 'Published shared member' }],
   }])));
-  const survivingBeta = host.querySelector('details[data-group-key="beta"]');
+  const survivingBeta = host.querySelector('.group-box[data-group-key="beta"]');
   const survivingCog = survivingBeta.querySelector('tr[data-key="shared-member"] .cog-btn');
   const survivingMenu = survivingBeta.querySelector('tr[data-key="shared-member"] .action-menu');
   assert.equal(survivingMenu.classList.contains('open'), true,
@@ -798,8 +799,8 @@ test('native member and group editors preserve drafts, park DnD and surface busy
     }],
   };
   const { state, host, mounted } = await mountGroups(t, harness, [group], actions);
-  const details = host.querySelector('details[data-group-key="alpha"]');
-  const summary = details.querySelector('summary');
+  const details = host.querySelector('.group-box[data-group-key="alpha"]');
+  const summary = details.querySelector(':scope > .group-summary');
   const row = details.querySelector('tr[data-key="member-1"]');
 
   const agentSave = deferred();
@@ -1052,7 +1053,7 @@ test('native member rows preserve the legacy field, capability and selector matr
   harness.document.body.classList.add('hide-processes');
   const host = harness.document.body.appendChild(harness.document.createElement('div'));
   const mounted = await harness.mount(harness.html`<${GroupsList} host=${host} state=${state} actions=${actions} />`, host);
-  const table = host.querySelector('details[data-group-key="alpha"] table');
+  const table = host.querySelector('.group-box[data-group-key="alpha"] table');
   const rows = [...table.querySelectorAll('tbody tr')];
   const richRow = rows.find((row) => row.dataset.key === 'conv-rich');
   const fixedRow = rows.find((row) => row.dataset.key === 'conv-fixed');
@@ -1764,7 +1765,7 @@ test('queued spawns ride the member table as rows, even in an empty group', asyn
   const mounted = await harness.mount(harness.html`<${GroupsList} host=${host} state=${state} actions=${{}} />`, host);
   t.after(() => host.remove());
 
-  const rows = host.querySelectorAll('details[data-group-key="crew"] tr.queued-row');
+  const rows = host.querySelectorAll('.group-box[data-group-key="crew"] tr.queued-row');
   assert.equal(rows.length, 1, 'only the group\'s own queued spawn gets a row');
   const row = rows[0];
   assert.equal(row.getAttribute('data-dnd-pending'), '1', 'the row drags like a pending spawn: trash only');
@@ -1866,7 +1867,7 @@ test("another node's group profile picker offers no new profile: its editor save
   assert.equal(here.newProfileLock(), '');
 });
 
-test('a group header\'s notification hint opens the quick reader without folding the group', async (t) => {
+test('a group header\'s notification hint opens the quick reader and sits beside the fold button', async (t) => {
   const harness = await createPreactHarness(t);
   const actions = { sort: () => {}, page: () => {}, setPageSize: () => {} };
   const alpha = {
@@ -1879,20 +1880,19 @@ test('a group header\'s notification hint opens the quick reader without folding
     messages_unread: 1,
     messages: [{ id: 7, from_agent: 'agt_a', from_conv: 'conv-a', subject: 'decide', read: false }],
   }));
-  const details = host.querySelector('details[data-group-key="alpha"]');
-  const hint = details.querySelector('summary .group-activity button.human-notification-hint');
+  const details = host.querySelector('.group-box[data-group-key="alpha"]');
+  const hint = details.querySelector(':scope > .group-summary .group-activity button.human-notification-hint');
   assert.ok(hint, 'the group-level hint is a button');
 
   const opened = [];
   const listen = (event) => opened.push(event.detail);
   harness.document.addEventListener('tclaude:open-human-notification', listen);
   t.after(() => harness.document.removeEventListener('tclaude:open-human-notification', listen));
-  const wasOpen = details.open;
   harness.fireEvent(hint, 'click');
   assert.equal(opened.length, 1);
   assert.equal(opened[0].messageId, 7);
   assert.equal(opened[0].sender.agent, 'agt_a');
-  assert.equal(details.open, wasOpen, 'the click does not toggle the group');
+  assert.equal(details.querySelector('.group-toggle').contains(hint), false, 'the hint sits beside the fold button, not inside it');
 
   await mounted.unmount();
   host.remove();

@@ -3,7 +3,7 @@ import { h } from 'preact';
 import { useLayoutEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { Button, MenuItem, Select } from './ui-components.js';
-import { DisclosureToggle, DisclosureTri, headToggleClick } from './disclosure.js';
+import { Disclosure, DisclosureTri } from './disclosure.js';
 import { UsageProfileChip } from './usage-profile-chip.js';
 import {
   applySort, tableSortState, RETIRED_COLS, RETIRED_ACCESSORS,
@@ -30,7 +30,8 @@ import { GroupProcessGraphs } from './groups-process-indicators.js';
 import {
   FusedSection, GroupProcessBody, SubgroupRunTotal, UngroupedProcessBody, UngroupedRunCount, useProcessesPerspective,
 } from './groups-processes.js';
-import { subgroupsSectionAuto, subgroupsSectionOpen } from './groups-fused-sections.js';
+import { fusedSectionsRevision, setGroupBoxOpen, subgroupsSectionAuto, subgroupsSectionOpen } from './groups-fused-sections.js';
+import { recordGroupInteraction } from './last-group.js';
 import { TaskboardSection } from './groups-taskboard.js';
 import { featureState } from './feature-state-registry.js';
 import { firstUnreadHumanNotification } from './human-notification-attention.js';
@@ -51,13 +52,13 @@ function GroupActivity({ members, snapshot }) {
   if (!modes.length) return null;
   const attention = firstUnreadHumanNotification(members, snapshot);
   // The hint opens the quick reader on that notification, as the member row's
-  // own glyph does; it sits in the group's <summary>, so the click must not
-  // also fold the group.
+  // own glyph does; it sits in the group's header, beside its fold button,
+  // which takes focus back when the hint is gone (read clears it).
   const openReader = (event) => {
     event.preventDefault();
     event.stopPropagation();
     openMemberNotification(attention.member, attention.message, event.currentTarget,
-      event.currentTarget.closest('summary'));
+      event.currentTarget.closest('.group-summary')?.querySelector(':scope > .group-toggle'));
   };
   const hintLabel = `A member of this group has unread notifications — open ${attention?.member.title || 'it'} in the quick reader`;
   return html`<span class="group-activity"
@@ -93,12 +94,12 @@ function GroupAttachment({ group, actions, placement }) {
     event.stopPropagation();
     if (!fixed) {
       // The shared dialog restores focus to whatever launched it. Move that
-      // return point off the hover-only overlay and onto the native group
-      // disclosure, otherwise Escape gives the paperclip :focus-visible and
+      // return point off the hover-only overlay and onto the group's fold
+      // button, otherwise Escape gives the paperclip :focus-visible and
       // pins it open. The fixed quick item is not hover-hidden, so it keeps
       // native focus restoration instead.
-      const summary = event.currentTarget.closest('summary');
-      if (summary) summary.focus({ preventScroll: true });
+      const toggle = event.currentTarget.closest('.group-summary')?.querySelector(':scope > .group-toggle');
+      if (toggle) toggle.focus({ preventScroll: true });
       else event.currentTarget.blur();
     }
     actions.openGroupAttachment(group);
@@ -444,17 +445,17 @@ function fleetOwnName(group) {
   return group.fleet_node && group.name.endsWith(at) ? group.name.slice(0, -at.length) : group.name;
 }
 
-// FleetGroupName renders a merged-view (fleet-merged-island.js) group as
-// group@node: the suffix in the node's own colour opens that node's view.
-function FleetGroupName({ group }) {
+// FleetNodeSuffix is a merged-view (fleet-merged-island.js) group's @node in
+// the node's own colour, which opens that node's view. It is a button of its
+// own beside the fold button, so the keyboard reaches it and it stays out of
+// the fold button's name; it follows the name flush, reading group@node.
+function FleetNodeSuffix({ group }) {
   const node = group.fleet_node;
-  const at = `@${node.name}`;
-  const base = fleetOwnName(group);
-  return html`${base}<span class="fleet-node-suffix" style=${`--nc:${node.color}`} data-fleet-open=${node.local ? '' : node.id}
-    title=${node.local ? 'This node — open its dashboard' : `Open ${node.name}'s dashboard`}>${at}</span>${node.stale ? html` <span class="fleet-stale-label">${node.label}</span>` : null}`;
+  return html`<button data-ui-exempt type="button" class="fleet-node-suffix" style=${`--nc:${node.color}`} data-fleet-open=${node.local ? '' : node.id}
+    title=${node.local ? 'This node — open its dashboard' : `Open ${node.name}'s dashboard`}>@${node.name}</button>${node.stale ? html` <span class="fleet-stale-label">${node.label}</span>` : null}`;
 }
 
-function RealGroupSummary({ node, group, activity, membersView, snapshot, actions }) {
+function RealGroupBox({ node, group, activity, membersView, snapshot, actions, class: boxClass, attrs, children }) {
   const interactions = useGroupsInteractions();
   // Both perspectives show the member bots and the group's process graphs;
   // Processes adds the dim subgroup total a collapsed parent needs.
@@ -473,12 +474,22 @@ function RealGroupSummary({ node, group, activity, membersView, snapshot, action
   const groupEditing = interactions.editorKey.startsWith(`group:${group.name}:`);
   const renameKey = `group:${group.name}:name`;
   const maxValue = group.max_members || 0;
-  return html`<summary draggable=${!groupEditing} data-group-reorder=${group.name} title=${`Drag this header to reorder or nest the group · ${modifierText('Mod')}-drag to clone`}>
-    ${interactions.editorKey === renameKey ? html`<${InlineEditor}
+  // Renaming swaps the title for an input, which must not sit inside the
+  // fold button: the button keeps only its ▶ / ▼, and the input follows it.
+  const renaming = interactions.editorKey === renameKey;
+  const name = renaming ? null : html`<strong class="group-name" data-group-name=${group.name}>${group.fleet_node ? fleetOwnName(group) : group.name}</strong>`;
+  const headAttrs = {
+    draggable: !groupEditing, 'data-group-reorder': group.name,
+    title: `Drag this header to reorder or nest the group · ${modifierText('Mod')}-drag to clone`,
+  };
+  return html`<${GroupBox} boxKey=${group.name} openOf=${() => realGroupOpen(group, dashPrefs)} class=${boxClass} attrs=${attrs}
+    headAttrs=${headAttrs} name=${name} label=${renaming ? `group ${group.name}` : undefined} actions=${html`
+    ${renaming ? html`<${InlineEditor}
       editorKey=${renameKey} value=${fleetOwnName(group)} className="group-rename-input"
       onCommit=${(value) => actions.renameGroup(group, value)}
       triggerProps=${{}}
-    >${group.name}<//>` : html`<strong class="group-name" data-group-name=${group.name}>${group.fleet_node ? html`<${FleetGroupName} group=${group} />` : group.name}</strong>`}
+    >${group.name}<//>` : null}
+    ${group.fleet_node ? html`<${FleetNodeSuffix} group=${group} />` : null}
     ${snapshot?.group_attachments_mode === 'float'
       ? html`<${GroupAttachment} group=${group} actions=${actions} placement="float" />`
       : null}
@@ -529,8 +540,36 @@ function RealGroupSummary({ node, group, activity, membersView, snapshot, action
     <${GroupFederationMarker} group=${group} />
     ${snapshot?.group_attachments_mode === 'fixed'
       ? html`<${GroupAttachment} group=${group} actions=${actions} placement="fixed" />`
-      : null}
-  </summary>`;
+      : null}`}>${children}<//>`;
+}
+
+// GroupBox is a group's foldable box, real or virtual: a Disclosure whose
+// header (.group-summary) is the drag handle and drop zone, with the fold
+// button around the group's name and every chip and control beside it. Only
+// the button folds, so the wide header stays a drag surface. The open state
+// is the per-group pref (tclaude.dash.group.<key>); `openOf` reads it with
+// the group's default, here rather than in the caller, so a box memoized
+// under an unchanged snapshot still redraws when the fold is set from
+// outside it (announceFusedSections). The folded body stays in the document,
+// hidden, as a closed <details> kept it.
+function GroupBox({ boxKey, foldName = boxKey, openOf, class: extra, attrs, headAttrs = {}, name, label, actions, children }) {
+  const [, bump] = useState(0);
+  void fusedSectionsRevision.value;
+  const open = openOf();
+  const toggle = (event) => {
+    const el = event?.currentTarget;
+    setGroupBoxOpen(boxKey, !open);
+    // The fused view's group@node keys are not spawn targets on this node.
+    if (!el?.closest?.('#fleetview-fused-groups-root')) recordGroupInteraction(boxKey);
+    bump((n) => n + 1);
+    // Folding moves activity bots onto (or off) this header.
+    rerenderGroupTree(el);
+  };
+  return html`<${Disclosure} open=${open} onToggle=${toggle} keepBody=${true}
+    class=${['group-box', extra].filter(Boolean).join(' ')} attrs=${{ 'data-group-key': boxKey, ...attrs }}
+    headClass="group-summary" headAttrs=${headAttrs} toggleClass="group-toggle" label=${label}
+    title=${`${open ? 'Fold' : 'Show'} ${foldName}`}
+    toggle=${name} actions=${actions} bodyClass="subtable" id=${`group-body-${encodeURIComponent(boxKey)}`}>${children}<//>`;
 }
 
 function SpawnIcon({ subgroup = false }) {
@@ -627,14 +666,12 @@ function GroupTriggersSection({ group, triggers }) {
     (rule.scope === 'group' && (rule.group === group.name || Number(rule.group_id) === Number(group.id))));
   if (!rows.length) return null;
   const visible = rows.slice(0, 5);
-  const toggle = () => setOpen(!open);
-  return html`<div class=${`group-triggers-section${open ? ' open' : ''}`}>
-    <div class="group-triggers-head" onClick=${headToggleClick(toggle)}>
-      <${DisclosureToggle} class="group-triggers-toggle" open=${open} onToggle=${toggle}>
-        <${DisclosureTri} open=${open} /><strong>Triggers</strong><span class="muted">${rows.length} installed here</span>
-      <//>
-      <a href="/automations/triggers" onClick=${(event) => event.stopPropagation()}>edit in Automations →</a></div>
-    <div class="group-triggers-body" hidden=${!open}><table class="ui-compact"><thead><tr><th>Name</th><th>When</th><th>State</th><th>Enabled</th></tr></thead><tbody>
+  return html`<${Disclosure} open=${open} onToggle=${() => setOpen(!open)} foldOnHead=${true} keepBody=${true}
+    id=${`group-triggers-${encodeURIComponent(group.name)}`}
+    class="group-triggers-section" headClass="group-triggers-head" toggleClass="group-triggers-toggle" bodyClass="group-triggers-body"
+    toggle=${html`<${DisclosureTri} open=${open} /><strong>Triggers</strong><span class="muted">${rows.length} installed here</span>`}
+    actions=${html`<a href="/automations/triggers" onClick=${(event) => event.stopPropagation()}>edit in Automations →</a>`}
+  ><table class="ui-compact"><thead><tr><th>Name</th><th>When</th><th>State</th><th>Enabled</th></tr></thead><tbody>
       ${visible.map((rule) => html`<tr key=${rule.id}>
         <td><span class="rowname">${rule.name}</span>${rule.scope === 'global' && html`<span class="ui-tag trigger-scope global">global</span>`}</td>
         <td><code>${rule.source}</code><span class="muted">${rule.author_is_agent === true ? ' · agent PRs' : ''}</span></td>
@@ -642,7 +679,7 @@ function GroupTriggersSection({ group, triggers }) {
         <td>${rule.enabled ? 'yes' : 'no'}</td>
       </tr>`)}</tbody></table>
     ${rows.length > visible.length && html`<div class="muted">+ ${rows.length - visible.length} more — edit in Automations</div>`}
-  </div></div>`;
+  <//>`;
 }
 
 function RealGroup({ node, snapshot, actions, triggers, hoveredGroupKey }) {
@@ -687,13 +724,12 @@ function RealGroup({ node, snapshot, actions, triggers, hoveredGroupKey }) {
   const wizard = isWizardActive();
   // Folded subgroups leave the parent's ↳ subgroup run total on its summary.
   const subgroupsFolded = node.children.length > 0 && !subgroupsSectionOpen(group, dashPrefs);
-  return html`<details
-    class=${[classes, fleet?.stale ? 'fleet-stale' : '', subgroupsFolded ? 'subgroups-folded' : ''].filter(Boolean).join(' ') || undefined} data-group-key=${group.name} data-dnd-target-group=${fleet ? undefined : group.name}
-    data-fleet-node=${fleet?.id} data-fleet-node-name=${fleet?.name} data-fleet-home=${fleet?.home ? '' : undefined}
-    open=${realGroupOpen(group, dashPrefs)}
-  >
-    <${RealGroupSummary} node=${node} group=${group} activity=${node.activity} membersView=${view} snapshot=${snapshot} actions=${actions} />
-    <div class="subtable">
+  const attrs = {
+    'data-dnd-target-group': fleet ? undefined : group.name,
+    'data-fleet-node': fleet?.id, 'data-fleet-node-name': fleet?.name, 'data-fleet-home': fleet?.home ? '' : undefined,
+  };
+  return html`<${RealGroupBox} node=${node} group=${group} activity=${node.activity} membersView=${view} snapshot=${snapshot} actions=${actions}
+    class=${[classes, fleet?.stale ? 'fleet-stale' : '', subgroupsFolded ? 'subgroups-folded' : ''].filter(Boolean).join(' ')} attrs=${attrs}>
       <${FusedSection} group=${group.name} section="subgroups" label=${wizard ? 'Sub-parties' : 'Subgroups'}
           count=${node.children.length} auto=${node.children.length > 0 && subgroupsSectionAuto(group)} onToggle=${rerenderGroupTree}
           closedActions=${html`<${CreateSubgroupButton} group=${group} />`}>
@@ -711,8 +747,7 @@ function RealGroup({ node, snapshot, actions, triggers, hoveredGroupKey }) {
         <${TaskboardSection} group=${group} snapshot=${snapshot} />
         ${!processes && !fleet && html`<${PeerGroupDrawingBoards} group=${group} />`}`}
       <${GroupLinksSection} group=${group} snapshot=${snapshot} />
-    </div>
-  </details>`;
+  <//>`;
 }
 
 // rerenderGroupTree redraws the whole tree after a Subgroups fold, since the
@@ -728,18 +763,20 @@ function OnlineDot({ online }) {
   return html`<span class=${online ? 'online' : 'offline'} title=${online ? 'online' : 'offline'}>${online ? '●' : '○'}</span>`;
 }
 
-function VirtualShell({ group, target, children, summary }) {
+// VirtualShell is a virtual group's box: `name` rides the fold button and
+// `summary` (badge, activity, count) sits beside it.
+function VirtualShell({ group, target, children, name, summary }) {
   // In the fused view a node's virtual group names its node, so its rows'
   // controls reach it; only this node's take drops (dnd.js acts here).
   const fleet = group.fleet_node;
   const drops = !fleet || fleet.home;
-  return html`<details
-    class="group-virtual" data-group-key=${group.key || group.name}
-    data-fleet-node=${fleet?.id} data-fleet-node-name=${fleet?.name} data-fleet-home=${fleet?.home ? '' : undefined}
-    data-dnd-target-ungrouped=${drops && target === 'ungrouped' ? '1' : undefined}
-    data-dnd-target-retired=${drops && target === 'retired' ? '1' : undefined}
-    open=${virtualGroupOpen(group, dashPrefs)}
-  ><summary>${summary}</summary><div class="subtable">${children}</div></details>`;
+  const attrs = {
+    'data-fleet-node': fleet?.id, 'data-fleet-node-name': fleet?.name, 'data-fleet-home': fleet?.home ? '' : undefined,
+    'data-dnd-target-ungrouped': drops && target === 'ungrouped' ? '1' : undefined,
+    'data-dnd-target-retired': drops && target === 'retired' ? '1' : undefined,
+  };
+  return html`<${GroupBox} boxKey=${group.key || group.name} foldName=${group.name} openOf=${() => virtualGroupOpen(group, dashPrefs)}
+    class="group-virtual" attrs=${attrs} name=${name} actions=${summary}>${children}<//>`;
 }
 
 function VirtualBadge({ regularTitle, wizardTitle }) {
@@ -749,8 +786,8 @@ function VirtualBadge({ regularTitle, wizardTitle }) {
 function VirtualUngrouped({ group, snapshot, actions }) {
   const view = groupMembersView(group, offlineDefault('groups'));
   const processes = useProcessesPerspective();
-  const summary = html`<strong class="group-name"><${ThemeText} regular=${group.name} wizard="Unbound" /></strong>
-    <${GroupActivity} members=${view.members} snapshot=${snapshot} />
+  const name = html`<strong class="group-name"><${ThemeText} regular=${group.name} wizard="Unbound" /></strong>`;
+  const summary = html`<${GroupActivity} members=${view.members} snapshot=${snapshot} />
     <${UngroupedRunCount} group=${group} snapshot=${snapshot} />
     <${VirtualBadge} regularTitle="A virtual group, not a real one — it can't be renamed, deleted, messaged or scheduled. It just collects agents that aren't in any group." wizardTitle="An ethereal party, not a true one — it cannot be renamed, dispelled, whispered to, or scheduled. It gathers heroes bound to no party." />
     <span class="muted">— <${ThemeText}
@@ -768,7 +805,7 @@ function VirtualUngrouped({ group, snapshot, actions }) {
   const body = !processes ? agentsBody
     : processes.fused ? html`<${UngroupedProcessBody} group=${group} agents=${agentsBody} count=${view.members.length} />`
       : html`<${UngroupedProcessBody} group=${group} />`;
-  return html`<${VirtualShell} group=${group} target="ungrouped" summary=${summary}>${body}<//>`;
+  return html`<${VirtualShell} group=${group} target="ungrouped" name=${name} summary=${summary}>${body}<//>`;
 }
 
 function ConversationsTable({ rows }) {
@@ -815,11 +852,11 @@ function PendingTable({ rows, group = '' }) {
 function VirtualList({ group, kind, Table, names, target }) {
   const rows = group.members || [];
   const total = group.paging?.total ?? rows.length;
-  const summary = html`<strong class="group-name"><${ThemeText} regular=${group.name} wizard=${names.wizardName} /></strong>
-    <${VirtualBadge} regularTitle=${names.regularTitle} wizardTitle=${names.wizardTitle} />
+  const name = html`<strong class="group-name"><${ThemeText} regular=${group.name} wizard=${names.wizardName} /></strong>`;
+  const summary = html`<${VirtualBadge} regularTitle=${names.regularTitle} wizardTitle=${names.wizardTitle} />
     <span class="muted">— <${ThemeText} regular=${names.regularCount(total)} wizard=${names.wizardCount(total)} /></span>`;
   const empty = html`<div class="muted"><${ThemeText} regular=${names.regularEmpty} wizard=${names.wizardEmpty} /></div>`;
-  return html`<${VirtualShell} group=${group} target=${target} summary=${summary}>
+  return html`<${VirtualShell} group=${group} target=${target} name=${name} summary=${summary}>
     ${rows.length ? html`<${Table} rows=${rows} />` : empty}
     <${ListPager} kind=${kind} paging=${group.paging} />
   <//>`;

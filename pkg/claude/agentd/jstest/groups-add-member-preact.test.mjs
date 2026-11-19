@@ -131,7 +131,7 @@ test('group menu launches a polling-stable dirty picker and restores its cog foc
     state=${state} actions=${actions}
     confirmDiscard=${async () => { discardChecks++; return allowDiscard; }}
   />`, dialogHost);
-  const cog = listHost.querySelector('details[data-group-key="alpha"] .cog-btn');
+  const cog = listHost.querySelector('.group-box[data-group-key="alpha"] .cog-btn');
   await harness.act(() => harness.fireEvent(cog, 'click'));
   const add = listHost.querySelector('button[data-act="add-member"]');
   await harness.act(() => harness.fireEvent(add, 'click'));
