@@ -123,6 +123,8 @@ function bind() {
       dragPill(e, libraryPill(spec));
       return;
     }
+    // Off the library: drop its light even if a dragleave was missed.
+    $$(`.${LIBRARY_OVER}`).forEach((el) => el.classList.remove(LIBRARY_OVER));
     const trash = trashTarget(e);
     if (!trash) {
       dragPill(e, null);
