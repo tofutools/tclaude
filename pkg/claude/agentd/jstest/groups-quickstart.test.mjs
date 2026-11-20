@@ -743,6 +743,47 @@ test('dragging a saved chip onto the bin removes it from the group', async (t) =
   assert.equal(trash.classList.contains('show'), false, 'the bin is torn down after the drop');
 });
 
+test('dragging a saved chip onto the dock process library publishes it there', async (t) => {
+  const { harness, root, api, notes, settle } = await mount(t, { context: SAVED_CONTEXT });
+  const doc = harness.window.document;
+  const library = doc.createElement('div');
+  library.className = 'dock-section dock-processes';
+  const card = doc.createElement('div');
+  library.appendChild(card);
+  doc.body.appendChild(library);
+  t.after(() => library.remove());
+  let reloads = 0;
+  const reload = () => { reloads += 1; };
+  doc.addEventListener('tclaude:process-library-changed', reload);
+  t.after(() => doc.removeEventListener('tclaude:process-library-changed', reload));
+  const drag = (templateId) => {
+    const chip = root.querySelector(`[data-saved-process-drag="${templateId}"]`);
+    const transfer = { data: {}, setData(type, value) { this.data[type] = value; }, get types() { return Object.keys(this.data); } };
+    harness.fireEvent(chip, 'dragstart', { dataTransfer: transfer, target: chip });
+    return transfer;
+  };
+
+  const transfer = drag('tmpl_ship');
+  const over = harness.fireEvent(card, 'dragover', { dataTransfer: transfer, target: card });
+  assert.equal(over.defaultPrevented, true, 'the library takes the drop');
+  assert.equal(transfer.dropEffect, 'copy', 'publishing copies: the group keeps its pin');
+  assert.ok(library.classList.contains('dock-publish-over'), 'the library lights while the chip is over it');
+  await harness.act(() => harness.fireEvent(card, 'drop', { dataTransfer: transfer, target: card }));
+  await settle();
+  assert.deepEqual(api.calls.publish, ['tmpl_ship']);
+  assert.deepEqual(api.calls.unpin, [], 'the group keeps it');
+  assert.deepEqual(notes, [{ message: 'Published ship-feature to the template library', error: false }]);
+  assert.equal(reloads, 1, 'the library reloads');
+  assert.equal(library.classList.contains('dock-publish-over'), false, 'the light goes after the drop');
+
+  // Already in the library: nothing to publish, and a note says so.
+  const again = drag('tmpl_nightly');
+  await harness.act(() => harness.fireEvent(card, 'drop', { dataTransfer: again, target: card }));
+  await settle();
+  assert.deepEqual(api.calls.publish, ['tmpl_ship']);
+  assert.equal(notes.at(-1).message, 'nightly-check is already in the template library');
+});
+
 test('Edit steps reopens a saved process as a step list and saves a new version of it', async (t) => {
   const api = fakeApi({ stored: { tmpl_ship: SAVED_VIEW } });
   const { root, click, setValue } = await mount(t, { api, context: SAVED_CONTEXT });

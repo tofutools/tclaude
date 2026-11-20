@@ -7,7 +7,8 @@
 // also edits the steps, publishes the process to the
 // template library, shares it as a .pwf, or removes it from the group; the chip's × opens the
 // strip straight at that removal confirmation, and dragging a chip onto the
-// bin removes it too (groups-saved-process-dnd.js).
+// bin removes it too (groups-saved-process-dnd.js). Dragging it onto the
+// dock's process library publishes it there.
 
 import { h } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
@@ -16,7 +17,8 @@ import { unauthorizedProfiles } from './process-context.js';
 import { viewToStepList } from './process-step-list.js';
 import { defaultNotify } from './groups-quickstart.js';
 import { DraftStartWarning, noteDraftOpened, reopenScribeDraft, scribeDraftsOf, scribeStartWarning } from './groups-scribe-draft.js';
-import { bindSavedProcessDnd, registerSavedProcessRemover } from './groups-saved-process-dnd.js';
+import { bindSavedProcessDnd, registerSavedProcessPublisher, registerSavedProcessRemover } from './groups-saved-process-dnd.js';
+import { PROCESS_LIBRARY_EVENT } from './dock-processes.js';
 import { WorkflowExportButton } from './process-workflow-share.js';
 import { shellConfirm } from './shell-state.js';
 import { Button } from './ui-components.js';
@@ -214,8 +216,27 @@ export function SavedProcesses({ group, processes, api, source, wizard = false, 
       notify(`Could not remove ${process.name}: ${cause.message}`, true);
     }
   };
+  // A chip dropped on the dock's process library publishes it there, as the
+  // strip's Publish does; the group keeps it. Already listed: nothing to do.
+  const publishDropped = async (templateId) => {
+    const process = processes.find((candidate) => candidate.templateId === templateId);
+    if (!process) return;
+    if (process.listed) {
+      notify(`${process.name} is already in the template library`);
+      return;
+    }
+    try {
+      await api.publishTemplate(templateId);
+      notify(`Published ${process.name} to the template library`);
+      document.dispatchEvent(new CustomEvent(PROCESS_LIBRARY_EVENT));
+      void source?.refresh?.();
+    } catch (cause) {
+      notify(`Could not publish ${process.name}: ${cause.message}`, true);
+    }
+  };
   useEffect(() => bindSavedProcessDnd(), []);
   useEffect(() => registerSavedProcessRemover(group.name, removeDropped));
+  useEffect(() => registerSavedProcessPublisher(group.name, publishDropped));
   const current = processes.find((process) => process.templateId === open) || null;
   // One row per process in a ResourceTable (groups-resources.js), as the
   // group's other resources are listed below the runs: its light starts a
@@ -231,9 +252,9 @@ export function SavedProcesses({ group, processes, api, source, wizard = false, 
     const start = () => { setOpen(open === process.templateId && !removing ? '' : process.templateId); setRemoving(false); };
     return html`<tr key=${process.templateId} class=${`gr-trow gq-saved-chip${open === process.templateId ? ' open' : ''}`}
         data-saved-process=${process.templateId} draggable="true" data-saved-process-drag=${process.templateId}
-        data-saved-process-group=${group.name} data-saved-process-name=${process.name}
+        data-saved-process-group=${group.name} data-saved-process-name=${process.name} data-saved-process-listed=${process.listed ? '1' : '0'}
         data-dnd-resource=${JSON.stringify({ kind: 'process', id: process.templateId, label: process.name, group: group.name })}
-        title=${`Drag onto another group to move ${process.name} there (Ctrl/Cmd: add it there too), or onto the bin to remove it from ${group.name}`}>
+        title=${`Drag onto another group to move ${process.name} there (Ctrl/Cmd: add it there too), onto the bin to remove it from ${group.name}${process.listed ? '' : ", or onto the dock's Processes library to publish it"}`}>
         <td class="gr-ctl"><span class="agent-ctl gr-acts">
           <button data-ui-exempt type="button" class=${`gr-light gr-light-btn gr-light-${pill}`} data-saved-run=${process.templateId} aria-expanded=${open === process.templateId}
             aria-label=${`Start ${process.name}`} title=${`${pill} — click to start ${process.name} in ${group.name}`} onClick=${start}>●</button>
