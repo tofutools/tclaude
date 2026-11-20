@@ -240,7 +240,7 @@ export function SavedProcesses({ group, processes, api, source, wizard = false, 
           <span class="row-actions">
             ${editing === process.templateId
     ? html`<span class="gq-saved-editing" role="img" data-saved-editing=${process.templateId}
-            aria-label=${`${process.name}: editing in the graph below`} title="Editing in the graph below"><${PencilIcon} /></span>`
+            aria-label=${`${process.name}: open in the editor below`} title="Open in the editor below"><${PencilIcon} /></span>`
     : html`<${Button} size="sm" icon=${true} class="icon-btn gq-saved-edit" data-saved-edit-graph=${process.templateId} disabled=${!!loading || !!editing}
             aria-label=${`Edit ${process.name}`} title=${editing ? 'Save or cancel the open editor first' : `Open ${process.name} here as a graph`} onClick=${() => editGraph(process)}><${EyeIcon} /><//>`}
             <${Button} size="sm" icon=${true} class="icon-btn warn gq-saved-remove" data-saved-remove-chip=${process.templateId}

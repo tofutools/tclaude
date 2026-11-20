@@ -57,7 +57,7 @@ for (const skin of ['', 'wizard']) {
         await page.screenshot({ path: path.join(process.env.SHOTS, `editing-row${skin ? `-${skin}` : ''}.png`),
           clip: { x: Math.max(0, at.x - 8), y: Math.max(0, at.y - 30), width: Math.min(760, at.width + 16), height: at.height + 60 } });
       }
-      await expect(mark).toHaveAttribute('title', 'Editing in the graph below');
+      await expect(mark).toHaveAttribute('title', 'Open in the editor below');
       // The mark is the eye button's size, and the buttons after it stay put.
       const box = await mark.boundingBox();
       expect(Math.abs(box.width - slot.width), `mark ${box.width}px wide, eye ${slot.width}px`).toBeLessThanOrEqual(1);
