@@ -18380,7 +18380,12 @@ body.wizard .process-node-rule input { background: #1a1430; border-color: rgba(1
 .gm-foot .gq-error, .gm-card > .gq-error { margin: 0; }
 .gm-params { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; }
 .gm-card > .gq-error { padding: 0 14px 10px; }
-.gq-saved-editing { font-size: 11px; padding: 1px 8px; border-radius: 999px; background: #1f6feb; color: #fff; }
+/* A saved process open in the editor: a ✎ badge in its eye button's place,
+   the size of that button (.ui-btn-icon.ui-sm), and not dimmed with the
+   row's other actions. */
+.gq-saved-editing { display: inline-flex; align-items: center; justify-content: center; flex: none; box-sizing: border-box;
+  width: 22px; height: 22px; border-radius: var(--ui-radius, 6px); background: #1f6feb; color: #fff; }
+.row-actions:has(.gq-saved-editing) { opacity: 1; }
 body.wizard .gm-head, body.wizard .gm-foot { border-color: rgba(122, 93, 176, 0.3); }
 body.wizard .gm-toggle { border-color: rgba(122, 93, 176, 0.5); }
 body.wizard .gm-toggle button.on { background: #241b3d; color: #f3e6c0; }
