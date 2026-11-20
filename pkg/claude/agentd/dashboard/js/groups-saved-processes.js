@@ -23,7 +23,7 @@ import { WorkflowExportButton } from './process-workflow-share.js';
 import { shellConfirm } from './shell-state.js';
 import { Button } from './ui-components.js';
 import { LockChip } from './resource-lock.js';
-import { EyeIcon, TrashIcon } from './row-icons.js';
+import { EyeIcon, PencilIcon, TrashIcon } from './row-icons.js';
 import { ResourceTable, RowMenu, TimeCells, resourceTimes, sortResourceRows } from './groups-resources.js';
 import { ResourcePill, resourceView } from './resource-pill.js';
 import { dashboardState } from './snapshot-store.js';
@@ -260,7 +260,8 @@ export function SavedProcesses({ group, processes, api, source, wizard = false, 
             aria-label=${`Start ${process.name}`} title=${`${pill} — click to start ${process.name} in ${group.name}`} onClick=${start}>●</button>
           <span class="row-actions">
             ${editing === process.templateId
-    ? html`<span class="gq-saved-editing" data-saved-editing=${process.templateId}>✎ editing</span>`
+    ? html`<span class="gq-saved-editing" role="img" data-saved-editing=${process.templateId}
+            aria-label=${`${process.name}: open in the editor below`} title="Open in the editor below"><${PencilIcon} /></span>`
     : html`<${Button} size="sm" icon=${true} class="icon-btn gq-saved-edit" data-saved-edit-graph=${process.templateId} disabled=${!!loading || !!editing}
             aria-label=${`Edit ${process.name}`} title=${editing ? 'Save or cancel the open editor first' : `Open ${process.name} here as a graph`} onClick=${() => editGraph(process)}><${EyeIcon} /><//>`}
             <${Button} size="sm" icon=${true} class="icon-btn warn gq-saved-remove" data-saved-remove-chip=${process.templateId}
