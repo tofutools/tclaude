@@ -257,8 +257,12 @@ Write-Output "NOMATCH"
 func focusByTitle(title string) bool {
 	slog.Debug(fmt.Sprintf("Focusing by title: %s", title), "module", "focus")
 
-	// Escape quotes in title
-	escapedTitle := strings.ReplaceAll(title, "'", "''")
+	// Escape quotes in title. PowerShell reads the typographic single
+	// quotes as quote characters too; any of them is escaped by doubling.
+	escapedTitle := title
+	for _, q := range []string{"'", "\u2018", "\u2019", "\u201a", "\u201b"} {
+		escapedTitle = strings.ReplaceAll(escapedTitle, q, q+q)
+	}
 
 	script := fmt.Sprintf(`
 $title = '%s'
