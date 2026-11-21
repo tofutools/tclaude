@@ -106,11 +106,11 @@
   overflow: hidden; text-overflow: ellipsis; max-width: 200px;
   user-select: none;
 }
-/* An agent's group, as a short prefix on its name ("t/lead",
-   agent-group-prefix.js), lightly dimmed. Terminal tabs and title bars, the
-   overlay windows' tabs and the phone terminal's title share it. The prefix
-   is cut to fit in JS (agent-group-prefix-view.js), so the slash sits right
-   after its ellipsis; the name ellipsizes only past that. */
+/* An agent's group before its name (agent-group-prefix.js), lightly dimmed: the full group in a title bar and
+   the phone terminal's title, a short prefix in a tab whose name another tab
+   shares. A full group is cut to fit in JS (agent-group-prefix-view.js), so
+   the slash sits right after its ellipsis; a tab's prefix is never cut, and
+   its name ellipsizes instead. */
 .agent-group-named { display: inline-flex; max-width: 100%; min-width: 0; vertical-align: bottom; }
 .agent-group-prefix { flex: none; white-space: nowrap; opacity: 0.72; }
 .agent-group-slash { flex: none; opacity: 0.72; }

@@ -351,21 +351,21 @@ test('swipeWheel: Claude Code\'s model only for a harness known to be Claude Cod
   assert.equal(swipeWheel({ ws: '/api/group-term-ws/g' }, { agent }), 'tmux');
 });
 
-test('the bar names the agent after its group prefix, wears its state, and ⋯ opens its sheet', async (t) => {
+test('the bar names the agent after its full group, wears its state, and ⋯ opens its sheet', async (t) => {
   const row = { key: AGENT, agent: AGENT, name: 'checkout-ui', group: 'webshop', variant: 'asking', online: true };
   const menus = [];
   const ctx = await setup(t, {
     agentRow: (id) => (id === AGENT ? { row, group: { key: 'g:webshop', name: 'webshop' } } : null),
     agentMenu: (r) => menus.push(r.key),
-    groupMark: (id, openedFrom) => (id === AGENT && openedFrom === 'webshop' ? { group: 'webshop', prefix: 'w', groups: ['webshop'] } : null),
+    groupMark: (id, openedFrom) => (id === AGENT && openedFrom === 'webshop' ? { group: 'webshop', groups: ['webshop'] } : null),
   });
   const { harness, tab, host, button, tap } = ctx;
   // A link opened before the snapshot came knows only the agent's id: the
   // bar takes the name from the agent's row.
   await harness.act(() => tab.openWebWindowPane(AGENT, AGENT, { harness: 'claude' }));
   const title = host.querySelector('.phone-term-bar .phone-bar-title');
-  assert.equal(title.textContent, 'w/checkout-ui');
-  assert.equal(title.querySelector('.agent-group-prefix').textContent, 'w');
+  assert.equal(title.textContent, 'webshop/checkout-ui');
+  assert.equal(title.querySelector('.agent-group-prefix').textContent, 'webshop');
   assert.equal(title.getAttribute('title'), 'webshop/checkout-ui');
   const pill = host.querySelector('.phone-term-bar .phone-pill');
   assert.equal(pill.textContent.trim(), 'asking');

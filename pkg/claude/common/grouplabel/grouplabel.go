@@ -1,13 +1,7 @@
 // Package grouplabel names an agent the way its terminal does: its name after
-// its group's shortest unique prefix and a slash, "t/lead" for the lead of
-// tclaude and "c/lead" for the lead of counterslop (tk_c501cda3). The
-// dashboard draws the same label (dashboard/js/agent-group-prefix.js); this
-// is its Go twin, for the tmux window title and the status bar.
-//
-// A group's prefix is the shortest start of its name that no other group's
-// name on this node starts with, compared without case, so it stays the same
-// whichever terminals are open. A name that another starts with ("web" beside
-// "webshop") is given in full.
+// its full group, "tclaude/lead" (tk_c501cda3, tk_0a10cbcb). The dashboard's
+// title bars name it the same way (dashboard/js/agent-group-prefix.js); this
+// is the tmux window title's and the status bar's.
 package grouplabel
 
 import (
@@ -17,63 +11,27 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
 
-// Prefixes maps each group name to its prefix.
-func Prefixes(names []string) map[string]string {
-	seen := make(map[string]bool, len(names))
-	var unique []string
-	for _, name := range names {
-		if name != "" && !seen[name] {
-			seen[name] = true
-			unique = append(unique, name)
-		}
-	}
-	folded := make([][]rune, len(unique))
-	for i, name := range unique {
-		folded[i] = []rune(strings.ToLower(name))
-	}
-	out := make(map[string]string, len(unique))
-	for i, name := range unique {
-		runes := []rune(name)
-		length := 1
-		for ; length < len(runes); length++ {
-			start := string(folded[i][:min(length, len(folded[i]))])
-			shared := false
-			for j, other := range folded {
-				if j != i && strings.HasPrefix(string(other), start) {
-					shared = true
-					break
-				}
-			}
-			if !shared {
-				break
-			}
-		}
-		out[name] = string(runes[:length])
-	}
-	return out
-}
-
-// Label is an agent's name and its group's prefix; Prefix is empty for an
-// agent in no group.
+// Label is an agent's name and its group; Group is empty for an agent in no
+// group.
 type Label struct {
-	Prefix string
-	Name   string
+	Group string
+	Name  string
 }
 
-// String is "t/lead", or the bare name.
+// String is "tclaude/lead", or the bare name.
 func (l Label) String() string {
-	if l.Prefix == "" {
+	if l.Group == "" {
 		return l.Name
 	}
-	return l.Prefix + "/" + l.Name
+	return l.Group + "/" + l.Name
 }
 
 // ForSession is the label of the agent a tclaude session runs, read from the
 // database: the name it was given (its custom title, else its spawn-time
-// name), and the prefix of the group it was spawned into, else its first
-// group by name. ok is false for a session with no agent (a plain shell) or
-// no given name: a conversation's summary or first prompt is not a name, and
-// stays out of window titles.
+// name), and the group it was spawned into, else its first group by name. ok
+// is false for a session with no agent (a plain shell) or no given name: a
+// conversation's summary or first prompt is not a name, and stays out of
+// window titles.
 func ForSession(sessionID string) (Label, bool) {
 	if sessionID == "" {
 		return Label{}, false
@@ -98,26 +56,14 @@ func ForSession(sessionID string) (Label, bool) {
 	if err != nil || len(groups) == 0 {
 		return label, true
 	}
-	group := groups[0].Name
+	label.Group = groups[0].Name
 	if snap, err := db.GetAgentStartupSnapshot(agent.AgentID); err == nil && snap != nil && snap.SpawnGroupID != 0 {
 		for _, g := range groups {
 			if g.ID == snap.SpawnGroupID {
-				group = g.Name
+				label.Group = g.Name
 				break
 			}
 		}
-	}
-	all, err := db.ListAgentGroups()
-	if err != nil {
-		return label, true
-	}
-	names := make([]string, 0, len(all))
-	for _, g := range all {
-		names = append(names, g.Name)
-	}
-	label.Prefix = Prefixes(names)[group]
-	if label.Prefix == "" {
-		label.Prefix = group
 	}
 	return label, true
 }

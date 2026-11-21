@@ -1099,7 +1099,7 @@ test('a shell in an agent\'s directory offers no ✉ Message: it is not the agen
   cleanup();
 });
 
-test('two agents named lead in different groups are told apart by their group prefix', async (t) => {
+test('two agents named lead in different groups are told apart by a group prefix in their tabs alone', async (t) => {
   const harness = await createPreactHarness(t);
   const { host } = installHosts(harness);
   const fake = fakeWidgetFactory(harness);
@@ -1114,19 +1114,25 @@ test('two agents named lead in different groups are told apart by their group pr
       agents: [
         { agent_id: 'agt_t', title: 'lead', groups: ['tclaude'] },
         { agent_id: 'agt_c', title: 'lead', groups: ['tclaude', 'counterslop'] },
+        { agent_id: 'agt_r', title: 'reviewer', groups: ['tclaude'] },
       ],
     };
     controller.openTerminalPane({ ws: '/t', key: 't', label: 'lead', agent: 'agt_t' });
     // Opened from counterslop's row: that group, though tclaude is its first.
     controller.openTerminalPane({ ws: '/c', key: 'c', label: 'lead', agent: 'agt_c', group: 'counterslop' });
+    controller.openTerminalPane({ ws: '/r', key: 'r', label: 'reviewer', agent: 'agt_r' });
     controller.openTerminalPane({ ws: '/shell', key: 'shell', label: 'scratch' });
     await Promise.resolve();
   });
   const labels = [...host.querySelectorAll('[role="tab"] .mux-tab-label')];
-  assert.deepEqual(labels.map((label) => label.textContent), ['t/lead', 'c/lead', 'scratch']);
+  assert.deepEqual(labels.map((label) => label.textContent), ['t/lead', 'c/lead', 'reviewer', 'scratch']);
   assert.equal(labels[0].getAttribute('title'), 'tclaude/lead');
   assert.equal(labels[1].getAttribute('title'), 'counterslop/lead (also in tclaude)');
-  assert.ok(!labels[2].getAttribute('title'), 'a plain shell has no group');
+  assert.equal(labels[2].getAttribute('title'), 'tclaude/reviewer', 'a unique name: no prefix, the full group on hover');
+  assert.ok(!labels[3].getAttribute('title'), 'a plain shell has no group');
   assert.equal(host.querySelector('.mux-pane.active .mux-pane-title').textContent, 'scratch');
+  // Every title bar names its agent after its full group, clash or none.
+  assert.deepEqual([...host.querySelectorAll('.mux-pane .mux-pane-title')].map((title) => title.textContent),
+    ['tclaude/lead', 'counterslop/lead', 'tclaude/reviewer', 'scratch']);
   cleanup();
 });

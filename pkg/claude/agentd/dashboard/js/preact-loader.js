@@ -287,7 +287,7 @@ const phoneTerminalDescriptor = createIslandDescriptor({
       // The agent's row as the Agents view shows it (its state and group),
       // read from the live snapshot, or null.
       agentRow: (id) => findRow(agentGroups(dashboardState.snapshot.value, order), id),
-      // The agent's group prefix for its title ("t/lead", agent-group-prefix.js).
+      // The agent's group for its title ("tclaude/lead", agent-group-prefix.js).
       groupMark: (id, openedFrom) => agentGroupMark(dashboardState.snapshot.value, id, openedFrom),
       // ⋯: the agent's menu, as the Agents view opens it.
       // selectText: the terminal's Select, offered where Terminal would be.

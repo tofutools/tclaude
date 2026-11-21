@@ -141,10 +141,10 @@ type BrokeredRenderResponse struct {
 	// SandboxOff drives the ⚠ SB-OFF badge.
 	SandboxOff bool `json:"sandbox_off,omitempty"`
 
-	// AgentPrefix and AgentName name the agent as its terminal does,
-	// "t/lead" (grouplabel); empty for an unowned render.
-	AgentPrefix string `json:"agent_prefix,omitempty"`
-	AgentName   string `json:"agent_name,omitempty"`
+	// AgentGroup and AgentName name the agent as its terminal does,
+	// "tclaude/lead" (grouplabel); empty for an unowned render.
+	AgentGroup string `json:"agent_group,omitempty"`
+	AgentName  string `json:"agent_name,omitempty"`
 
 	// Usage is the usage-API cache, present only when WantUsage was set.
 	Usage *usageapi.CachedUsage `json:"usage,omitempty"`
@@ -242,7 +242,7 @@ func factsFromBroker(req renderRequest, resp BrokeredRenderResponse) renderFacts
 	facts := renderFacts{
 		PinnedWindow: resp.PinnedWindow,
 		SandboxOff:   resp.SandboxOff,
-		Agent:        grouplabel.Label{Prefix: resp.AgentPrefix, Name: resp.AgentName},
+		Agent:        grouplabel.Label{Group: resp.AgentGroup, Name: resp.AgentName},
 		Usage:        resp.Usage,
 		UsageStale:   resp.UsageStale,
 	}

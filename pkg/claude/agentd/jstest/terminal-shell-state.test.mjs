@@ -273,7 +273,7 @@ test('terminal shell state follows agent renames from the roster snapshot', asyn
   assert.equal(state.panes.value, before, 'an unchanged or blank title publishes nothing');
 });
 
-test('a popped-out agent terminal takes its group and group prefix along', async (t) => {
+test('a popped-out agent terminal takes its group along', async (t) => {
   const harness = await createPreactHarness(t);
   const [{ createTerminalShellState }, { createTerminalShellActions }, { decodeTerminalOpenHash }] = await Promise.all([
     harness.importDashboardModule('js/terminal-shell-state.js'),
@@ -281,7 +281,7 @@ test('a popped-out agent terminal takes its group and group prefix along', async
     harness.importDashboardModule('js/terminal-handoff.js'),
   ]);
   const replaced = [];
-  const mark = { group: 'counterslop', prefix: 'c', groups: ['tclaude', 'counterslop'] };
+  const mark = { group: 'counterslop', groups: ['tclaude', 'counterslop'] };
   const actions = createTerminalShellActions({
     state: createTerminalShellState(),
     fetchImpl: async () => ({ ok: true }),
