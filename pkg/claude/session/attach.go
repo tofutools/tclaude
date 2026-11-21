@@ -107,7 +107,11 @@ func AttachToSession(sessionID, tmuxSession string, forceAttach bool) error {
 	// explicit false leaves the terminal's own title alone. TCLAUDE_SESSION_ID
 	// is still exported above so anything that does key off it keeps working.
 	if windowTitleEnabledFn() && !isWebTerminalAttach() {
-		setTerminalTitle(fmt.Sprintf("tclaude:%s", sessionID))
+		// The agent's name and group may have changed since the session
+		// started: each attach names it afresh, in the terminal's own title
+		// and in the one tmux keeps while attached.
+		setTerminalTitle(sessionWindowTitle(sessionID))
+		applyTmuxWindowTitle(tmuxSession, sessionID)
 	}
 	// Resolve the persisted harness before blocking in tmux. The row can change
 	// while the client is attached, but this attachment belongs to the launch

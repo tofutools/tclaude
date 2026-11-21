@@ -18,6 +18,7 @@ import (
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/spf13/cobra"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/grouplabel"
 	"github.com/tofutools/tclaude/pkg/claude/common/money"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/common"
@@ -302,6 +303,12 @@ func run() error {
 		Git:             gitData,
 		WantUsage:       !hasSubscriptionLimits(input),
 	})
+
+	// The agent leads the git line as its terminal tab names it, "t/lead":
+	// two agents named lead in different groups are told apart here too.
+	if facts.Agent.Name != "" {
+		line1 = append([]string{agentLabelText(facts.Agent)}, line1...)
+	}
 
 	// === Line 2: model+context bar | limit bars with reset timers | cost ===
 	//
@@ -777,4 +784,14 @@ func resetTimer(t time.Time) string {
 		return fmt.Sprintf("%s(%dh%dm)%s", colorDim, h, m, colorReset)
 	}
 	return fmt.Sprintf("%s(%dm)%s", colorDim, m, colorReset)
+}
+
+// agentLabelText is the agent's label on the git line: its group's prefix
+// dimmed before its name, "t/lead", printable characters only.
+func agentLabelText(label grouplabel.Label) string {
+	name := grouplabel.TitleText(label.Name)
+	if prefix := grouplabel.TitleText(label.Prefix); prefix != "" {
+		return colorDim + prefix + "/" + colorReset + name
+	}
+	return name
 }

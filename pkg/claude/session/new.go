@@ -18,6 +18,7 @@ import (
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/grouplabel"
 	"github.com/tofutools/tclaude/pkg/claude/common/launchundo"
 	"github.com/tofutools/tclaude/pkg/claude/common/managedinstructions"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
@@ -2125,8 +2126,31 @@ func applyTmuxWindowTitle(tmuxSession, sessionID string) {
 		return
 	}
 	_ = clcommon.TmuxRun("set-option", "-t", clcommon.ExactTarget(tmuxSession)+":", "set-titles", "on")
-	_ = clcommon.TmuxRun("set-option", "-t", clcommon.ExactTarget(tmuxSession)+":", "set-titles-string", fmt.Sprintf("tclaude:%s", sessionID))
+	_ = clcommon.TmuxRun("set-option", "-t", clcommon.ExactTarget(tmuxSession)+":", "set-titles-string", sessionWindowTitle(sessionID))
 }
+
+// sessionWindowTitle is a session's window title: "t/lead — tclaude:<id>",
+// the agent's name after its group's prefix (grouplabel, as the dashboard's
+// terminal tabs show it), or the bare "tclaude:<id>" for a session with no
+// named agent yet. The "tclaude:<id>" stays in it: window focus and tiling
+// find a session's window by it (focus_linux.go matches it as a substring).
+//
+// set-titles-string is a tmux format, so the agent's name, which it can
+// change itself, goes through grouplabel.TitleText: no '#', so tmux expands
+// nothing in it. The session id is gated by ValidateSessionLabel already.
+func sessionWindowTitle(sessionID string) string {
+	title := fmt.Sprintf("tclaude:%s", sessionID)
+	if label, ok := sessionGroupLabelFn(sessionID); ok {
+		if text := grouplabel.TitleText(label.String()); text != "" {
+			title = text + " — " + title
+		}
+	}
+	return title
+}
+
+// sessionGroupLabelFn is the seam tests use to name a session's agent
+// without a database.
+var sessionGroupLabelFn = grouplabel.ForSession
 
 // announceAndAttach prints the created-session summary and then either reports
 // the detach hint (detached launches) or attaches to the pane. createdLine is

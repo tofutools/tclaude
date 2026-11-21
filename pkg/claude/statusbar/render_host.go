@@ -3,6 +3,7 @@ package statusbar
 import (
 	"time"
 
+	"github.com/tofutools/tclaude/pkg/claude/common/grouplabel"
 	"github.com/tofutools/tclaude/pkg/claude/common/usageapi"
 )
 
@@ -59,6 +60,11 @@ type renderFacts struct {
 	// SandboxOff drives the ⚠ SB-OFF badge.
 	SandboxOff bool
 
+	// Agent names the agent this render belongs to as its terminal does,
+	// "t/lead" (grouplabel); zero for a render that does not own its
+	// session, or a session with no named agent.
+	Agent grouplabel.Label
+
 	// Usage is the usage-API cache, populated only when WantUsage.
 	Usage *usageapi.CachedUsage
 
@@ -101,6 +107,7 @@ func directHostState(req renderRequest) renderFacts {
 		WorkspaceConv: workspaceConv,
 		PinnedWindow:  resolved,
 		SandboxOff:    temporarySandboxOff(workspaceConv),
+		Agent:         renderAgentLabel(owned),
 	}
 
 	writes := renderWrites{

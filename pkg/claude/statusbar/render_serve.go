@@ -72,6 +72,8 @@ func ApplyBrokeredRender(req BrokeredRenderRequest, sessionID, rowConvID string)
 	}
 	resp.PinnedWindow = resolved
 	resp.SandboxOff = temporarySandboxOff(workspaceConv)
+	agent := renderAgentLabel(owned)
+	resp.AgentPrefix, resp.AgentName = agent.Prefix, agent.Name
 
 	writes := renderWrites{
 		Input:         input,

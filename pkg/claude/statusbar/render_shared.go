@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/grouplabel"
 	"github.com/tofutools/tclaude/pkg/claude/common/usageapi"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
@@ -331,4 +332,15 @@ func temporarySandboxOff(convID string) bool {
 	}
 	_, active, err := db.TemporaryHarnessBuiltinModeForAgent(agentID)
 	return err == nil && active
+}
+
+// renderAgentLabel is the agent label a render shows, for a render that owns
+// its session (owned is the attribution gate's verdict): a foreign
+// conversation running under an agent's session is not that agent.
+func renderAgentLabel(owned string) grouplabel.Label {
+	if owned == "" {
+		return grouplabel.Label{}
+	}
+	label, _ := grouplabel.ForSession(owned)
+	return label
 }
