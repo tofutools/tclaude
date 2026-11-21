@@ -64,7 +64,13 @@ test.describe('desktop', () => {
     const labels = page.locator('[role="tab"] .mux-tab-label');
     await expect(labels.filter({ hasText: 'lead' })).toHaveCount(2, { timeout: 30_000 });
     if (!before) {
-      await expect(labels.filter({ hasText: /^webshop\/lead$/ })).toHaveCount(1);
+      // webshop stays whole as a prefix (webshop-perf starts with it); short
+      // of room it is cut before the name is, the slash right after the cut.
+      const webshop = labels.filter({ hasText: /^webs[a-z]*…?\/lead$/ });
+      await expect(webshop).toHaveCount(1);
+      const gap = await webshop.evaluate((label) => label.querySelector('.agent-group-slash').getBoundingClientRect().left
+        - label.querySelector('.agent-group-prefix').getBoundingClientRect().right);
+      expect(Math.abs(gap), 'no gap between the prefix and its slash').toBeLessThan(0.5);
       await expect(labels.filter({ hasText: /^i\/lead$/ })).toHaveCount(1);
       await expect(labels.filter({ hasText: /^i\/lead$/ })).toHaveAttribute('title', 'infra/lead');
       await expect(page.locator('.mux-pane.active .mux-pane-title')).toHaveText('i/lead');
@@ -72,6 +78,30 @@ test.describe('desktop', () => {
     await page.mouse.move(0, 0);
     const strip = await page.locator('.mux-pane.active').boundingBox();
     await shot(page, 'desktop.png', { clip: { x: 0, y: Math.max(0, strip.y - 60), width: 1280, height: 150 } });
+    if (before) return;
+    // Floated over the dashboard, the agent's tab says the same.
+    await page.locator('.mux-pane.active').getByRole('button', { name: 'Open in overlay' }).click();
+    await expect(page.locator('.companion-tab', { hasText: 'i/lead' }).first()).toBeVisible({ timeout: 15_000 });
+  });
+
+  test('a popped-out terminal keeps the prefix in its title bar and browser title', async ({ page, context }) => {
+    test.setTimeout(120_000);
+    const ids = await twoLeads(page);
+    await page.goto('/groups');
+    await booted(page);
+    await expect.poll(() => ids.infra, { timeout: 30_000 }).toBeTruthy();
+    await page.evaluate(async ({ infra }) => {
+      const base = document.querySelector('script[type="module"][src$="/js/dashboard.js"]').src.replace(/js\/dashboard\.js$/, '');
+      const { openWebWindowPane } = await import(`${base}js/terminals-tab.js`);
+      openWebWindowPane(infra, 'lead', { harness: 'claude' });
+    }, ids);
+    await expect(page.locator('.mux-pane.active .mux-pane-title')).toHaveText(before ? 'lead' : 'i/lead', { timeout: 30_000 });
+    const popup = context.waitForEvent('page');
+    await page.locator('.mux-pane.active').getByRole('button', { name: 'Open in separate window' }).click();
+    const solo = await popup;
+    await expect(solo.locator('.mux-pane-title')).toHaveText(before ? 'lead' : 'i/lead', { timeout: 30_000 });
+    if (!before) await expect(solo).toHaveTitle(/i\/lead — tclaude terminals/);
+    await solo.close();
   });
 });
 

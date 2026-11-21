@@ -1113,7 +1113,7 @@ test('two agents named lead in different groups are told apart by their group pr
       groups: [{ name: 'tclaude' }, { name: 'counterslop' }],
       agents: [
         { agent_id: 'agt_t', title: 'lead', groups: ['tclaude'] },
-        { agent_id: 'agt_c', title: 'lead', groups: ['counterslop', 'tclaude'] },
+        { agent_id: 'agt_c', title: 'lead', groups: ['tclaude', 'counterslop'] },
       ],
     };
     controller.openTerminalPane({ ws: '/t', key: 't', label: 'lead', agent: 'agt_t' });

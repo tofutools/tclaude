@@ -77,3 +77,27 @@ export function markTitle(name, mark) {
   const others = mark.groups.filter((group) => group !== mark.group);
   return `${mark.group}/${name}${others.length ? ` (also in ${others.join(', ')})` : ''}`;
 }
+
+// fitPrefix is the prefix as it fits in room (a width, measured by width()):
+// whole when it fits, else as many of its first letters as fit before an
+// ellipsis, at least one. Cut here rather than by CSS text-overflow, which
+// leaves the unused end of the box as a gap before the slash ("websh… /lead").
+export function fitPrefix(prefix, room, width) {
+  if (prefix.length <= 1 || Number.isNaN(room) || width(prefix) <= room) return prefix;
+  for (let n = prefix.length - 1; n > 1; n -= 1) {
+    const cut = `${prefix.slice(0, n)}…`;
+    if (width(cut) <= room) return cut;
+  }
+  return `${prefix.slice(0, 1)}…`;
+}
+
+// seedGroupMark is a mark a popped-out terminal was handed in its seed: that
+// window reads only its own agent, not every group's name, so the dashboard
+// works the prefix out and passes it on. It is shown as text only, and a
+// malformed one is dropped.
+export function seedGroupMark(value) {
+  const text = (item) => typeof item === 'string' && item.length > 0 && item.length <= 128;
+  if (!value || !text(value.group) || !text(value.prefix) || !Array.isArray(value.groups)) return null;
+  const groups = value.groups.filter(text).slice(0, 32);
+  return groups.includes(value.group) ? { group: value.group, prefix: value.prefix, groups } : null;
+}

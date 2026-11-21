@@ -25,7 +25,7 @@ import { terminalAttachWidgetOptions } from './terminal-attach-config.js';
 import { TerminalZoom, readTerminalFont, useTerminalFont } from './terminal-zoom.js';
 import { leaveTerminalsAfterLastClose } from './terminal-close-nav.js';
 import { isAgentDirShell, shellTabStatus } from './terminal-tab-status.js';
-import { agentGroupMark, markTitle } from './agent-group-prefix.js';
+import { agentGroupMark, markTitle, seedGroupMark } from './agent-group-prefix.js';
 import { GroupMarkedName } from './agent-group-prefix-view.js';
 import {
   backgroundPeers, backgroundTerminals, hasPeerBackgroundAgent, refreshBackgroundTerminals,
@@ -460,7 +460,7 @@ function TerminalPane({
   // The pane reads the process snapshot already (paneFloats), so its group
   // prefix costs no extra renders where it does not manage the title.
   const mark = paneGroupMark(pane, (snapshot || processSnapshot)?.value);
-  const shownLabel = pane.label && mark ? `${mark.prefix}/${pane.label}` : pane.label;
+  const shownLabel = pane.label && mark ? `${mark.prefix}/${paneTitle(pane)}` : pane.label;
   useEffect(() => {
     if (active && manageTitle) {
       const prefix = snapshotReady ? `${agentStatus.symbol} ` : '';
@@ -871,11 +871,12 @@ export function paneTitle(pane) {
 
 // paneGroupMark is the group of the agent a pane is the terminal of, for its
 // short prefix ("t/lead", agent-group-prefix.js): the group it was opened
-// from, else its own. A remote agent keeps its node pill instead, and a shell
-// in an agent's directory is not the agent.
+// from, else its own. A popped-out window reads only its own agent, so it
+// takes the mark the dashboard handed it in the seed. A remote agent keeps
+// its node pill instead, and a shell in an agent's directory is not the agent.
 export function paneGroupMark(pane, snapshotValue) {
   if (!pane?.seed?.agent || pane.seed.remote || isAgentDirShell(pane)) return null;
-  return agentGroupMark(snapshotValue, pane.seed.agent, pane.seed.group || '');
+  return agentGroupMark(snapshotValue, pane.seed.agent, pane.seed.group || '') || seedGroupMark(pane.seed.groupMark);
 }
 
 // PaneName is a pane's name with its agent's group prefix, the full group

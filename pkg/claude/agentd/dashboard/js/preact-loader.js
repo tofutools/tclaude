@@ -711,10 +711,14 @@ const terminalsDescriptor = createIslandDescriptor({
     // The node scope: a fused view shows only the ticked nodes' panes.
     const scopeModule = import('./fleet-state.js');
     const [
-      { mountTerminalShellIsland }, { terminalShellState }, { createTerminalShellActions },
+      { mountTerminalShellIsland, paneGroupMark }, { terminalShellState }, { createTerminalShellActions },
       { dashboardState }, { fleetState },
     ] = await Promise.all([islandModule, stateModule, actionsModule, snapshotStoreModule, scopeModule]);
-    const actions = createTerminalShellActions({ state: terminalShellState, ...dependencies });
+    const actions = createTerminalShellActions({
+      state: terminalShellState,
+      groupMarkOf: (pane) => paneGroupMark(pane, dashboardState.snapshot.value),
+      ...dependencies,
+    });
     return {
       state: terminalShellState,
       mount: (registerCleanup) => mountTerminalShellIsland({

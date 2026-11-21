@@ -3,7 +3,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { agentGroupMark, groupPrefixes, markTitle, markedName } from '../dashboard/js/agent-group-prefix.js';
+import { agentGroupMark, fitPrefix, groupPrefixes, markTitle, markedName, seedGroupMark } from '../dashboard/js/agent-group-prefix.js';
 
 test('a group gets the shortest start no other group shares', () => {
   const prefixes = groupPrefixes(['tclaude', 'counterslop', 'webshop', 'workers', 'web', 'Wiki']);
@@ -51,4 +51,23 @@ test('an agent in no group, or not on this node, has no prefix', () => {
   assert.equal(agentGroupMark(null, 'agt_a'), null);
   assert.equal(markedName('loner', null), 'loner');
   assert.equal(markTitle('loner', null), 'loner');
+});
+
+test('a prefix short of room keeps the letters that fit before an ellipsis', () => {
+  const width = (text) => text.length * 10; // ten per letter, the ellipsis too
+  assert.equal(fitPrefix('webshop', 70, width), 'webshop', 'it fits whole');
+  assert.equal(fitPrefix('webshop', 60, width), 'websh…');
+  assert.equal(fitPrefix('webshop', 25, width), 'w…', 'at least one letter');
+  assert.equal(fitPrefix('webshop', -40, width), 'w…', 'the name alone is too long');
+  assert.equal(fitPrefix('t', 0, width), 't', 'one letter is never cut');
+  assert.equal(fitPrefix('webshop', Number.NaN, width), 'webshop', 'not measured: whole');
+});
+
+test('a popped-out window takes a well-formed mark from its seed, and drops any other', () => {
+  const mark = { group: 'tclaude', prefix: 't', groups: ['tclaude', 'webshop'] };
+  assert.deepEqual(seedGroupMark(mark), mark);
+  assert.equal(seedGroupMark({ ...mark, group: 'other' }), null, 'its group is one of its groups');
+  assert.equal(seedGroupMark({ ...mark, prefix: 7 }), null);
+  assert.equal(seedGroupMark({ ...mark, groups: 'tclaude' }), null);
+  assert.equal(seedGroupMark(undefined), null);
 });

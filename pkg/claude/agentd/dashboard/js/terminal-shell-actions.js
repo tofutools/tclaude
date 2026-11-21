@@ -21,6 +21,9 @@ export function createTerminalShellActions({
   notify = shellToast,
   onReattachPane = null,
   onPaneDisconnected = null,
+  // groupMarkOf is a pane's agent's group prefix (paneGroupMark), handed to
+  // a popped-out window, which cannot work it out.
+  groupMarkOf = null,
 } = {}) {
   if (!state) throw new TypeError('terminal shell actions require state');
   const widgets = new Map();
@@ -262,6 +265,8 @@ export function createTerminalShellActions({
       hideConv: pane.seed.hideConv,
       agent: pane.seed.agent,
       harness: pane.seed.harness,
+      group: pane.seed.group || undefined,
+      groupMark: groupMarkOf?.(pane) || undefined,
       remote: pane.seed.remote || undefined,
       floats: floats || undefined,
       initialRetry: true,

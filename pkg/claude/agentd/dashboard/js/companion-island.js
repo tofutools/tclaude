@@ -17,6 +17,7 @@
 // showing an agent here first closes its Terminals-tab pane, and "open in
 // Terminals" closes this tab instead of fighting over the session.
 
+import { agentGroupMark, markTitle, markedName } from './agent-group-prefix.js';
 import { h, render } from 'preact';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
@@ -39,13 +40,13 @@ import { activateOverlayTab, closeOverlayTab, focusOverlayWindow, minimizeOverla
 import { CHAT_WINDOW_KIND, DECIDE_WINDOW_KIND, START_WINDOW_KIND, chatTab, chatWindowId, decideTab, startTab } from './chat-window-model.js';
 import { OverlayTabGhost, OverlayTabMenu } from './overlay-tab-strip.js';
 import { chatHasDraft } from './chat-window.js';
-import { OverlayTabWindow, plainView, tabViewOf } from './overlay-tab-window.js';
+import { OverlayTabWindow, tabViewOf } from './overlay-tab-window.js';
 import { SnapAssist } from './overlay-snap-assist.js';
 import { activeTabOf, windowHolding } from './overlay-tab-model.js';
 import { DRAWING_BOARD_WINDOW_KIND } from './drawing-board-overlay-state.js';
 import { PROCESS_WINDOW_KIND } from './process-editor-place.js';
 import { PAGE_WINDOW_KIND } from './page-pane-model.js';
-import { TERMINAL_WINDOW_KIND, terminalWindowView } from './terminal-window-model.js';
+import { TERMINAL_WINDOW_KIND } from './terminal-window-model.js';
 import { viewportOf } from './overlay-window-model.js';
 import { CompanionViewChannel } from './companion-view-channel.js';
 import { GUIDE_FIND_STEP_MS, GUIDE_FIND_TIMEOUT_MS, GUIDE_MARK_PATIENCE_MS, GUIDE_SETTLE_MS, GUIDE_SHOW_MS, CUE_OPEN_UNFOCUSED_DELAY_MS, GuideOverlay, claimCueLock, claimCueOpen, cueOpenClaimed, cueOpenDue, cuePath, findGuideTarget, newCues } from './companion-guide.js';
@@ -1207,12 +1208,17 @@ export function CompanionApp({
     const agent = agents.get(agentId);
     const name = agent?.name || label;
     const tabStatus = agent ? statusOf(agent) : 'offline';
-    return { label: name, lead: html`<${StatusDot} status=${tabStatus} />`, title: `${name}: ${agent ? companionStatusLabel(tabStatus) : 'not on this node any more'}` };
+    // Its group's prefix, as its terminal shows it ("t/lead", agent-group-prefix.js).
+    const mark = agentGroupMark(snapshot.value, agentId);
+    return {
+      label: markedName(name, mark), lead: html`<${StatusDot} status=${tabStatus} />`,
+      title: `${markTitle(name, mark)}: ${agent ? companionStatusLabel(tabStatus) : 'not on this node any more'}`,
+    };
   };
   const stewardHome = { win, steward, shutDown, returning, busy, stewardLabel, customName, snapshot };
   const tabKinds = {
     [CHAT_WINDOW_KIND]: { view: chatView, asksToClose: ({ agent }) => !!(agents.get(agent)?.steward && agents.get(agent).online), ...shownTerminal, fetchImpl, notify, closeTerminalPanes, onSeparateWindow: detachWindow ? detachToWindow : null, onFloat: floatTab, onStewardDown: stewardShutDown, stewardRoster, openPermissions, openSudo, openStewardHandover, showAgent, DecisionCard, StatusDot, ...chatTabTools },
-    [TERMINAL_WINDOW_KIND]: { view: (tab) => terminalWindowView(tab, snapshot.value, plainView), ...shownTerminal, notify },
+    [TERMINAL_WINDOW_KIND]: { ...shownTerminal, notify },
     [DRAWING_BOARD_WINDOW_KIND]: { snapshot, fetchImpl, notify, win },
     [PROCESS_WINDOW_KIND]: { snapshot, fetchImpl, notify, win },
     [PAGE_WINDOW_KIND]: { snapshot, fetchImpl, notify, win },
