@@ -107,7 +107,8 @@ export function placeTerminalPane(key, beside, options) {
 // caller is fire-and-forget; the deep-link restore in terminal-nav-route.js
 // needs to know whether the agent's terminal actually came up.
 export function openWebWindowPane(agent, label, options) {
-  const { harness = '', ...paneOptions } = options || {};
+  // group is the group whose row opened it: its terminal names that group.
+  const { harness = '', group = '', ...paneOptions } = options || {};
   return openTerminalPane({
     ws: `/api/open-window-ws/${encodeURIComponent(agent)}`,
     label,
@@ -115,6 +116,7 @@ export function openWebWindowPane(agent, label, options) {
     hideConv: agent,
     agent,
     harness,
+    ...(group ? { group } : {}),
   }, paneOptions);
 }
 

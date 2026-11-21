@@ -25,6 +25,8 @@ import { terminalAttachWidgetOptions } from './terminal-attach-config.js';
 import { TerminalZoom, readTerminalFont, useTerminalFont } from './terminal-zoom.js';
 import { leaveTerminalsAfterLastClose } from './terminal-close-nav.js';
 import { isAgentDirShell, shellTabStatus } from './terminal-tab-status.js';
+import { agentGroupMark, markTitle } from './agent-group-prefix.js';
+import { GroupMarkedName } from './agent-group-prefix-view.js';
 import {
   backgroundPeers, backgroundTerminals, hasPeerBackgroundAgent, refreshBackgroundTerminals,
   startBackgroundTerminalsPoll, visibleBackgroundTerminals,
@@ -455,12 +457,16 @@ function TerminalPane({
   };
   const reconnectPane = () => void actions.widgetFor(pane.id)?.connect();
   const snapshotReady = Boolean(snapshot?.value);
+  // The pane reads the process snapshot already (paneFloats), so its group
+  // prefix costs no extra renders where it does not manage the title.
+  const mark = paneGroupMark(pane, (snapshot || processSnapshot)?.value);
+  const shownLabel = pane.label && mark ? `${mark.prefix}/${pane.label}` : pane.label;
   useEffect(() => {
     if (active && manageTitle) {
       const prefix = snapshotReady ? `${agentStatus.symbol} ` : '';
-      document.title = `${prefix}${pane.label ? `${pane.label} — ` : ''}tclaude terminals`;
+      document.title = `${prefix}${shownLabel ? `${shownLabel} — ` : ''}tclaude terminals`;
     }
-  }, [active, agentStatus?.symbol, manageTitle, pane.label, snapshotReady]);
+  }, [active, agentStatus?.symbol, manageTitle, shownLabel, snapshotReady]);
   return html`
     <div
       class=${`mux-pane${active ? ' active' : ''}${theme.wizard && theme.palette ? ' arcane-palette' : ''}${scope?.hidden ? ' scope-hidden' : ''}`}
@@ -480,12 +486,12 @@ function TerminalPane({
           <span
             class=${`mux-pane-title mux-pane-title-drag${dragging ? ' dragging' : ''}`}
             draggable="true"
-            title="Drag off this header, or use the button beside it, to move this terminal back to the dashboard"
+            title=${`${mark ? `${markTitle(paneTitle(pane), mark)}. ` : ''}Drag off this header, or use the button beside it, to move this terminal back to the dashboard`}
             onDragStart=${startTitleDrag}
             onDragEnd=${endTitleDrag}
-          >${paneTitle(pane)}</span>
+          ><${PaneName} pane=${pane} mark=${mark} /></span>
           ${reattachArmed ? html`<span class="mux-drag-out-hint">Release anywhere — even outside the browser — to send this terminal back to the dashboard</span>` : null}
-        ` : html`<span class="mux-pane-title">${paneTitle(pane)}</span>`}
+        ` : html`<span class="mux-pane-title" title=${mark ? markTitle(paneTitle(pane), mark) : null}><${PaneName} pane=${pane} mark=${mark} /></span>`}
         <${RemoteBadge} seed=${pane.seed} remote=${remote} node=${scope?.node} />
         ${!pane.seed.remote && pane.seed.agent ? html`<${ViewersBadge} agentId=${pane.seed.agent} className="term-viewers-badge" />` : null}
         <span class="mux-pane-status" role="status" aria-live="polite" aria-atomic="true">${status}</span>
@@ -863,6 +869,21 @@ export function paneTitle(pane) {
   return suffix && label.endsWith(suffix) && label.length > suffix.length ? label.slice(0, -suffix.length) : label;
 }
 
+// paneGroupMark is the group of the agent a pane is the terminal of, for its
+// short prefix ("t/lead", agent-group-prefix.js): the group it was opened
+// from, else its own. A remote agent keeps its node pill instead, and a shell
+// in an agent's directory is not the agent.
+export function paneGroupMark(pane, snapshotValue) {
+  if (!pane?.seed?.agent || pane.seed.remote || isAgentDirShell(pane)) return null;
+  return agentGroupMark(snapshotValue, pane.seed.agent, pane.seed.group || '');
+}
+
+// PaneName is a pane's name with its agent's group prefix, the full group
+// and name on hover.
+function PaneName({ pane, mark }) {
+  return html`<${GroupMarkedName} name=${paneTitle(pane)} mark=${mark} />`;
+}
+
 // NodePill names a remote pane's node (fleet-scope.js), in that node's
 // colour. This node's panes go unlabelled: the label is there to
 // set a peer's panes apart. A tab is short of room for the agent's name, so it
@@ -910,7 +931,8 @@ function PaneTab({
   const agentStatus = drawingBoard ? drawingBoardTabStatus(pane) : process ? processTabStatus(pane) : page ? pageTabStatus(pane) : shellTabStatus(pane, snapshot?.value, remoteSessionAgents.value);
   const unreadMessages = paneUnreadNotifications(pane, snapshot?.value, peerNotifications);
   const notificationLabel = unreadNotificationLabel(pane, unreadMessages.length);
-  const ariaLabel = [agentStatus.ariaLabel, notificationLabel].filter(Boolean).join('. ');
+  const groupMark = paneGroupMark(pane, snapshot?.value);
+  const ariaLabel = [agentStatus.ariaLabel, groupMark && `in ${groupMark.group}`, notificationLabel].filter(Boolean).join('. ');
   const costLine = costTooltip(agentStatus.agent);
   const gear = tabGearMember(pane, agentStatus.agent, snapshot?.value, scope);
   // A drawing board's or a page's tab renames it in place: double-click or F2.
@@ -1026,7 +1048,7 @@ function PaneTab({
       <${NodePill} node=${scope?.node} compact />
       ${renaming ? html`<${TabResourceRename} target=${renameTarget} label=${paneTitle(pane)}
         onRenamed=${(title) => actions.setPaneLabel?.(pane.key, title)} onDone=${() => setRenaming(false)} />`
-        : html`<span class="mux-tab-label">${paneTitle(pane)}</span>`}
+        : html`<span class="mux-tab-label" title=${groupMark ? markTitle(paneTitle(pane), groupMark) : null}><${PaneName} pane=${pane} mark=${groupMark} /></span>`}
       ${(drawingBoard || process || page) && html`<${LockBadge} kind=${drawingBoard ? 'drawing_board' : process ? 'process' : 'page'}
         locked=${resourceLocked(snapshot?.value, drawingBoard ? 'drawing_board' : process ? 'process' : 'page', pane.seed.drawingBoard || pane.seed.process || pane.seed.page)} />`}
       <${TerminalCosts} agent=${agentStatus.agent} />

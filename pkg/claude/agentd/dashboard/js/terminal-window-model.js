@@ -4,6 +4,7 @@
 // The window keeps the pane's key, so a terminal is in one place at a time and
 // goes back to the same tab.
 
+import { agentGroupMark, markTitle, markedName } from './agent-group-prefix.js';
 import { companionAgentOf } from './companion-model.js';
 
 export const TERMINAL_WINDOW_KIND = 'terminal';
@@ -35,7 +36,20 @@ export function chatAgentOfPane(pane, snapshot) {
 }
 
 export function terminalWindowOf(pane) {
-  return { id: terminalWindowId(pane.key), kind: TERMINAL_WINDOW_KIND, paneKey: pane.key, ws: pane.seed.ws, agent: pane.seed.agent || '', label: pane.label };
+  return {
+    id: terminalWindowId(pane.key), kind: TERMINAL_WINDOW_KIND, paneKey: pane.key, ws: pane.seed.ws, agent: pane.seed.agent || '', label: pane.label,
+    ...(pane.seed.group && { group: pane.seed.group }),
+  };
+}
+
+// terminalWindowView is how a terminal window's tab shows: an agent's own
+// session with its group's prefix ("t/lead", agent-group-prefix.js), the full
+// group and name on hover. A shell keeps the plain view.
+export function terminalWindowView(window, snapshot, plain) {
+  const view = plain(window);
+  if (!agentSessionSeed({ agent: window.agent, ws: window.ws })) return view;
+  const mark = agentGroupMark(snapshot, window.agent, window.group || '');
+  return mark ? { ...view, label: markedName(view.label, mark), title: markTitle(view.label, mark) } : view;
 }
 
 // A saved window names a route it will connect to, so it must be one of these.
@@ -45,5 +59,5 @@ export function validTerminalWindow(window) {
 
 // The pane a window goes back to.
 export function paneSeedOf(window) {
-  return { ws: window.ws, key: window.paneKey, label: window.label, ...(window.agent && { agent: window.agent }) };
+  return { ws: window.ws, key: window.paneKey, label: window.label, ...(window.agent && { agent: window.agent }), ...(window.group && { group: window.group }) };
 }
