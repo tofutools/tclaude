@@ -71,8 +71,8 @@ function NowRow({ agent, state, when, tone, onOpen, onMenu }) {
   const { holding, handlers } = useHold(onMenu ? () => onMenu(agent) : null);
   return html`<div class=${`phone-now-agent${holding ? ' phone-holding' : ''}`}>
     <button data-ui-exempt type="button" class="phone-row phone-holdable" ...${handlers} onClick=${() => onOpen(agent)}
-      aria-label=${`${agent.name}, ${state}${contextHigh(agent) ? `, context ${agent.ctx}% full` : ''}${when ? `, ${when}` : ''}: open its terminal`}>
-      <span class="phone-row-text"><span class="phone-who-name">${agent.name}</span>${agent.group && html`<span class="phone-who-sub">${agent.group}</span>`}
+      aria-label=${`${agent.name}, ${state}${agent.owner && agent.group ? `, owner of ${agent.group}` : ''}${contextHigh(agent) ? `, context ${agent.ctx}% full` : ''}${when ? `, ${when}` : ''}: open its terminal`}>
+      <span class="phone-row-text"><span class="phone-who-name">${agent.name}</span>${agent.group && html`<span class="phone-who-sub">${agent.group}</span>`}${agent.owner && agent.group && html`<span class="ui-tag ui-tag-own owner-badge" title=${`Owner of ${agent.group}`}>owner</span>`}
         ${state === 'error' && agent.detail && tone === undefined && html`<span class="phone-card-line">${agent.detail}</span>`}
         ${when && html`<span class=${`phone-now-when${tone ? ` ${tone}` : ''}`}>${when}</span>`}</span>
       ${agent.ctxState && html`<${ContextMeter} state=${agent.ctxState} />`}<${StatePill} state=${state} />

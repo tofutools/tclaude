@@ -83,6 +83,9 @@ export function companionAgents(snapshot) {
       harness: String(member.harness || member.state?.harness || ''),
       cwd: String(member.state?.cwd || member.cwd || prev?.cwd || ''),
       group: String(group || prev?.group || ''),
+      // Owns that group (the snapshot's member.owner), as the desktop member
+      // table's owner tag says.
+      owner: group ? member.owner === true : prev?.owner === true,
       presence: member.federation_presence || prev?.presence || null,
       steward: steward || prev?.steward === true,
       active: agentId === activeId,
