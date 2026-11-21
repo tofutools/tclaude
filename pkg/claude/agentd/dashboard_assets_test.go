@@ -752,9 +752,9 @@ func TestDashboardAssets_DefaultTerminalWired(t *testing.T) {
 		"export function openWebWindowPane(",
 		"export function openWebTermPane(",
 		// row-actions.js — the routed per-row actions (native → web branches).
-		"if (webTerminalDefault()) { openWebWindowPane(agent, label, { ...terminalPaneOptions, harness }); toast(",
+		"if (webTerminalDefault()) { openWebWindowPane(agent, label, { ...terminalPaneOptions, harness, group }); toast(",
 		"if (webTerminalDefault()) { openWebTermPane(agent, label, chooseTerminalDirectory(label)); return; }",
-		"if (webTerminalDefault()) { openWebWindowPane(agent, label, { harness }); return; }",
+		"if (webTerminalDefault()) { openWebWindowPane(agent, label, { harness, group }); return; }",
 		"if (webTerminalDefault()) { openWebTermPane(agent, label, which, { group }); return; }",
 		"data-group=${group?.name}",
 		"body: JSON.stringify({ which, group })",

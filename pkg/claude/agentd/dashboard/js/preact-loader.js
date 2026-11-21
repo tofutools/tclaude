@@ -1,5 +1,6 @@
 // This source module intentionally has no Preact imports. Each bounded feature
 // loads its runtime graph only after claiming its stable hosts.
+import { agentGroupMark } from './agent-group-prefix.js';
 import { createIslandDescriptor, mountFeatureIsland, mountIslandDescriptor } from './island-lifecycle.js';
 import { registerFeatureState } from './feature-state-registry.js';
 import { isPhone } from './layout.js';
@@ -286,6 +287,8 @@ const phoneTerminalDescriptor = createIslandDescriptor({
       // The agent's row as the Agents view shows it (its state and group),
       // read from the live snapshot, or null.
       agentRow: (id) => findRow(agentGroups(dashboardState.snapshot.value, order), id),
+      // The agent's group prefix for its title ("t/lead", agent-group-prefix.js).
+      groupMark: (id, openedFrom) => agentGroupMark(dashboardState.snapshot.value, id, openedFrom),
       // ⋯: the agent's menu, as the Agents view opens it.
       // selectText: the terminal's Select, offered where Terminal would be.
       agentMenu: (row, { selectText = null } = {}) => openPhoneSheet({
@@ -708,10 +711,14 @@ const terminalsDescriptor = createIslandDescriptor({
     // The node scope: a fused view shows only the ticked nodes' panes.
     const scopeModule = import('./fleet-state.js');
     const [
-      { mountTerminalShellIsland }, { terminalShellState }, { createTerminalShellActions },
+      { mountTerminalShellIsland, paneGroupMark }, { terminalShellState }, { createTerminalShellActions },
       { dashboardState }, { fleetState },
     ] = await Promise.all([islandModule, stateModule, actionsModule, snapshotStoreModule, scopeModule]);
-    const actions = createTerminalShellActions({ state: terminalShellState, ...dependencies });
+    const actions = createTerminalShellActions({
+      state: terminalShellState,
+      groupMarkOf: (pane) => paneGroupMark(pane, dashboardState.snapshot.value),
+      ...dependencies,
+    });
     return {
       state: terminalShellState,
       mount: (registerCleanup) => mountTerminalShellIsland({

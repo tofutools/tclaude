@@ -272,3 +272,28 @@ test('terminal shell state follows agent renames from the roster snapshot', asyn
   assert.equal(state.syncAgentLabels({ agents: [{ agent_id: 'agt_one', title: 'new-one' }, { agent_id: 'agt_two', conv_id: 'conv-two', title: '' }] }), false);
   assert.equal(state.panes.value, before, 'an unchanged or blank title publishes nothing');
 });
+
+test('a popped-out agent terminal takes its group and group prefix along', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createTerminalShellState }, { createTerminalShellActions }, { decodeTerminalOpenHash }] = await Promise.all([
+    harness.importDashboardModule('js/terminal-shell-state.js'),
+    harness.importDashboardModule('js/terminal-shell-actions.js'),
+    harness.importDashboardModule('js/terminal-handoff.js'),
+  ]);
+  const replaced = [];
+  const mark = { group: 'counterslop', prefix: 'c', groups: ['tclaude', 'counterslop'] };
+  const actions = createTerminalShellActions({
+    state: createTerminalShellState(),
+    fetchImpl: async () => ({ ok: true }),
+    windowRef: { open: () => ({ location: { replace: (next) => replaced.push(next) } }) },
+    documentRef: harness.document,
+    notify: () => {},
+    groupMarkOf: (pane) => (pane.seed.agent === 'agt_c' ? mark : null),
+  });
+  const pane = actions.openPane({ ws: '/c', key: 'c', label: 'lead', agent: 'agt_c', group: 'counterslop' });
+  await actions.popOutPane(pane.key);
+  assert.equal(replaced.length, 1);
+  const seed = decodeTerminalOpenHash(replaced[0].slice(replaced[0].indexOf('#')));
+  assert.equal(seed.group, 'counterslop');
+  assert.deepEqual(seed.groupMark, mark);
+});

@@ -1098,3 +1098,35 @@ test('a shell in an agent\'s directory offers no ✉ Message: it is not the agen
   assert.equal(composed.length, 1, 'the agent\'s own terminal composes');
   cleanup();
 });
+
+test('two agents named lead in different groups are told apart by their group prefix', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { host } = installHosts(harness);
+  const fake = fakeWidgetFactory(harness);
+  const { dashboardState } = await harness.importDashboardModule('js/snapshot-store.js');
+  const { mountTerminalsFeature } = await harness.importDashboardModule('js/preact-loader.js');
+  const controller = await harness.importDashboardModule('js/terminals-tab.js');
+  const cleanup = await mountTerminalsFeature({ widgetFactory: fake.factory });
+  t.after(() => { dashboardState.snapshot.value = null; });
+  await harness.act(async () => {
+    dashboardState.snapshot.value = {
+      groups: [{ name: 'tclaude' }, { name: 'counterslop' }],
+      agents: [
+        { agent_id: 'agt_t', title: 'lead', groups: ['tclaude'] },
+        { agent_id: 'agt_c', title: 'lead', groups: ['tclaude', 'counterslop'] },
+      ],
+    };
+    controller.openTerminalPane({ ws: '/t', key: 't', label: 'lead', agent: 'agt_t' });
+    // Opened from counterslop's row: that group, though tclaude is its first.
+    controller.openTerminalPane({ ws: '/c', key: 'c', label: 'lead', agent: 'agt_c', group: 'counterslop' });
+    controller.openTerminalPane({ ws: '/shell', key: 'shell', label: 'scratch' });
+    await Promise.resolve();
+  });
+  const labels = [...host.querySelectorAll('[role="tab"] .mux-tab-label')];
+  assert.deepEqual(labels.map((label) => label.textContent), ['t/lead', 'c/lead', 'scratch']);
+  assert.equal(labels[0].getAttribute('title'), 'tclaude/lead');
+  assert.equal(labels[1].getAttribute('title'), 'counterslop/lead (also in tclaude)');
+  assert.ok(!labels[2].getAttribute('title'), 'a plain shell has no group');
+  assert.equal(host.querySelector('.mux-pane.active .mux-pane-title').textContent, 'scratch');
+  cleanup();
+});

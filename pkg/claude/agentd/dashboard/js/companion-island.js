@@ -17,6 +17,7 @@
 // showing an agent here first closes its Terminals-tab pane, and "open in
 // Terminals" closes this tab instead of fighting over the session.
 
+import { agentGroupMark, markTitle, markedName } from './agent-group-prefix.js';
 import { h, render } from 'preact';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
@@ -1207,7 +1208,12 @@ export function CompanionApp({
     const agent = agents.get(agentId);
     const name = agent?.name || label;
     const tabStatus = agent ? statusOf(agent) : 'offline';
-    return { label: name, lead: html`<${StatusDot} status=${tabStatus} />`, title: `${name}: ${agent ? companionStatusLabel(tabStatus) : 'not on this node any more'}` };
+    // Its group's prefix, as its terminal shows it ("t/lead", agent-group-prefix.js).
+    const mark = agentGroupMark(snapshot.value, agentId);
+    return {
+      label: markedName(name, mark), lead: html`<${StatusDot} status=${tabStatus} />`,
+      title: `${markTitle(name, mark)}: ${agent ? companionStatusLabel(tabStatus) : 'not on this node any more'}`,
+    };
   };
   const stewardHome = { win, steward, shutDown, returning, busy, stewardLabel, customName, snapshot };
   const tabKinds = {

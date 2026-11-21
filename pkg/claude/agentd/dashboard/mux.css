@@ -106,6 +106,15 @@
   overflow: hidden; text-overflow: ellipsis; max-width: 200px;
   user-select: none;
 }
+/* An agent's group, as a short prefix on its name ("t/lead",
+   agent-group-prefix.js), lightly dimmed. Terminal tabs and title bars, the
+   overlay windows' tabs and the phone terminal's title share it. The prefix
+   is cut to fit in JS (agent-group-prefix-view.js), so the slash sits right
+   after its ellipsis; the name ellipsizes only past that. */
+.agent-group-named { display: inline-flex; max-width: 100%; min-width: 0; vertical-align: bottom; }
+.agent-group-prefix { flex: none; white-space: nowrap; opacity: 0.72; }
+.agent-group-slash { flex: none; opacity: 0.72; }
+.agent-group-name { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* A drawing board's or a page's name, retyped in its tab (double-click or F2,
    tab-resource-rename.js). The Collab strip and an overlay's title bar share it. */
 .mux-tab-rename {

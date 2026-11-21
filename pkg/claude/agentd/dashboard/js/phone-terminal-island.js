@@ -22,6 +22,8 @@
 // tmux's. Where the wheel scrolls tmux copy-mode (Codex, shells), ↓ Live (or
 // any key) scrolls back down first, so copy-mode never takes a key.
 
+import { markTitle } from './agent-group-prefix.js';
+import { GroupMarkedName } from './agent-group-prefix-view.js';
 import { h, render } from 'preact';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { signal } from '@preact/signals';
@@ -307,9 +309,11 @@ export function zoomPercent(size) {
   return Math.round((size / PHONE_TERMINAL_FONT) * 100);
 }
 
-// The bar's title: the agent's name, its group muted after it.
-function Title({ label, group }) {
-  return html`<h1 class="phone-bar-title">${label || 'Terminal'}${group && html`<small>${group}</small>`}</h1>`;
+// The bar's title: the agent's name after its group's prefix ("t/lead",
+// agent-group-prefix.js), as the desktop's terminal tabs show it.
+function Title({ label, mark }) {
+  const name = label || 'Terminal';
+  return html`<h1 class="phone-bar-title" title=${mark ? markTitle(name, mark) : null}><${GroupMarkedName} name=${name} mark=${mark} /></h1>`;
 }
 
 // DIR_SHELL_WHERE says which of an agent's directories its shell is in, when
@@ -454,7 +458,7 @@ export function PhoneTerminal({ seed, deps, onClose }) {
       <button data-ui-exempt type="button" class="phone-bar-back" aria-label="Back" onClick=${onClose}>‹</button>
       ${dirShell
         ? html`<h1 class="phone-bar-title phone-term-dir-title"><span>${dirShell.label}</span>${dirShell.sub && html`<small><bdi>${dirShell.sub}</bdi></small>`}</h1>`
-        : html`<${Title} label=${label} group=${row?.group || ''} />`}
+        : html`<${Title} label=${label} mark=${seed.agent ? deps.groupMark?.(seed.agent, seed.group || row?.group || '') || null : null} />`}
       ${row && !dirShell
         ? html`<${StatePill} state=${row.variant} title=${live ? undefined : `Terminal: ${status}`}>${row.waking ? 'waking' : VARIANT_LABELS[row.variant]}<//>`
         : html`<span class=${`phone-bar-live ${live ? 'connected' : status === 'disconnected' ? 'disconnected' : ''}`} role="status"
