@@ -740,3 +740,21 @@ test('menuModel: Open in Claude app with a known link; Turn on Remote Access & o
   assert.equal(entry({ remote_control: true, remote_control_url: link }, { snap: { ...snapshot, peer_view: true } }).href, link,
     'a peer page opens a link the node shared');
 });
+
+test('rows: a group owner wears the desktop owner tag after its role', async (t) => {
+  const { harness, state, c, row } = await setup(t);
+  const owned = structuredClone(SNAPSHOT);
+  owned.groups[0].members[0].owner = true;
+  owned.groups[0].members[2] = { ...owned.groups[0].members[2], role: 'owner', owner: true };
+  await harness.act(() => {
+    state.beginRequest();
+    state.commitRequest(2, owned);
+  });
+  const tag = row('lead').querySelector('.phone-agent-meta .ui-tag.ui-tag-own.owner-badge');
+  assert.ok(tag, 'the owner tag, as on the desktop member table');
+  assert.equal(row('lead').querySelector('.phone-agent-meta').textContent, 'leadowner · claude · main', 'right after the role, as the desktop role cell has it');
+  assert.ok(row('lead').getAttribute('aria-label').includes(', owner of webshop'));
+  assert.equal(row('old-worker').querySelector('.phone-agent-meta').textContent, 'owner · resume ›', 'a role of just "owner" is the tag alone');
+  assert.equal(row('payments-fix').querySelector('.owner-badge'), null);
+  assert.equal(c.querySelectorAll('.owner-badge').length, 2);
+});

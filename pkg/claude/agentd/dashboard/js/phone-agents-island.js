@@ -65,13 +65,18 @@ function PRLabel({ pr }) {
 // MetaLine is a row's second line (phone-agents-model.js metaParts). A
 // lead's says how many workers it has right after its role, where a narrow
 // phone's ellipsis does not reach.
+// The owner tag is the desktop member table's (ui-tag-own owner-badge), and
+// sits right after the role, as it does there.
 function MetaLine({ row, kids = 0 }) {
   const parts = metaParts(row);
-  if (kids > 0) parts.splice(row.role ? 1 : 0, 0, { kids });
+  // The worker count goes after the role and its owner tag.
+  const lead = (row.role && !(row.owner && row.role === 'owner') ? 1 : 0) + (row.owner ? 1 : 0);
+  if (kids > 0) parts.splice(lead, 0, { kids });
   const part = (p) => (typeof p === 'string' ? p
-    : p.kids ? html`<span class="phone-agent-kids">${p.kids} ${p.kids === 1 ? 'worker' : 'workers'}</span>`
-      : html`<${PRLabel} pr=${p.pr} />`);
-  return html`<span class="phone-agent-meta">${parts.map((p, i) => html`${i ? ' · ' : ''}${part(p)}`)}</span>`;
+    : p.owner ? html`<span class="ui-tag ui-tag-own owner-badge" title=${`Owner of ${row.group}`}>owner</span>`
+      : p.kids ? html`<span class="phone-agent-kids">${p.kids} ${p.kids === 1 ? 'worker' : 'workers'}</span>`
+        : html`<${PRLabel} pr=${p.pr} />`);
+  return html`<span class="phone-agent-meta">${parts.map((p, i) => html`${i && !p.owner ? ' · ' : ''}${part(p)}`)}</span>`;
 }
 
 // AgentRow is one agent: the row itself does its one thing; a hold or ⋯ the
@@ -83,7 +88,7 @@ function AgentRow({ row, steward, onTap, onMore, under = null, last = false, kid
   const cls = ['phone-agent', `v-${row.variant}`, !row.online && 'phone-agent-off', under && 'phone-agent-worker', last && 'phone-agent-last', holding && 'phone-holding', found && 'phone-agent-found'].filter(Boolean).join(' ');
   return html`<li class=${cls}>
     <button data-ui-exempt type="button" class="phone-agent-row phone-holdable" ...${handlers} onClick=${() => onTap(row)}
-      aria-label=${`${row.name}, ${row.pill.text}${row.detail ? ` (${row.detail})` : ''}${under ? `, spawned by ${under.name}` : ''}${kids > 0 ? `, ${kids} ${kids === 1 ? 'worker' : 'workers'}` : ''}: ${row.online ? 'open its terminal' : row.waking ? 'waking' : 'resume it'}`}>
+      aria-label=${`${row.name}, ${row.pill.text}${row.detail ? ` (${row.detail})` : ''}${row.owner ? `, owner of ${row.group}` : ''}${under ? `, spawned by ${under.name}` : ''}${kids > 0 ? `, ${kids} ${kids === 1 ? 'worker' : 'workers'}` : ''}: ${row.online ? 'open its terminal' : row.waking ? 'waking' : 'resume it'}`}>
       <${Avatar} bot glyph=${steward ? '✦' : '🤖'} badge=${row.pill.badge} dim=${!row.online} />
       <span class="phone-agent-text">
         <span class="phone-agent-line"><span class="phone-agent-title">${row.name}</span><${ContextMeter} state=${row.member?.state || {}} /><${Pill} row=${row} /></span>

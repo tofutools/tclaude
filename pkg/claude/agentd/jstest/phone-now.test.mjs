@@ -337,3 +337,16 @@ test('no group to spawn into, no ＋ Agent', async (t) => {
   const { root: c } = await setup(t, { ...SNAPSHOT, groups: (SNAPSHOT.groups || []).map((g) => ({ ...g, archived: true })) });
   assert.equal(c.querySelector('[data-agent-add]'), null);
 });
+
+test('a group owner wears the desktop owner tag by its group, and a screen reader hears it', async (t) => {
+  const owned = structuredClone(SNAPSHOT);
+  owned.groups[0].members[1].owner = true;
+  const { root } = await setup(t, owned);
+  const rowOf = (name) => [...root.querySelectorAll('.phone-now-agent')].find((el) => el.querySelector('.phone-who-name')?.textContent === name);
+  const tag = rowOf('lead').querySelector('.ui-tag.ui-tag-own.owner-badge');
+  assert.ok(tag, 'the owner tag, as on the desktop member table');
+  assert.equal(tag.textContent, 'owner');
+  assert.equal(tag.previousElementSibling.textContent, 'webshop', 'it says it owns the group shown beside it');
+  assert.match(rowOf('lead').querySelector('.phone-row').getAttribute('aria-label'), /^lead, working, owner of webshop/);
+  assert.equal(rowOf('release-bot').querySelector('.owner-badge'), null, 'a member that owns nothing has none');
+});

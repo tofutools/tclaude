@@ -94,6 +94,8 @@ export function agentRow(member, group = '') {
     conv: member.conv_id || '',
     name: member.title || member.name || String(member.conv_id || member.agent_id || '').slice(0, 12),
     role: member.role || '',
+    // Owns this row's group: the desktop member table's owner tag.
+    owner: !!group && member.owner === true,
     harness: state.harness || member.harness || '',
     group,
     online: member.online === true,
@@ -209,10 +211,12 @@ export function stateSummary(rows) {
   return [...counts.values()].sort((a, b) => rank(a.text) - rank(b.text));
 }
 
-// metaParts are a row's second line: role, harness, then the PR or the
-// branch. Its context is the meter by its pill (context-meter.js). An offline agent's ends in "resume ›", what its tap does.
+// metaParts are a row's second line: role, the owner tag ({ owner }) when
+// the agent owns the row's group, harness, then the PR or the branch. As on
+// the desktop's role cell, a role of just "owner" shows as the tag alone.
+// Its context is the meter by its pill (context-meter.js). An offline agent's ends in "resume ›", what its tap does.
 export function metaParts(row) {
-  const parts = [row.role, row.harness];
+  const parts = [row.owner && row.role === 'owner' ? '' : row.role, row.owner && { owner: true }, row.harness];
   if (!row.online) parts.push(row.waking ? 'waking…' : 'resume ›');
   else if (row.pr) parts.push({ pr: row.pr });
   else if (row.branch) parts.push(row.branch);
