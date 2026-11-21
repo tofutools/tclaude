@@ -61,7 +61,7 @@ type renderFacts struct {
 	SandboxOff bool
 
 	// Agent names the agent this render belongs to as its terminal does,
-	// "t/lead" (grouplabel); zero for a render that does not own its
+	// "tclaude/lead" (grouplabel); zero for a render that does not own its
 	// session, or a session with no named agent.
 	Agent grouplabel.Label
 

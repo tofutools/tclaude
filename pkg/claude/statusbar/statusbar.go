@@ -304,7 +304,7 @@ func run() error {
 		WantUsage:       !hasSubscriptionLimits(input),
 	})
 
-	// The agent leads the git line as its terminal tab names it, "t/lead":
+	// The agent leads the git line after its full group, "tclaude/lead":
 	// two agents named lead in different groups are told apart here too.
 	if facts.Agent.Name != "" {
 		line1 = append([]string{agentLabelText(facts.Agent)}, line1...)
@@ -786,12 +786,12 @@ func resetTimer(t time.Time) string {
 	return fmt.Sprintf("%s(%dm)%s", colorDim, m, colorReset)
 }
 
-// agentLabelText is the agent's label on the git line: its group's prefix
-// dimmed before its name, "t/lead", printable characters only.
+// agentLabelText is the agent's label on the git line: its full group dimmed
+// before its name, "tclaude/lead", printable characters only.
 func agentLabelText(label grouplabel.Label) string {
 	name := grouplabel.TitleText(label.Name)
-	if prefix := grouplabel.TitleText(label.Prefix); prefix != "" {
-		return colorDim + prefix + "/" + colorReset + name
+	if group := grouplabel.TitleText(label.Group); group != "" {
+		return colorDim + group + "/" + colorReset + name
 	}
 	return name
 }

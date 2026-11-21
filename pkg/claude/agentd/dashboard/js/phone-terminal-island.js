@@ -23,7 +23,7 @@
 // any key) scrolls back down first, so copy-mode never takes a key.
 
 import { markTitle } from './agent-group-prefix.js';
-import { GroupMarkedName } from './agent-group-prefix-view.js';
+import { GroupedName } from './agent-group-prefix-view.js';
 import { h, render } from 'preact';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { signal } from '@preact/signals';
@@ -309,11 +309,11 @@ export function zoomPercent(size) {
   return Math.round((size / PHONE_TERMINAL_FONT) * 100);
 }
 
-// The bar's title: the agent's name after its group's prefix ("t/lead",
-// agent-group-prefix.js), as the desktop's terminal tabs show it.
+// The bar's title: the agent's name after its full group, "tclaude/lead"
+// (agent-group-prefix.js). On a narrow phone the group gives way, never the name.
 function Title({ label, mark }) {
   const name = label || 'Terminal';
-  return html`<h1 class="phone-bar-title" title=${mark ? markTitle(name, mark) : null}><${GroupMarkedName} name=${name} mark=${mark} /></h1>`;
+  return html`<h1 class="phone-bar-title" title=${mark ? markTitle(name, mark) : null}><${GroupedName} name=${name} mark=${mark} /></h1>`;
 }
 
 // DIR_SHELL_WHERE says which of an agent's directories its shell is in, when

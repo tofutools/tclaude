@@ -21,8 +21,8 @@ export function createTerminalShellActions({
   notify = shellToast,
   onReattachPane = null,
   onPaneDisconnected = null,
-  // groupMarkOf is a pane's agent's group prefix (paneGroupMark), handed to
-  // a popped-out window, which cannot work it out.
+  // groupMarkOf is a pane's agent's group (paneGroupMark), handed to a
+  // popped-out window, which reads only its own agent.
   groupMarkOf = null,
 } = {}) {
   if (!state) throw new TypeError('terminal shell actions require state');

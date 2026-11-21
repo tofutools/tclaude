@@ -1,20 +1,51 @@
-// agent-group-prefix.js -- which group an agent belongs to, as a short prefix
-// on its name where an agent's terminal shows it (tk_c501cda3): "t/lead" for
-// the lead of tclaude, "c/lead" for the lead of counterslop. Two agents of the
-// same name in different groups are told apart at a glance; the full
-// "tclaude/lead" is in the tooltip.
+// agent-group-prefix.js -- which group an agent's terminal belongs to, where
+// the terminal names its agent (tk_c501cda3, tk_0a10cbcb).
 //
-// A group's prefix is the shortest start of its name that no other group's
-// name on this node starts with, so it stays the same whichever tabs are open:
-// "web" and "wor" where webshop and workers both start with w. A name that
-// another starts with (web beside webshop) is given in full. Pure:
-// jstest/agent-group-prefix.test.mjs exercises it directly. The dashboard's
-// terminal tabs and title bars, the overlay windows' tabs and the phone
-// terminal all use it.
+// Everywhere with room for it -- a pane's title bar, a popped-out window's
+// title, the phone terminal's header -- the name follows its full group,
+// dimmed: "tclaude/lead". A tab has no room for that, so it shows the bare
+// name, and a group prefix only when another open tab shows an agent of the
+// same name: "t/lead" beside "c/lead". That prefix is the shortest start that
+// tells those tabs' groups apart, worked out among them alone, so it is
+// usually one letter. The full "tclaude/lead" is always in the tooltip.
+// Pure: jstest/agent-group-prefix.test.mjs exercises it directly.
 
-// groupPrefixes maps each group name to its prefix.
-export function groupPrefixes(names) {
-  const unique = [...new Set((names || []).filter((name) => typeof name === 'string' && name))];
+// agentGroupMark is the group an agent's terminal names: the one the terminal
+// was opened from when the agent is in it, else the group it was spawned
+// into, else its first; with all its groups, for the tooltip. null for an
+// agent in no group, or one this node does not know.
+export function agentGroupMark(snapshotValue, selector, openedFrom = '') {
+  if (!selector) return null;
+  const agents = Array.isArray(snapshotValue?.agents) ? snapshotValue.agents : [];
+  const agent = agents.find((candidate) => candidate && (candidate.agent_id === selector || candidate.conv_id === selector));
+  const groups = Array.isArray(agent?.groups) ? agent.groups.filter((group) => typeof group === 'string' && group) : [];
+  if (!groups.length) return null;
+  const group = [openedFrom, agent.spawn_group].find((candidate) => candidate && groups.includes(candidate)) || groups[0];
+  return { group, groups };
+}
+
+// groupName is the name after its full group: "tclaude/lead".
+export function groupName(name, mark) {
+  return mark ? `${mark.group}/${name}` : name;
+}
+
+// markTitle is the full group and name for a tooltip, and the agent's other
+// groups when it is in more than one.
+export function markTitle(name, mark) {
+  if (!mark) return name;
+  const others = mark.groups.filter((group) => group !== mark.group);
+  return `${groupName(name, mark)}${others.length ? ` (also in ${others.join(', ')})` : ''}`;
+}
+
+const wordChar = /[\p{L}\p{N}]/u;
+
+// distinctStarts maps each of a few group names to the shortest start no
+// other of them starts with, compared without case: "t" and "c" for tclaude
+// and counterslop. A name another starts with is given whole (tclaude beside
+// tclaude-config), and a start never ends on a separator: "tclaude-c", not
+// "tclaude-".
+export function distinctStarts(names) {
+  const unique = [...new Set(names.filter((name) => typeof name === 'string' && name))];
   const folded = unique.map((name) => name.toLowerCase());
   const out = new Map();
   unique.forEach((name, i) => {
@@ -23,81 +54,55 @@ export function groupPrefixes(names) {
       const start = folded[i].slice(0, length);
       if (!folded.some((other, j) => j !== i && other.startsWith(start))) break;
     }
+    while (length < name.length && !wordChar.test(name[length - 1])) length += 1;
     out.set(name, name.slice(0, length));
   });
   return out;
 }
 
-// The prefixes are worked out once per snapshot.
-const prefixesOf = new WeakMap();
-
-function snapshotPrefixes(snapshotValue) {
-  if (!snapshotValue || typeof snapshotValue !== 'object') return new Map();
-  let prefixes = prefixesOf.get(snapshotValue);
-  if (!prefixes) {
-    const names = (Array.isArray(snapshotValue.groups) ? snapshotValue.groups : []).map((group) => group?.name);
-    // An agent's groups count too, should the group list leave one out.
-    for (const agent of Array.isArray(snapshotValue.agents) ? snapshotValue.agents : []) {
-      if (Array.isArray(agent?.groups)) names.push(...agent.groups);
-    }
-    prefixes = groupPrefixes(names);
-    prefixesOf.set(snapshotValue, prefixes);
+// clashPrefixes is the group prefix each tab shows: entries are the open tabs
+// as { key, name, group } (group '' for an agent in no group, or a tab that is
+// not a local agent's). A tab gets a prefix only when another tab has the
+// same name, compared without case, and they are not all of one group; the
+// prefixes tell apart the groups of those tabs alone. Keyed by entry key.
+export function clashPrefixes(entries) {
+  const byName = new Map();
+  for (const entry of entries) {
+    if (!entry?.name) continue;
+    const name = entry.name.toLowerCase();
+    if (!byName.has(name)) byName.set(name, []);
+    byName.get(name).push(entry);
   }
-  return prefixes;
+  const out = new Map();
+  for (const clashing of byName.values()) {
+    if (clashing.length < 2 || clashing.every((entry) => (entry.group || '') === (clashing[0].group || ''))) continue;
+    const starts = distinctStarts(clashing.map((entry) => entry.group));
+    for (const entry of clashing) {
+      if (entry.group) out.set(entry.key, starts.get(entry.group));
+    }
+  }
+  return out;
 }
 
-function findAgent(snapshotValue, selector) {
-  if (!selector) return null;
-  const agents = Array.isArray(snapshotValue?.agents) ? snapshotValue.agents : [];
-  return agents.find((agent) => agent && (agent.agent_id === selector || agent.conv_id === selector)) || null;
-}
-
-// agentGroupMark is how an agent's terminal names its group: the group (the
-// one the terminal was opened from when the agent is in it, else the group it
-// was spawned into, else its first), that group's prefix, and all its groups.
-// null for an agent in no group, or one this node does not know.
-export function agentGroupMark(snapshotValue, selector, openedFrom = '') {
-  const agent = findAgent(snapshotValue, selector);
-  const groups = Array.isArray(agent?.groups) ? agent.groups.filter((group) => typeof group === 'string' && group) : [];
-  if (!groups.length) return null;
-  const group = [openedFrom, agent.spawn_group].find((candidate) => candidate && groups.includes(candidate)) || groups[0];
-  const prefix = snapshotPrefixes(snapshotValue).get(group) || group;
-  return { group, prefix, groups };
-}
-
-// markedName is the name with its group's prefix: "t/lead".
-export function markedName(name, mark) {
-  return mark ? `${mark.prefix}/${name}` : name;
-}
-
-// markTitle is the name with its full group, for a tooltip: "tclaude/lead",
-// and its other groups when it is in more than one.
-export function markTitle(name, mark) {
-  if (!mark) return name;
-  const others = mark.groups.filter((group) => group !== mark.group);
-  return `${mark.group}/${name}${others.length ? ` (also in ${others.join(', ')})` : ''}`;
-}
-
-// fitPrefix is the prefix as it fits in room (a width, measured by width()):
+// fitGroup is a group name as it fits in room (a width, measured by width()):
 // whole when it fits, else as many of its first letters as fit before an
 // ellipsis, at least one. Cut here rather than by CSS text-overflow, which
 // leaves the unused end of the box as a gap before the slash ("websh… /lead").
-export function fitPrefix(prefix, room, width) {
-  if (prefix.length <= 1 || Number.isNaN(room) || width(prefix) <= room) return prefix;
-  for (let n = prefix.length - 1; n > 1; n -= 1) {
-    const cut = `${prefix.slice(0, n)}…`;
+export function fitGroup(group, room, width) {
+  if (group.length <= 1 || Number.isNaN(room) || width(group) <= room) return group;
+  for (let n = group.length - 1; n > 1; n -= 1) {
+    const cut = `${group.slice(0, n)}…`;
     if (width(cut) <= room) return cut;
   }
-  return `${prefix.slice(0, 1)}…`;
+  return `${group.slice(0, 1)}…`;
 }
 
 // seedGroupMark is a mark a popped-out terminal was handed in its seed: that
-// window reads only its own agent, not every group's name, so the dashboard
-// works the prefix out and passes it on. It is shown as text only, and a
-// malformed one is dropped.
+// window reads only its own agent, so the dashboard passes its group on. It is
+// shown as text only, and a malformed one is dropped.
 export function seedGroupMark(value) {
   const text = (item) => typeof item === 'string' && item.length > 0 && item.length <= 128;
-  if (!value || !text(value.group) || !text(value.prefix) || !Array.isArray(value.groups)) return null;
+  if (!value || !text(value.group) || !Array.isArray(value.groups)) return null;
   const groups = value.groups.filter(text).slice(0, 32);
-  return groups.includes(value.group) ? { group: value.group, prefix: value.prefix, groups } : null;
+  return groups.includes(value.group) ? { group: value.group, groups } : null;
 }

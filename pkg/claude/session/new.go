@@ -2129,9 +2129,9 @@ func applyTmuxWindowTitle(tmuxSession, sessionID string) {
 	_ = clcommon.TmuxRun("set-option", "-t", clcommon.ExactTarget(tmuxSession)+":", "set-titles-string", sessionWindowTitle(sessionID))
 }
 
-// sessionWindowTitle is a session's window title: "t/lead — tclaude:<id>",
-// the agent's name after its group's prefix (grouplabel, as the dashboard's
-// terminal tabs show it), or the bare "tclaude:<id>" for a session with no
+// sessionWindowTitle is a session's window title:
+// "tclaude/lead — tclaude:<id>", the agent's name after its full group
+// (grouplabel, as the dashboard's terminal title bars show it), or the bare "tclaude:<id>" for a session with no
 // named agent yet. The "tclaude:<id>" stays in it: window focus and tiling
 // find a session's window by it (focus_linux.go matches it as a substring).
 //

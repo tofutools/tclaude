@@ -17,7 +17,7 @@
 // showing an agent here first closes its Terminals-tab pane, and "open in
 // Terminals" closes this tab instead of fighting over the session.
 
-import { agentGroupMark, markTitle, markedName } from './agent-group-prefix.js';
+import { agentGroupMark, clashPrefixes, markTitle } from './agent-group-prefix.js';
 import { h, render } from 'preact';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
@@ -1204,14 +1204,20 @@ export function CompanionApp({
     onMic,
   };
   const shownTerminal = { snapshot, prefs, win, widgetFactory, loadRuntime, Terminal: CompanionTerminal };
+  const chatName = (agentId, label) => agents.get(agentId)?.name || label;
+  // A chat tab shows its group prefix only beside another open chat tab of an
+  // agent of the same name, "t/lead" by "c/lead" (agent-group-prefix.js).
+  const chatPrefixes = clashPrefixes(overlayTabs.value.filter((tab) => tab.kind === CHAT_WINDOW_KIND).map((tab) => ({
+    key: tab.agent, name: chatName(tab.agent, tab.label), group: agentGroupMark(snapshot.value, tab.agent)?.group || '',
+  })));
   const chatView = ({ agent: agentId, label }) => {
     const agent = agents.get(agentId);
-    const name = agent?.name || label;
+    const name = chatName(agentId, label);
     const tabStatus = agent ? statusOf(agent) : 'offline';
-    // Its group's prefix, as its terminal shows it ("t/lead", agent-group-prefix.js).
     const mark = agentGroupMark(snapshot.value, agentId);
+    const prefix = chatPrefixes.get(agentId);
     return {
-      label: markedName(name, mark), lead: html`<${StatusDot} status=${tabStatus} />`,
+      label: prefix ? `${prefix}/${name}` : name, lead: html`<${StatusDot} status=${tabStatus} />`,
       title: `${markTitle(name, mark)}: ${agent ? companionStatusLabel(tabStatus) : 'not on this node any more'}`,
     };
   };

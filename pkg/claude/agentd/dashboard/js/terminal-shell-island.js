@@ -25,8 +25,8 @@ import { terminalAttachWidgetOptions } from './terminal-attach-config.js';
 import { TerminalZoom, readTerminalFont, useTerminalFont } from './terminal-zoom.js';
 import { leaveTerminalsAfterLastClose } from './terminal-close-nav.js';
 import { isAgentDirShell, shellTabStatus } from './terminal-tab-status.js';
-import { agentGroupMark, markTitle, seedGroupMark } from './agent-group-prefix.js';
-import { GroupMarkedName } from './agent-group-prefix-view.js';
+import { agentGroupMark, clashPrefixes, groupName, markTitle, seedGroupMark } from './agent-group-prefix.js';
+import { GroupedName, TabName } from './agent-group-prefix-view.js';
 import {
   backgroundPeers, backgroundTerminals, hasPeerBackgroundAgent, refreshBackgroundTerminals,
   startBackgroundTerminalsPoll, visibleBackgroundTerminals,
@@ -460,7 +460,7 @@ function TerminalPane({
   // The pane reads the process snapshot already (paneFloats), so its group
   // prefix costs no extra renders where it does not manage the title.
   const mark = paneGroupMark(pane, (snapshot || processSnapshot)?.value);
-  const shownLabel = pane.label && mark ? `${mark.prefix}/${paneTitle(pane)}` : pane.label;
+  const shownLabel = pane.label && mark ? groupName(paneTitle(pane), mark) : pane.label;
   useEffect(() => {
     if (active && manageTitle) {
       const prefix = snapshotReady ? `${agentStatus.symbol} ` : '';
@@ -869,9 +869,8 @@ export function paneTitle(pane) {
   return suffix && label.endsWith(suffix) && label.length > suffix.length ? label.slice(0, -suffix.length) : label;
 }
 
-// paneGroupMark is the group of the agent a pane is the terminal of, for its
-// short prefix ("t/lead", agent-group-prefix.js): the group it was opened
-// from, else its own. A popped-out window reads only its own agent, so it
+// paneGroupMark is the group of the agent a pane is the terminal of
+// (agent-group-prefix.js): the group it was opened from, else its own. A popped-out window reads only its own agent, so it
 // takes the mark the dashboard handed it in the seed. A remote agent keeps
 // its node pill instead, and a shell in an agent's directory is not the agent.
 export function paneGroupMark(pane, snapshotValue) {
@@ -879,10 +878,20 @@ export function paneGroupMark(pane, snapshotValue) {
   return agentGroupMark(snapshotValue, pane.seed.agent, pane.seed.group || '') || seedGroupMark(pane.seed.groupMark);
 }
 
-// PaneName is a pane's name with its agent's group prefix, the full group
-// and name on hover.
+// PaneName is a pane's name after its agent's full group, in its title bar.
 function PaneName({ pane, mark }) {
-  return html`<${GroupMarkedName} name=${paneTitle(pane)} mark=${mark} />`;
+  return html`<${GroupedName} name=${paneTitle(pane)} mark=${mark} />`;
+}
+
+// tabGroupPrefixes is the group prefix each tab of panes shows: only an
+// agent's tab, and only beside another tab of an agent of the same name
+// (clashPrefixes).
+export function tabGroupPrefixes(panes, snapshotValue) {
+  return clashPrefixes(panes.map((pane) => ({
+    key: pane.key,
+    name: pane.seed?.agent && !isAgentDirShell(pane) ? paneTitle(pane) : '',
+    group: paneGroupMark(pane, snapshotValue)?.group || '',
+  })));
 }
 
 // NodePill names a remote pane's node (fleet-scope.js), in that node's
@@ -924,7 +933,7 @@ function PageUnseen({ pane }) {
 function PaneTab({
   pane, active, menuOpen, groupId = null, actions, openMenu, dragging, dropSide,
   onDragStart, onDragEnd, onDragOver, onDragLeave, onDrop, onReordered, snapshot = null, scope = null,
-  peerNotifications = {},
+  peerNotifications = {}, groupPrefix = '',
 }) {
   const drawingBoard = !!pane.seed.drawingBoard;
   const process = !!pane.seed.process;
@@ -1049,7 +1058,7 @@ function PaneTab({
       <${NodePill} node=${scope?.node} compact />
       ${renaming ? html`<${TabResourceRename} target=${renameTarget} label=${paneTitle(pane)}
         onRenamed=${(title) => actions.setPaneLabel?.(pane.key, title)} onDone=${() => setRenaming(false)} />`
-        : html`<span class="mux-tab-label" title=${groupMark ? markTitle(paneTitle(pane), groupMark) : null}><${PaneName} pane=${pane} mark=${groupMark} /></span>`}
+        : html`<span class="mux-tab-label" title=${groupMark ? markTitle(paneTitle(pane), groupMark) : null}><${TabName} name=${paneTitle(pane)} prefix=${groupPrefix} /></span>`}
       ${(drawingBoard || process || page) && html`<${LockBadge} kind=${drawingBoard ? 'drawing_board' : process ? 'process' : 'page'}
         locked=${resourceLocked(snapshot?.value, drawingBoard ? 'drawing_board' : process ? 'process' : 'page', pane.seed.drawingBoard || pane.seed.process || pane.seed.page)} />`}
       <${TerminalCosts} agent=${agentStatus.agent} />
@@ -1337,6 +1346,8 @@ function TerminalTabs({
   const composeMessageAvailable = Boolean(onComposeMessage) &&
     (composeMessageReady === null || composeMessageReady.value);
   const hasPanes = current.panes.length > 0;
+  // A tab shows its group prefix only beside a shown tab of the same name.
+  const tabPrefixes = tabGroupPrefixes(current.panes.filter((pane) => !scopeOf(pane)?.hidden), snapshot?.value);
   // Sessions still running in tmux with no terminal attached. The dashboard
   // tab lists them; a pop-out window shows only its own panes.
   const backgroundRows = solo ? [] : visibleBackgroundTerminals(backgroundTerminals.value, current.panes);
@@ -1924,6 +1935,7 @@ function TerminalTabs({
               <${PaneTab}
                 key=${pane.key}
                 pane=${pane}
+                groupPrefix=${tabPrefixes.get(pane.key) || ''}
                 peerNotifications=${peerNotifications}
                 active=${current.activeKey === pane.key}
                 menuOpen=${tabMenu?.kind !== 'group' && tabMenu?.key === pane.key}

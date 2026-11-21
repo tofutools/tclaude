@@ -10,25 +10,13 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
 
-func TestPrefixes_ShortestUniqueStart(t *testing.T) {
-	prefixes := Prefixes([]string{"tclaude", "counterslop", "webshop", "workers", "web", "Wiki", "tclaude"})
-	assert.Equal(t, "t", prefixes["tclaude"])
-	assert.Equal(t, "c", prefixes["counterslop"])
-	assert.Equal(t, "wo", prefixes["workers"])
-	assert.Equal(t, "Wi", prefixes["Wiki"], "compared without case")
-	assert.Equal(t, "web", prefixes["web"], "a name another starts with is given in full")
-	assert.Equal(t, "webs", prefixes["webshop"])
-	assert.Equal(t, "s", Prefixes([]string{"solo"})["solo"])
-	assert.Empty(t, Prefixes(nil))
-}
-
 func TestLabel_String(t *testing.T) {
-	assert.Equal(t, "t/lead", Label{Prefix: "t", Name: "lead"}.String())
+	assert.Equal(t, "tclaude/lead", Label{Group: "tclaude", Name: "lead"}.String())
 	assert.Equal(t, "loner", Label{Name: "loner"}.String())
 }
 
 func TestTitleText_GatesTmuxFormats(t *testing.T) {
-	assert.Equal(t, "t/lead", TitleText("t/lead"))
+	assert.Equal(t, "tclaude/lead", TitleText("tclaude/lead"))
 	assert.Equal(t, "(rm -rf ~)/lead", TitleText("#(rm -rf ~)/lead"), "no '#', so tmux expands nothing")
 	assert.Equal(t, "a b c", TitleText("a\tb\n\x07\x1bc"), "one line, no control characters")
 	assert.Equal(t, "100d", TitleText("100%d"), "no strftime")
@@ -69,11 +57,11 @@ func TestForSession_TwoLeads(t *testing.T) {
 
 	one, ok := ForSession("s-one")
 	require.True(t, ok)
-	assert.Equal(t, "t/lead", one.String())
+	assert.Equal(t, "tclaude/lead", one.String())
 	two, ok := ForSession("s-two")
 	require.True(t, ok)
 	// No spawn group recorded: its first group by name.
-	assert.Equal(t, "c/lead", two.String())
+	assert.Equal(t, "counterslop/lead", two.String())
 	none, ok := ForSession("s-none")
 	require.True(t, ok)
 	assert.Equal(t, "lead", none.String(), "an ungrouped agent has no prefix")
