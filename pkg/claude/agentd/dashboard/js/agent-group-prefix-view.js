@@ -44,12 +44,18 @@ export function GroupedName({ name, mark }) {
       const width = textWidth(shown.current);
       if (!width) return;
       text.data = group;
-      text.data = fitGroup(group, holder.clientWidth - width(`/${name}`), width);
+      // The holder's own fractional width, less half a pixel of slack: its
+      // clientWidth rounds, so a label sized to its whole text would read a
+      // fraction short of it and cut a group that fits.
+      text.data = fitGroup(group, holder.getBoundingClientRect().width + 0.5 - width(`/${name}`), width);
     };
     fit();
     if (typeof ResizeObserver !== 'function') return undefined;
+    // The holder too, which may be sized by its text: once the group is cut,
+    // it would not grow again by itself when its row has room again.
     const observer = new ResizeObserver(fit);
     observer.observe(holder);
+    if (holder.parentElement) observer.observe(holder.parentElement);
     return () => observer.disconnect();
   }, [group, name]);
   return group ? named(group, name, shown) : name;

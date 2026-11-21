@@ -86,7 +86,7 @@ test.describe('desktop', () => {
     await page.locator('.mux-pane.active').getByRole('button', { name: 'Open in overlay' }).click();
     await expect(page.locator('.companion-tab', { hasText: 'lead' })).toHaveCount(1, { timeout: 15_000 });
     await expect(page.locator('.companion-tab', { hasText: /^lead$/ })).toHaveCount(1, { timeout: 15_000 });
-    await page.locator('[role="tab"]', { hasText: 'lead' }).click();
+    await page.locator('.mux-tab', { hasText: 'lead' }).click();
     await page.locator('.mux-pane.active').getByRole('button', { name: 'Open in overlay' }).click();
     await expect(page.locator('.companion-tab', { hasText: 'i/lead' })).toHaveCount(1, { timeout: 15_000 });
     await expect(page.locator('.companion-tab', { hasText: 'w/lead' })).toHaveCount(1, { timeout: 15_000 });

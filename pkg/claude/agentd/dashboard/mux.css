@@ -321,12 +321,15 @@ body.hide-costs .mux-cost-toggle { display: none; }
 .mux-pane-title {
   font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
   color: #d4d4d4; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  /* The agent's full "group/name" keeps its room: the interaction hint gives
+     way before it does, and the group is cut only past half the bar. */
+  flex: 0 0 auto; max-width: 50%;
 }
 .mux-pane-status {
   font-size: 11px; color: #7d8590; flex: 1; min-width: 0;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.terminal-interaction-hint { white-space: nowrap; }
+.terminal-interaction-hint { white-space: nowrap; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 
 @media (max-width: 850px) {
   .terminal-interaction-hint { display: none; }
