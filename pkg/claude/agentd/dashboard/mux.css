@@ -322,14 +322,16 @@ body.hide-costs .mux-cost-toggle { display: none; }
   font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
   color: #d4d4d4; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   /* The agent's full "group/name" keeps its room: the interaction hint gives
-     way before it does, and the group is cut only past half the bar. */
-  flex: 0 0 auto; max-width: 50%;
+     way well before it does (its flex-shrink), the title only once the bar
+     is short of room even so, and never past half the bar; the group is cut
+     before the name (agent-group-prefix-view.js). */
+  flex: 0 1 auto; min-width: 0; max-width: 50%;
 }
 .mux-pane-status {
   font-size: 11px; color: #7d8590; flex: 1; min-width: 0;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.terminal-interaction-hint { white-space: nowrap; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.terminal-interaction-hint { white-space: nowrap; min-width: 0; overflow: hidden; text-overflow: ellipsis; flex-shrink: 100; }
 
 @media (max-width: 850px) {
   .terminal-interaction-hint { display: none; }
