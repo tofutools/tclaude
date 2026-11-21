@@ -63,7 +63,7 @@ func TestGroupTerminalActionsSupportBackgroundOpen(t *testing.T) {
 		"if (source === contextActivatedSource)",
 		"const terminalPaneOptions = { reveal: action.openInBackground !== true }",
 		"focusTerminalForConv([agent], terminalPaneOptions)",
-		"openWebWindowPane(agent, label, { ...terminalPaneOptions, harness })",
+		"openWebWindowPane(agent, label, { ...terminalPaneOptions, harness, group })",
 		"openGroupWebTermPane(group, label, terminalPaneOptions)",
 	} {
 		if !strings.Contains(rows, needle) {
