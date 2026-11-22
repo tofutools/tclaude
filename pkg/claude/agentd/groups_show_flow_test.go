@@ -97,10 +97,17 @@ func TestGroupsShow_MemberReadsTheContextButNotTheSettings(t *testing.T) {
 func TestGroupsShow_OwnerReadsContextAndSettings(t *testing.T) {
 	f := newFlow(t)
 	_, owner := haveShowGroup(t, f)
+	grp, err := db.GetAgentGroupByName("alpha")
+	require.NoError(t, err)
+	require.NoError(t, db.ReplaceAgentGroupPermissionGrants(grp.ID, []db.PermissionGrant{
+		{Slug: agentd.PermGroupsRename}, {Slug: agentd.PermAgentRename, Scope: `{"group":["alpha"]}`},
+	}, "test"))
 	g, _ := showGroup(t, f, owner)
 	require.NotNil(t, g.Context)
 	require.NotNil(t, g.Settings, "ownership confers groups.settings.read")
 	assert.Equal(t, []string{"API_TOKEN"}, g.Settings.EnvironmentKeys)
+	assert.ElementsMatch(t, []string{agentd.PermGroupsRename, agentd.PermAgentRename}, g.Settings.Permissions)
+	assert.JSONEq(t, `{"group":["alpha"]}`, string(g.Settings.PermissionScopes[agentd.PermAgentRename]), "a grant shows its scope")
 	assert.Empty(t, g.Withheld)
 }
 

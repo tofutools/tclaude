@@ -59,6 +59,10 @@ type groupShowSettings struct {
 	TaskboardLocked     bool                       `json:"taskboard_locked,omitempty"`
 	TaskboardWriters    []string                   `json:"taskboard_writers,omitempty"`
 	Permissions         []string                   `json:"permissions,omitempty"`
+	// PermissionScopes and UnreadablePermissionScopes narrow the grants as
+	// the dashboard's group settings show them.
+	PermissionScopes           map[string]PermissionScope `json:"permission_scopes,omitempty"`
+	UnreadablePermissionScopes []string                   `json:"unreadable_permission_scopes,omitempty"`
 }
 
 type groupShowWithheld struct {
@@ -126,9 +130,13 @@ func handleGroupShow(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
 }
 
 func groupShowSettingsFor(g *db.AgentGroup) (*groupShowSettings, error) {
-	grants, err := db.ListAgentGroupPermissions(g.ID)
+	rows, err := db.ListAgentGroupPermissionRows(g.ID)
 	if err != nil {
 		return nil, err
+	}
+	grants, scopes, unreadable := groupPermissionsView(rows)
+	if len(scopes) == 0 {
+		scopes = nil
 	}
 	lock, err := db.GetTaskboardLock(g.ID)
 	if err != nil {
@@ -145,7 +153,7 @@ func groupShowSettingsFor(g *db.AgentGroup) (*groupShowSettings, error) {
 		OwnerScopes:         ownerScopesWireOmitEmpty(g.OwnerScopesJSON),
 		DefaultSpawnGroup:   g.DefaultSpawnGroup,
 		TaskboardLocked:     lock.Locked, TaskboardWriters: slices.Clone(lock.Writers),
-		Permissions: grants,
+		Permissions: grants, PermissionScopes: scopes, UnreadablePermissionScopes: unreadable,
 	}, nil
 }
 

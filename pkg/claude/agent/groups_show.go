@@ -81,6 +81,7 @@ type GroupShow struct {
 		TaskboardLocked     bool                       `json:"taskboard_locked,omitempty"`
 		TaskboardWriters    []string                   `json:"taskboard_writers,omitempty"`
 		Permissions         []string                   `json:"permissions,omitempty"`
+		PermissionScopes    map[string]json.RawMessage `json:"permission_scopes,omitempty"`
 	} `json:"settings,omitempty"`
 	Withheld []struct {
 		Section string `json:"section"`
@@ -214,7 +215,14 @@ func printGroupShow(w io.Writer, g GroupShow) {
 		if s.TaskboardLocked {
 			line("  taskboard writers", strings.Join(s.TaskboardWriters, ", ")+" (locked)")
 		}
-		line("  grants", strings.Join(s.Permissions, ", "))
+		grants := make([]string, 0, len(s.Permissions))
+		for _, slug := range s.Permissions {
+			if scope, ok := s.PermissionScopes[slug]; ok {
+				slug += " " + string(scope)
+			}
+			grants = append(grants, slug)
+		}
+		line("  grants", strings.Join(grants, ", "))
 	}
 	if len(g.Withheld) > 0 {
 		fmt.Fprintln(w)
