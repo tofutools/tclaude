@@ -1390,6 +1390,7 @@ func buildMux() http.Handler {
 	mux.HandleFunc("/v1/info", handleInfo)
 	mux.HandleFunc("/v1/dashboard/open", handleDashboardOpen)
 	mux.HandleFunc("/v1/whoami", handleWhoami)
+	mux.HandleFunc("/v1/whoami/full", handleWhoamiFull)
 	mux.HandleFunc("/v1/whoami/rename", handleWhoamiRename)
 	mux.HandleFunc("/v1/whoami/compact", handleWhoamiCompact)
 	mux.HandleFunc("/v1/whoami/pi-drive", handleWhoamiPiDrive)

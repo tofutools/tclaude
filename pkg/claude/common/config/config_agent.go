@@ -1012,6 +1012,7 @@ var BundledSkillDefaultPermissions = []string{
 	"self.schedule",
 	"self.remote-control",
 	"self.task",
+	"self.introspect",
 	"self.pr",
 	"self.tags",
 	"self.dir-repair",

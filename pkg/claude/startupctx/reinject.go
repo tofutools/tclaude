@@ -142,16 +142,7 @@ func ComposeReinjection(agentID string, boundary Boundary) (Reinjection, error) 
 	sections := []string{lead + "\n\n" + identity}
 
 	if boundary != BoundaryClear && !identityOnly {
-		groupContext := ""
-		if primary != nil {
-			if snap == nil || snap.IncludeGroupContext {
-				groupContext = primary.Group.DefaultContext
-			}
-			// The mission is delivered whatever include_group_context said.
-			if mission := primary.Group.MissionBlock(); mission != "" {
-				groupContext = strings.TrimSpace(strings.TrimSpace(groupContext) + "\n\n" + mission)
-			}
-		}
+		groupContext := ReinjectedGroupContext(snap, primary)
 		profileContext := ""
 		if snap != nil {
 			profileContext = snap.ProfileContext
@@ -167,6 +158,24 @@ func ComposeReinjection(agentID string, boundary Boundary) (Reinjection, error) 
 		sections = append(sections, managedBody)
 	}
 	return Reinjection{GroupID: groupID, Body: strings.Join(sections, sectionDivider)}, nil
+}
+
+// ReinjectedGroupContext is the group context a compaction re-injects from
+// the primary group: its startup context unless the spawn opted out, and its
+// mission whatever the spawn said.
+func ReinjectedGroupContext(snap *db.AgentStartupSnapshot, primary *db.AgentGroupMembership) string {
+	if primary == nil {
+		return ""
+	}
+	groupContext := ""
+	if snap == nil || snap.IncludeGroupContext {
+		groupContext = primary.Group.DefaultContext
+	}
+	// The mission is delivered whatever include_group_context said.
+	if mission := primary.Group.MissionBlock(); mission != "" {
+		groupContext = strings.TrimSpace(strings.TrimSpace(groupContext) + "\n\n" + mission)
+	}
+	return groupContext
 }
 
 // primaryMembership picks the group whose context is re-injected: the spawn
@@ -235,4 +244,19 @@ func actorName(agentID string) string {
 		return row.CustomTitle
 	}
 	return a.PendingName
+}
+
+// PrimaryGroup is the group whose startup context and reinject policy apply
+// to an agent after a compaction: the spawn group while the agent is still a
+// member, otherwise the oldest-joined group. nil when it is in no group.
+func PrimaryGroup(agentID string) (*db.AgentGroupMembership, error) {
+	snap, err := db.GetAgentStartupSnapshot(strings.TrimSpace(agentID))
+	if err != nil {
+		return nil, err
+	}
+	memberships, err := db.ListAgentGroupMembershipsByJoin(strings.TrimSpace(agentID))
+	if err != nil {
+		return nil, err
+	}
+	return primaryMembership(snap, memberships), nil
 }

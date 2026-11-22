@@ -98,9 +98,26 @@ read it. Token generation and authentication are unaffected.
 
 ```bash
 tclaude agent whoami          # print your resolved identity
+tclaude agent whoami --full   # your whole setup (add --json for the raw reply)
 tclaude agent lookup <name>   # resolve a name or ID prefix to its agt_ id
 tclaude agent ls              # list agents reachable to you (your groups)
 ```
+
+`whoami --full` shows an agent its own setup:
+- name, task link, the spawn and sandbox profile its spawn named, startup
+  and current directory and worktree;
+- each group it is in or owns, with its role there and the links that reach
+  the group;
+- its effective permissions with their sources, as `permissions ls .`
+  computes them, plus the groups whose membership confers each member slug;
+- its startup briefing as delivered, and whether the spawn opted out of the
+  group's startup context;
+- the reinject policy that applies after a compaction, the group it comes
+  from, and the exact message a compaction would re-inject now.
+
+It reads only the calling agent, and needs `self.introspect`, which
+`tclaude setup --install-default-agent-permissions` grants with the other
+`self.*` defaults. Plain `whoami` stays open.
 
 Wherever a command takes an agent selector, you can pass the `agt_` id
 (preferred — immune to conversation rotation), a full conversation id, an

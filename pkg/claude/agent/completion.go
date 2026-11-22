@@ -299,6 +299,7 @@ func completePermissionSlugs(_ *cobra.Command, _ []string, toComplete string) []
 			{"self.clone", "Fork self into a sibling"},
 			{"self.remote-control", "Toggle own Claude Code Remote Access"},
 			{"self.task", "Set/clear own task-reference link"},
+			{"self.introspect", "Read own full setup (whoami --full)"},
 			{"self.pr", "Present own PR to the operator dashboard"},
 			{"self.tags", "Set own agent tags"},
 			{"self.dir-repair", "Recreate own recorded startup directory"},

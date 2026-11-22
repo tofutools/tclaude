@@ -243,6 +243,10 @@ var permissionRegistry = []PermSlug{
 		Description: "Set/clear own task-reference link — the Task column's Linear/GitHub/ticket URL (tclaude agent task set/clear). Default-granted, mirroring the self-lifecycle slugs.",
 	},
 	{
+		Slug:        PermSelfIntrospect,
+		Description: "Read own full setup (tclaude agent whoami --full): name, role, task link, spawn and sandbox profile, startup directory, groups and the links that reach them, effective permissions with their sources, the startup briefing and the reinject policy. Read only, of the calling agent only. Default-granted, mirroring the self-lifecycle slugs.",
+	},
+	{
 		Slug:        PermSelfTaskboard,
 		Description: "Deprecated alias of taskboard.own, which every active member of a group now holds on its board. An existing grant keeps working and adds nothing; an explicit deny of it still denies taskboard.own. No longer default-granted.",
 	},
