@@ -69,7 +69,11 @@ func TestGroupsShowFromAPeer(t *testing.T) {
 	require.NotNil(t, g.Settings)
 	assert.Empty(t, g.Settings.DefaultCwd, "the directory needs the spawn directory grant, as in the peer's view")
 	assert.Empty(t, g.Settings.EnvironmentKeys, "the environment needs its own grant, as in the peer's view")
-	assert.Empty(t, g.Withheld)
+	w := withheld(g)
+	assert.NotContains(t, w, "context")
+	assert.NotContains(t, w, "settings")
+	assert.Equal(t, agentd.PermGroupsMembersSpawnCwd, w["settings.default_cwd"], "a field needing a further grant is named, not shown as unset")
+	assert.Equal(t, agentd.PermGroupsSettingsEnvironment, w["settings.environment_keys"])
 
 	grant(agentd.PermGroupsSettingsEnvironment)
 	grant(agentd.PermGroupsMembersSpawnCwd)
@@ -77,6 +81,9 @@ func TestGroupsShowFromAPeer(t *testing.T) {
 	require.NotNil(t, g.Settings)
 	assert.Equal(t, []string{"API_TOKEN"}, g.Settings.EnvironmentKeys)
 	assert.NotEmpty(t, g.Settings.DefaultCwd)
+	w = withheld(g)
+	assert.NotContains(t, w, "settings.default_cwd")
+	assert.NotContains(t, w, "settings.environment_keys")
 
 	// Unrestricted trust reads it as this node's operator does.
 	peer, err := db.GetFederationPeer(fh.peer.id.ID())
