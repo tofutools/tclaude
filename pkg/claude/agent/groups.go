@@ -2,6 +2,7 @@ package agent
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -1989,6 +1990,7 @@ type groupsSetContextParams struct {
 	Group    string `pos:"true" help:"Group to configure"`
 	Context  string `pos:"true" optional:"true" help:"Startup context delivered to the inbox of agents spawned into this group. Omit (and omit --file) to clear it."`
 	File     string `long:"file" short:"f" optional:"true" help:"Read the startup context from this file instead of the positional argument ('-' reads stdin). Sidesteps shell quoting — best for long, multi-line, or backtick-containing context. Mutually exclusive with the positional argument."`
+	IfMatch  string `long:"if-match" optional:"true" help:"Write only if the current context still has this hash (the hash groups show prints); otherwise refuse with the current hash and change nothing. A check, never a permission."`
 	AskHuman string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s'). Capped at 300s. Timeout = deny."`
 }
 
@@ -2003,7 +2005,10 @@ func groupsSetContextCmd() *cobra.Command {
 			"multi-line context and sidesteps shell quoting, including backticks " +
 			"the shell would otherwise eat from an inline string. Omit both to " +
 			"clear it. Each spawn can still opt out individually (the dashboard's " +
-			"'include group default context' checkbox). Gated on the " +
+			"'include group default context' checkbox). Read the current context " +
+			"and its hash with `groups show` first, and pass --if-match <hash> so a " +
+			"context changed meanwhile is never overwritten: the write is then refused " +
+			"with the current hash. Gated on the " +
 			"`groups.settings.default-context` permission (or the `groups.admin` umbrella; default human-only).",
 		ParamEnrich: common.DefaultParamEnricher(),
 		InitFuncCtx: func(ctx *boa.HookContext, p *groupsSetContextParams, _ *cobra.Command) error {
@@ -2038,8 +2043,14 @@ func runGroupsSetContext(p *groupsSetContextParams, stdin io.Reader, stdout, std
 		DefaultContext string `json:"default_context"`
 	}
 	body := map[string]string{"default_context": context}
+	if p.IfMatch != "" {
+		body["default_context_if_match"] = p.IfMatch
+	}
 	path := "/v1/groups/" + url.PathEscape(p.Group)
 	if err := DaemonRequest(http.MethodPatch, path, body, &resp, DaemonOpts{AskHuman: ask}); err != nil {
+		if rc, ok := renderGroupContextConflict(err, p.Group, stderr); ok {
+			return rc
+		}
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return MapDaemonErrorToRC(err)
 	}
@@ -2049,6 +2060,28 @@ func runGroupsSetContext(p *groupsSetContextParams, stdin io.Reader, stdout, std
 		fmt.Fprintf(stdout, "%s: startup context set (%d chars)\n", resp.Group, len(resp.DefaultContext))
 	}
 	return rcOK
+}
+
+// RunGroupsSetContext is groups set-context for callers outside the CLI's
+// flag parsing (flow tests): ifMatch is --if-match, "" for none.
+func RunGroupsSetContext(group, context, ifMatch string, stdout, stderr io.Writer) int {
+	return runGroupsSetContext(&groupsSetContextParams{Group: group, Context: context, IfMatch: ifMatch}, strings.NewReader(""), stdout, stderr)
+}
+
+// renderGroupContextConflict explains a refused --if-match: the context
+// changed since it was read, with the hash it has now.
+func renderGroupContextConflict(err error, group string, stderr io.Writer) (int, bool) {
+	var daemonErr *DaemonError
+	if !errors.As(err, &daemonErr) || daemonErr.Status != http.StatusConflict || daemonErr.Code != "group_context_conflict" {
+		return 0, false
+	}
+	var conflict struct {
+		CurrentHash string `json:"current_hash"`
+	}
+	_ = json.Unmarshal([]byte(daemonErr.Raw), &conflict)
+	fmt.Fprintf(stderr, "Error: %s's startup context changed since you read it (current hash %s); nothing was written.\n", group, conflict.CurrentHash)
+	fmt.Fprintf(stderr, "Read it again with `tclaude agent groups show %s`, merge, and retry with --if-match %s. Never blind-overwrite.\n", group, conflict.CurrentHash)
+	return MapDaemonErrorToRC(err), true
 }
 
 // --- groups set-max-members ---

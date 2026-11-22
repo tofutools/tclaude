@@ -269,6 +269,45 @@ func SetAgentGroupDefaultContext(name, context string) (int64, error) {
 	return res.RowsAffected()
 }
 
+// ErrGroupContextConflict is returned by SetAgentGroupDefaultContextIfMatch
+// when the group's startup context no longer has the expected hash.
+var ErrGroupContextConflict = errors.New("group startup context changed")
+
+// SetAgentGroupDefaultContextIfMatch is SetAgentGroupDefaultContext as a
+// compare-and-set: it writes only while the group's current context hashes to
+// expectHash (GroupContextHash). On a mismatch it writes nothing and returns
+// ErrGroupContextConflict with the current hash. The compare is on the stored
+// text itself, in the UPDATE, so a write racing in between is never lost.
+// 0 rows and no error means no group by that name.
+func SetAgentGroupDefaultContextIfMatch(name, context, expectHash string) (n int64, currentHash string, err error) {
+	d, err := Open()
+	if err != nil {
+		return 0, "", err
+	}
+	for {
+		var current string
+		switch err := d.QueryRow(`SELECT default_context FROM agent_groups WHERE name = ?`, name).Scan(&current); {
+		case errors.Is(err, sql.ErrNoRows):
+			return 0, "", nil
+		case err != nil:
+			return 0, "", err
+		}
+		currentHash = GroupContextHash(current)
+		if !strings.EqualFold(strings.TrimSpace(expectHash), currentHash) {
+			return 0, currentHash, ErrGroupContextConflict
+		}
+		res, err := d.Exec(`UPDATE agent_groups SET default_context = ? WHERE name = ? AND default_context = ?`, context, name, current)
+		if err != nil {
+			return 0, "", err
+		}
+		if n, err = res.RowsAffected(); err != nil || n > 0 {
+			return n, GroupContextHash(context), err
+		}
+		// The context changed (or the group went) between the read and the
+		// write: read again, which reports the conflict or the missing group.
+	}
+}
+
 // SetAgentGroupEnvironment replaces the common process environment inherited
 // by new agents spawned into the group. Existing agents keep their frozen
 // launch snapshot across lifecycle operations.

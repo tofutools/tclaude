@@ -236,6 +236,20 @@ briefing — the standing brief every member of the team should start with.
 A single spawn can opt out with `--no-group-context`, and spawn profiles
 carry an `include_group_default_context` field.
 
+`set-context` replaces the whole text. To change it safely, read it first
+with `groups show`, which prints its hash, and pass that hash back:
+
+```bash
+tclaude agent groups show myteam                 # startup context and its hash
+tclaude agent groups set-context myteam --file new.md --if-match <hash>
+```
+
+If the context changed since you read it, nothing is written. The command
+fails with the current hash (API: 409 `group_context_conflict`, with
+`current_hash`), and you read it again, merge, and retry. `--if-match` is a
+check only: it grants nothing, and a caller without
+`groups.settings.default-context` is refused before any hash is compared.
+
 ### Re-injection after compaction and /clear
 
 A harness compaction summarizes the first turn, where the startup briefing
