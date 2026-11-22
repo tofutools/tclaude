@@ -25,6 +25,15 @@ test('nodeFetch addresses the page node, this node from a peer page, and any oth
   await assert.rejects(async () => mod.nodeFetch('inst_forge', { self: 'inst_self', fetchImpl, remote: null })('/api/peer/inst_lab0/groups'));
 });
 
+test('groups show is read from a peer at its own /v1 route, and only that route of the group', async (t) => {
+  const harness = await createPreactHarness(t);
+  const mod = await harness.importDashboardModule('js/node-api.js');
+  assert.equal(mod.peerPath('inst_forge', '/v1/groups/ops'), '/api/peer/inst_forge/v1/groups/ops');
+  assert.equal(mod.isGroupShowPath('/v1/groups/ops'), true);
+  assert.equal(mod.isGroupShowPath('/v1/groups/ops/members'), false);
+  assert.throws(() => mod.peerPath('inst_forge', '/v1/groups/ops/members'));
+});
+
 test('a download from another node comes through this node, read from that node in chunks', async (t) => {
   const harness = await createPreactHarness(t);
   const mod = await harness.importDashboardModule('js/node-api.js');

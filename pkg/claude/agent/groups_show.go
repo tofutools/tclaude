@@ -18,6 +18,7 @@ import (
 type groupsShowParams struct {
 	Name string `pos:"true" help:"Group name"`
 	JSON bool   `long:"json" help:"Output JSON"`
+	Node string `long:"node" optional:"true" help:"Show a group on a linked peer node (its instance id or name). That node decides what you see: the summary of a group it shares with you, and the startup context and settings only to its operator's grant of groups.settings for the group; an agent gets the summary."`
 }
 
 func groupsShowCmd() *cobra.Command {
@@ -37,7 +38,7 @@ func groupsShowCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *groupsShowParams, _ *cobra.Command, _ []string) {
-			os.Exit(RunGroupsShow(p.Name, p.JSON, cliStdout, cliStderr))
+			os.Exit(RunGroupsShowOn(p.Node, p.Name, p.JSON, cliStdout, cliStderr))
 		},
 	}.ToCobra()
 }
@@ -91,11 +92,23 @@ type GroupShow struct {
 
 // RunGroupsShow prints one group as GET /v1/groups/{name} returns it.
 func RunGroupsShow(name string, jsonOut bool, stdout, stderr io.Writer) int {
+	return RunGroupsShowOn("", name, jsonOut, stdout, stderr)
+}
+
+// RunGroupsShowOn is RunGroupsShow for a group on a linked peer node, read
+// through the peer view at the same route; node "" is this node.
+func RunGroupsShowOn(node, name string, jsonOut bool, stdout, stderr io.Writer) int {
 	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
 		return rc
 	}
 	var raw json.RawMessage
-	if err := DaemonGet("/v1/groups/"+url.PathEscape(name), &raw); err != nil {
+	var err error
+	if node == "" {
+		err = DaemonGet("/v1/groups/"+url.PathEscape(name), &raw)
+	} else {
+		err = ReadPeerView(node, "v1/groups/"+url.PathEscape(name), &raw)
+	}
+	if err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return MapDaemonErrorToRC(err)
 	}

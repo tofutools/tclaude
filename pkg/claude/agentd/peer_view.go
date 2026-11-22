@@ -178,6 +178,9 @@ func peerViewRules() map[string]peerViewRule {
 	rules["GET /api/snapshot"] = peerViewRule{feature: "agents.status", requires: PermAgentsStatusRead, group: true, serve: servePeerSnapshot}
 	rules["GET /api/groups"] = peerViewRule{feature: "groups", requires: PermGroupsRosterRead, group: true, visible: true, serve: servePeerGroups}
 	rules["GET /api/groups/{name}"] = peerViewRule{feature: "groups", requires: PermGroupsRosterRead, group: true, visible: true, serve: servePeerGroup}
+	// groups show (groups_show_peer.go): the summary of any visible group,
+	// its sections under the peer's groups.settings grant.
+	rules["GET /v1/groups/{name}"] = peerViewRule{feature: "groups", requires: PermGroupsRosterRead, group: true, visible: true, serve: servePeerGroupShow}
 	rules["GET /api/agents/{id}"] = peerViewRule{feature: "agents.status", requires: PermAgentsStatusRead, group: true, serve: servePeerAgent}
 	rules["GET /api/harnesses/operations"] = peerViewRule{feature: "node.harnesses.install", requires: PermNodeHarnessesInstall, serve: servePeerHarnessOperations}
 	rules["GET /api/harnesses/operations/jobs/{id}"] = peerViewRule{feature: "node.harnesses.install", requires: PermNodeHarnessesInstall, serve: servePeerHarnessOperations}

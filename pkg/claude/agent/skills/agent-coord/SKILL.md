@@ -55,7 +55,9 @@ tclaude agent groups show <group>   # a group's members, links, startup context 
 `groups show` reads a group as its `set-*` commands wrote it. Your own group's
 startup context (text and hash) is yours to read as a member
 (`groups.context.read`); its settings need `groups.settings.read`, which owners
-hold. A section you cannot read is named with the slug it needs. Read the
+hold. A section you cannot read is named with the slug it needs. Add
+`--node <peer>` to show a group on a linked node: its summary only, for an
+agent. Read the
 current context before you change one with `groups set-context`, and pass
 its hash with `--if-match <hash>`: if someone changed it meanwhile, nothing
 is written and you get the current hash to merge against.

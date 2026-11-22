@@ -85,10 +85,6 @@ const peerCredentialProxyWhy = "uses this node's operator's credentials; a peer'
 
 // peerUmbrellaWhy: an umbrella slug confers a family of operations at once;
 // a peer is granted each one, so its grant list says exactly what it holds.
-// groupsShowLocalWhy: groups show reads a group on this node only; a peer
-// reads a group's settings through its groups.settings grant.
-const groupsShowLocalWhy = "groups show reads a group on this node; a peer reads a group's settings through its groups.settings grant"
-
 const peerUmbrellaWhy = "an umbrella over many slugs; a peer is granted each operation it needs, so its grant list says exactly what it holds"
 
 // peerMorphWhy: a morph re-forms an agent's whole launch, which may widen it.
@@ -198,8 +194,8 @@ var slugFederationReach = map[string]FedReach{
 	PermGroupsSettingsDescription:         {Kind: FedPeerAlias, Via: []string{PermGroupsSettings}},
 	PermGroupsSettingsDefaultDir:          {Kind: FedPeerAlias, Via: []string{PermGroupsSettings}},
 	PermGroupsSettingsDefaultContext:      {Kind: FedPeerAlias, Via: []string{PermGroupsSettings}},
-	PermGroupsContextRead:                 {Kind: FedLocal, Why: groupsShowLocalWhy},
-	PermGroupsSettingsRead:                {Kind: FedLocal, Why: groupsShowLocalWhy},
+	PermGroupsContextRead:                 {Kind: FedPeerAlias, Via: []string{PermGroupsSettings}},
+	PermGroupsSettingsRead:                {Kind: FedPeerAlias, Via: []string{PermGroupsSettings}},
 	PermGroupsSettingsEnvironment:         {Kind: FedPeerGroup, Cap: "group_environment", SelfGate: true, Sensitive: true},
 	PermGroupsSettingsDefaultSpawnTarget:  {Kind: FedLocal, Why: "picks where this node's own operator and agents spawn by default; a peer names the group of each spawn it asks for"},
 	PermGroupsSettingsDefaultProfile:      {Kind: FedPeerAlias, Via: []string{PermGroupsSettings}},

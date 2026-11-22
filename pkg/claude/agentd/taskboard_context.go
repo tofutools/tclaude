@@ -329,6 +329,9 @@ var dashboardTaskboardRoutes = []struct {
 	pattern string
 	handler http.HandlerFunc
 }{
+	// groups show: the dashboard reads a group, local or through a peer
+	// (/api/peer/{node}/v1/groups/{name}), at the CLI's own route.
+	{"GET /v1/groups/{name}", v1GroupRoute(handleGroupShow)},
 	{"GET /v1/groups/{name}/taskboard", v1GroupRoute(handleTaskboardList)},
 	{"POST /v1/groups/{name}/taskboard/tasks", v1GroupRoute(handleTaskboardCreate)},
 	{"POST /v1/groups/{name}/taskboard/ask", v1GroupRoute(handleTaskboardAsk)},
