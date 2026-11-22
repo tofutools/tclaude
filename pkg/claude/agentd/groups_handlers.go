@@ -644,11 +644,17 @@ func normalizeGroupDescr(s string) string {
 // groupUpdateBody is a group settings update; each field left out stays
 // unchanged.
 type groupUpdateBody struct {
-	Descr             *string                           `json:"descr,omitempty"`
-	DefaultCwd        *string                           `json:"default_cwd,omitempty"`
-	DefaultContext    *string                           `json:"default_context,omitempty"`
-	Environment       *[]sandboxpolicy.EnvironmentEntry `json:"environment,omitempty"`
-	DefaultSpawnGroup *bool                             `json:"default_spawn_group,omitempty"`
+	Descr          *string `json:"descr,omitempty"`
+	DefaultCwd     *string `json:"default_cwd,omitempty"`
+	DefaultContext *string `json:"default_context,omitempty"`
+	// DefaultContextIfMatch makes the default_context write a compare-and-set:
+	// it is written only while the group's current context hashes to this
+	// (db.GroupContextHash, the hash groups show prints); otherwise 409
+	// group_context_conflict with the current hash. It adds a check, never a
+	// permission: the write keeps groups.settings.default-context.
+	DefaultContextIfMatch *string                           `json:"default_context_if_match,omitempty"`
+	Environment           *[]sandboxpolicy.EnvironmentEntry `json:"environment,omitempty"`
+	DefaultSpawnGroup     *bool                             `json:"default_spawn_group,omitempty"`
 	// DefaultProfile names the spawn profile (JOH-210) whose launch fields
 	// fill blank spawn fields for this group's agents; "" clears it. *string
 	// so a caller can clear it by sending "" — distinct from omitting it.
@@ -784,6 +790,10 @@ func (u *groupUpdate) decode(w http.ResponseWriter) bool {
 	if u.body.Descr == nil && u.body.DefaultCwd == nil && u.body.DefaultContext == nil && u.body.Environment == nil && u.body.DefaultSpawnGroup == nil && u.body.DefaultProfile == nil && u.body.DefaultPrompts == nil && u.body.MaxMembers == nil && u.body.NotifyEnabled == nil && u.body.RemoteControlPolicy == nil && u.body.ReinjectAfterCompact == nil && u.body.Permissions == nil && u.body.OwnerScopes == nil {
 		writeError(w, http.StatusBadRequest, "invalid_arg",
 			"nothing to update (expected descr, default_cwd, default_context, environment, default_spawn_group, default_profile, default_prompts, max_members, notify_enabled, remote_control_policy, reinject_after_compact, permissions and/or owner_scopes)")
+		return false
+	}
+	if u.body.DefaultContextIfMatch != nil && u.body.DefaultContext == nil {
+		writeError(w, http.StatusBadRequest, "invalid_arg", "default_context_if_match goes with default_context")
 		return false
 	}
 	return true
@@ -973,6 +983,21 @@ func (u *groupUpdate) normalize(w http.ResponseWriter) bool {
 			writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
 			return false
 		}
+		// Check the expected hash before any field is written, so a stale
+		// caller changes nothing. The row is read again: the gate above may
+		// have waited on the human. The write itself compares again,
+		// atomically.
+		if u.body.DefaultContextIfMatch != nil {
+			fresh, err := db.GetAgentGroupByName(u.g.Name)
+			if err != nil || fresh == nil {
+				writeError(w, http.StatusInternalServerError, "io", "read group: "+fmt.Sprint(err))
+				return false
+			}
+			if current := db.GroupContextHash(fresh.DefaultContext); !strings.EqualFold(strings.TrimSpace(*u.body.DefaultContextIfMatch), current) {
+				u.writeGroupContextConflict(w, current)
+				return false
+			}
+		}
 	}
 	if u.body.DefaultProfile != nil {
 		// Validate only that the referenced profile exists (its launch fields
@@ -1036,7 +1061,22 @@ func (u *groupUpdate) applyLaunchDefaults(w http.ResponseWriter) bool {
 		}
 	}
 
-	if u.body.DefaultContext != nil {
+	if u.body.DefaultContext != nil && u.body.DefaultContextIfMatch != nil {
+		n, current, err := db.SetAgentGroupDefaultContextIfMatch(u.g.Name, u.ctx, *u.body.DefaultContextIfMatch)
+		switch {
+		case errors.Is(err, db.ErrGroupContextConflict):
+			u.writeGroupContextConflict(w, current)
+			return false
+		case err != nil:
+			writeError(w, http.StatusInternalServerError, "io", err.Error())
+			return false
+		case n == 0:
+			writeError(w, http.StatusNotFound, "not_found", "no such group")
+			return false
+		}
+		u.resp["default_context"] = u.ctx
+		u.resp["default_context_hash"] = current
+	} else if u.body.DefaultContext != nil {
 		if !u.writeField(w, "default_context", func() (int64, error) { return db.SetAgentGroupDefaultContext(u.g.Name, u.ctx) }, u.ctx) {
 			return false
 		}
@@ -1151,6 +1191,23 @@ func (u *groupUpdate) writeFieldOr(w http.ResponseWriter, errStatus int, errCode
 	}
 	u.resp[key] = stored
 	return true
+}
+
+// writeGroupContextConflict answers a default_context compare-and-set whose
+// expected hash is stale, as a process template save answers a stale source
+// hash. The current hash goes only to a caller who may read the context
+// (groups.context.read, as groups show decides it): a hash confirms a guess
+// at a short text, and the check must reveal nothing the caller could not
+// already read.
+func (u *groupUpdate) writeGroupContextConflict(w http.ResponseWriter, currentHash string) {
+	resp := map[string]any{
+		"error": "the group's startup context changed since it was read; read it again (groups show) and retry with its hash",
+		"code":  "group_context_conflict",
+	}
+	if readable, err := groupSectionAllowed(u.r, u.g, PermGroupsContextRead); err == nil && readable {
+		resp["current_hash"] = currentHash
+	}
+	writeJSON(w, http.StatusConflict, resp)
 }
 
 // ownerScopesWireOmitEmpty is ownerScopesWire for a field tagged omitempty: it
