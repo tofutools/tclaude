@@ -805,14 +805,24 @@ func printAmbiguous(out io.Writer, selector string, matches []*resolved) {
 
 // --- whoami ---
 
-type whoamiParams struct{}
+type whoamiParams struct {
+	Full bool `long:"full" help:"Show your whole setup: role, task link, profiles, directories, groups and links, effective permissions and their sources, the startup briefing and the reinject policy (needs self.introspect)"`
+	JSON bool `long:"json" help:"With --full, output JSON"`
+}
 
 func whoamiCmd() *cobra.Command {
 	return boa.CmdT[whoamiParams]{
 		Use:         "whoami",
 		Short:       "Print the current conversation's ID and display name",
 		ParamEnrich: common.DefaultParamEnricher(),
-		RunFunc: func(_ *whoamiParams, _ *cobra.Command, _ []string) {
+		RunFunc: func(p *whoamiParams, _ *cobra.Command, _ []string) {
+			if p.Full {
+				os.Exit(RunWhoamiFull(p.JSON, cliStdout, cliStderr))
+			}
+			if p.JSON {
+				fmt.Fprintln(cliStderr, "Error: --json goes with --full")
+				os.Exit(rcInvalidArg)
+			}
 			os.Exit(runWhoami(cliStdout, cliStderr))
 		},
 	}.ToCobra()

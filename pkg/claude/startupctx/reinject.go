@@ -236,3 +236,18 @@ func actorName(agentID string) string {
 	}
 	return a.PendingName
 }
+
+// PrimaryGroup is the group whose startup context and reinject policy apply
+// to an agent after a compaction: the spawn group while the agent is still a
+// member, otherwise the oldest-joined group. nil when it is in no group.
+func PrimaryGroup(agentID string) (*db.AgentGroupMembership, error) {
+	snap, err := db.GetAgentStartupSnapshot(strings.TrimSpace(agentID))
+	if err != nil {
+		return nil, err
+	}
+	memberships, err := db.ListAgentGroupMembershipsByJoin(strings.TrimSpace(agentID))
+	if err != nil {
+		return nil, err
+	}
+	return primaryMembership(snap, memberships), nil
+}

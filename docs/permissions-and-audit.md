@@ -89,7 +89,7 @@ inherited state.
 
 `tclaude setup --install-default-agent-permissions` (idempotent) grants the
 self-management baseline: `self.rename`, `self.compact`, `self.interrupt`,
-`self.clone`, `self.schedule`, `self.remote-control`, `self.task`, `self.pr`,
+`self.clone`, `self.schedule`, `self.remote-control`, `self.task`, `self.introspect`, `self.pr`,
 `self.tags`, `self.dir-repair`, `self.process`, `self.page`, `groups.pages.read`,
 `groups.pages.patch`, plus `process.templates.read`, `usage.read`, and `costs.read`.
 The two `groups.pages.*` defaults share a live page within its group

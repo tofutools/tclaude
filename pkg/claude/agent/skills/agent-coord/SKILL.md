@@ -47,6 +47,7 @@ keeps the auth model honest.
 
 ```bash
 tclaude agent whoami      # who am I (stable agent_id and display name)?
+tclaude agent whoami --full  # my role, profiles, dirs, groups and links, permissions and their sources, startup briefing, reinject policy
 tclaude agent ls          # peers reachable via shared groups
 tclaude agent groups show <group>   # a group's members, links, startup context and settings
 ```

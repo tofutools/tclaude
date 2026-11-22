@@ -401,12 +401,15 @@ const (
 	PermSelfClone         = "self.clone"
 	PermSelfRemoteControl = "self.remote-control"
 	PermSelfTask          = "self.task"
-	PermSelfPR            = "self.pr"
-	PermSelfTags          = "self.tags"
-	PermSelfDirRepair     = "self.dir-repair"
-	PermSelfMorph         = "self.morph"
-	PermSelfProcess       = "self.process"
-	PermSelfPage          = "self.page"
+	// PermSelfIntrospect reads the calling agent's own full setup: tclaude
+	// agent whoami --full.
+	PermSelfIntrospect = "self.introspect"
+	PermSelfPR         = "self.pr"
+	PermSelfTags       = "self.tags"
+	PermSelfDirRepair  = "self.dir-repair"
+	PermSelfMorph      = "self.morph"
+	PermSelfProcess    = "self.process"
+	PermSelfPage       = "self.page"
 	// Live pages another member of the page's group showed (pages_share.go).
 	PermGroupsPagesRead              = "groups.pages.read"
 	PermGroupsPagesPatch             = "groups.pages.patch"
