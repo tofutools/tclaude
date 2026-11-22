@@ -61,10 +61,20 @@ func sortMembersByAge[T any](items []T, created func(T) string, convID func(T) s
 }
 
 func handleGroupMembersList(w http.ResponseWriter, _ *http.Request, g *db.AgentGroup) {
-	members, err := db.ListAgentGroupMembers(g.ID)
+	out, err := groupMembersView(g)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "io", err.Error())
 		return
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// groupMembersView is a group's members, and its owners who are not
+// members, as GET /v1/groups/{name}/members lists them.
+func groupMembersView(g *db.AgentGroup) ([]memberJSON, error) {
+	members, err := db.ListAgentGroupMembers(g.ID)
+	if err != nil {
+		return nil, err
 	}
 	// One tmux ls for the listing — per-member online checks below are
 	// map lookups against this snapshot.
@@ -115,7 +125,7 @@ func handleGroupMembersList(w http.ResponseWriter, _ *http.Request, g *db.AgentG
 	sortMembersByAge(out,
 		func(m memberJSON) string { return m.CreatedAt },
 		func(m memberJSON) string { return m.ConvID })
-	writeJSON(w, http.StatusOK, out)
+	return out, nil
 }
 
 // groupContextEntry is one member's context-window state in the
@@ -274,10 +284,20 @@ type ownerJSON struct {
 // can message members (and multicast) without being members of the
 // group themselves.
 func handleGroupOwnersList(w http.ResponseWriter, _ *http.Request, g *db.AgentGroup) {
-	owners, err := db.ListAgentGroupOwners(g.ID)
+	out, err := groupOwnersView(g)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "io", err.Error())
 		return
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// groupOwnersView is a group's owners as GET /v1/groups/{name}/owners lists
+// them.
+func groupOwnersView(g *db.AgentGroup) ([]ownerJSON, error) {
+	owners, err := db.ListAgentGroupOwners(g.ID)
+	if err != nil {
+		return nil, err
 	}
 	// One tmux ls for the listing — per-owner online checks below are
 	// map lookups against this snapshot.
@@ -296,7 +316,7 @@ func handleGroupOwnersList(w http.ResponseWriter, _ *http.Request, g *db.AgentGr
 		entry.GrantedBy = o.GrantedBy
 		out = append(out, entry)
 	}
-	writeJSON(w, http.StatusOK, out)
+	return out, nil
 }
 
 // handleGroupOwnersAdd grants ownership of g to a conv. Permission-

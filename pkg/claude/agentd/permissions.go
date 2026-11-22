@@ -450,6 +450,14 @@ var permissionRegistry = []PermSlug{
 		Description:  "Set or clear a group's shared startup context (tclaude agent groups set-context)",
 	},
 	{
+		Slug: PermGroupsContextRead, OwnerImplied: true, MemberImplied: true, ScopeDims: []ScopeDim{ScopeDimGroup},
+		Description: "Read a group's shared startup context through tclaude agent groups show: its text and hash, its saved prompts and its reinject policy. Membership and ownership confer it for that group, live; an explicit deny stops it. Writing it stays on groups.settings.default-context.",
+	},
+	{
+		Slug: PermGroupsSettingsRead, OwnerImplied: true, ScopeDims: []ScopeDim{ScopeDimGroup},
+		Description: "Read a group's settings through tclaude agent groups show: default directory, spawn and sandbox profile, environment names (never values), member cap, notifications, remote-control policy, owner scopes, the default spawn target, the taskboard's writers and the group's grants. Ownership confers it for each owned group; members do not get it by default. Changing a setting stays on its groups.settings.* slug.",
+	},
+	{
 		Slug:         PermGroupsSettingsEnvironment,
 		OwnerImplied: true,
 		ScopeDims:    []ScopeDim{ScopeDimGroup},

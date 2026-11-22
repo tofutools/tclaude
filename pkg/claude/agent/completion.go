@@ -341,6 +341,8 @@ func completePermissionSlugs(_ *cobra.Command, _ []string, toComplete string) []
 			{"groups.settings.description", "Set group descriptions"},
 			{"groups.settings.default-dir", "Set group default spawn directories"},
 			{"groups.settings.default-context", "Set group startup context"},
+			{"groups.context.read", "Read a group's startup context (groups show)"},
+			{"groups.settings.read", "Read a group's settings (groups show)"},
 			{"groups.settings.default-spawn-target", "Set the default spawn group"},
 			{"groups.settings.default-profile", "Set group default spawn profiles"},
 			{"groups.settings.max-members", "Set group member caps"},

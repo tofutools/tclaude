@@ -414,6 +414,8 @@ var scopedSlugEnforcementPaths = map[string]string{
 	PermGroupsSettingsDescription:         "requireGroupPermission — fills ActionContext{Group}",
 	PermGroupsSettingsDefaultDir:          "requireGroupPermission — fills ActionContext{Group}",
 	PermGroupsSettingsDefaultContext:      "requireGroupPermission — fills ActionContext{Group}",
+	PermGroupsContextRead:                 "groupSectionAllowed (groups_show.go) — ActionContext{Group}",
+	PermGroupsSettingsRead:                "groupSectionAllowed (groups_show.go) — ActionContext{Group}",
 	PermGroupsSettingsEnvironment:         "requireGroupPermission — fills ActionContext{Group}",
 	PermGroupsSettingsDefaultProfile:      "requireGroupPermission — fills ActionContext{Group}",
 	PermGroupsSettingsMaxMembers:          "requireGroupPermission — fills ActionContext{Group}",

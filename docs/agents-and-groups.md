@@ -153,7 +153,28 @@ mutations gate on `groups.*` permission slugs.
 tclaude agent groups create myteam --context-file brief.md
 tclaude agent groups add myteam <selector> --role reviewer
 tclaude agent groups members myteam
+tclaude agent groups show myteam [--json]
 ```
+
+`groups show` is the getter for the settings verbs below: one group's
+summary, its startup context and its settings. The summary (description,
+parent, attachment, owners, members with role and description, links in and
+out) is as open as `ls` and `members`. The other two sections each need a
+read slug, scoped to the group:
+
+- **Startup context** (`groups.context.read`): the text, its hash, the saved
+  prompts and the reinject policy. Every member and owner of the group holds
+  it there.
+- **Settings** (`groups.settings.read`): default directory, spawn and sandbox
+  profile, the environment's names (never its values), member cap,
+  notifications, remote-control policy, owner scopes, default spawn target,
+  taskboard writers and the group's grants. Owners hold it for their groups;
+  members do not by default.
+
+A section the caller cannot read is left out, and the reply names it with the
+slug it needs (`withheld` in `--json`). The `groups.admin` umbrella covers both
+slugs, and an explicit deny of either still wins. The human sees everything.
+`show` reads only; changing a setting keeps its own `groups.settings.*` slug.
 
 `create` can bootstrap members inline
 (`--member name=..,role=..,descr=..,cwd=..`). Beyond the roster verbs

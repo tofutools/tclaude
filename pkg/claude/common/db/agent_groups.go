@@ -1,7 +1,9 @@
 package db
 
 import (
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"strings"
@@ -1063,4 +1065,12 @@ func (g *AgentGroup) GetDefaultContext() string {
 		return ""
 	}
 	return g.DefaultContext
+}
+
+// GroupContextHash is the hash groups show prints for a group's startup
+// context: the sha256 of its text, hex. An empty context has a hash too, so a
+// compare-and-set can expect "still empty".
+func GroupContextHash(text string) string {
+	sum := sha256.Sum256([]byte(text))
+	return hex.EncodeToString(sum[:])
 }
