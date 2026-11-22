@@ -34,7 +34,7 @@ func groupsCmd() *cobra.Command {
 	return boa.CmdT[struct{}]{
 		Use:         "groups",
 		Short:       "Manage agent groups (allow-listed who can talk to whom)",
-		Long:        "`ls` and `members` are open. Mutating subcommands (create, rm, add, remove, update-member) are gated server-side on a permission slug: humans always pass; agents need the slug granted in agent.default_permissions or agent.permission_overrides in ~/.tclaude/data/config.json. Slugs: groups.create, groups.delete, groups.members.add, groups.members.remove, groups.members.update.",
+		Long:        "`ls`, `members` and the summary of `show` are open; `show`'s startup context needs groups.context.read (members and owners hold it) and its settings groups.settings.read (owners hold it). Mutating subcommands (create, rm, add, remove, update-member) are gated server-side on a permission slug: humans always pass; agents need the slug granted in agent.default_permissions or agent.permission_overrides in ~/.tclaude/data/config.json. Slugs: groups.create, groups.delete, groups.members.add, groups.members.remove, groups.members.update.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		SubCmds: []*cobra.Command{
 			groupsLsCmd(),
@@ -43,6 +43,7 @@ func groupsCmd() *cobra.Command {
 			groupsArchiveCmd(),
 			groupsUnarchiveCmd(),
 			groupsNestCmd(),
+			groupsShowCmd(),
 			groupsMembersCmd(),
 			groupsAddCmd(),
 			groupsRemoveCmd(),

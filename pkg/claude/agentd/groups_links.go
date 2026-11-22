@@ -213,18 +213,27 @@ func handleGroupLinksList(w http.ResponseWriter, r *http.Request, g *db.AgentGro
 			"dir must be one of: out, in, both")
 		return
 	}
-	links, err := db.ListAgentGroupLinks(g.ID, dir)
+	out, err := groupLinksView(g, dir)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "io", err.Error())
 		return
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// groupLinksView is a group's links in the given direction, local and to
+// peers, as GET /v1/groups/{name}/links lists them.
+func groupLinksView(g *db.AgentGroup, dir db.LinkDirection) ([]linkJSON, error) {
+	links, err := db.ListAgentGroupLinks(g.ID, dir)
+	if err != nil {
+		return nil, err
 	}
 	names := loadGroupNames()
 	out := make([]linkJSON, 0, len(links))
 	for _, l := range links {
 		out = append(out, toLinkJSON(l, names))
 	}
-	out = append(out, remoteLinkJSON(g.ID, string(dir), names)...)
-	writeJSON(w, http.StatusOK, out)
+	return append(out, remoteLinkJSON(g.ID, string(dir), names)...), nil
 }
 
 // linkAddBody is the POST payload. `to` accepts a group name or id-as-

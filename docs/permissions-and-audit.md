@@ -59,7 +59,8 @@ set**, the union of:
 - grants contributed by group ownership (see below),
 - slugs conferred by membership: a few group-scoped slugs are every active
   member's in that group, checked live at each request. They are
-  `groups.messages.schedule`, and `groups.resources.read` /
+  `groups.messages.schedule`, `groups.context.read` (read the group's
+  startup context with `groups show`), and `groups.resources.read` /
   `groups.resources.write` (read and change the group's drawing boards; see
   [Drawing boards › Group drawing boards are their members'](drawing-boards.md#group-drawing-boards-are-their-members)).
 
@@ -105,8 +106,10 @@ manager pattern and the slugs it checks.
 ### What ownership contributes
 
 Owning an active group structurally contributes grants scoped to that group:
-the `groups.*` roster/settings/link/attachment/nest/archive/schedule slugs
-and the `groups.members.<verb>` manager slugs, `process.runs.start` (binding
+the `groups.*` roster/settings/link/attachment/nest/archive/schedule slugs,
+the read slugs `groups.context.read` and `groups.settings.read` (what
+`groups show` shows of the group), and the `groups.members.<verb>` manager
+slugs, `process.runs.start` (binding
 a new process run to the group), plus unscoped `human.notify` and
 `process.runs.read`. Ownership never confers slugs that mutate shared
 configuration (`process.templates.manage`, `agent.sandbox-impl`,

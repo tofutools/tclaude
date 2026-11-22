@@ -535,6 +535,7 @@ func registerV1GroupRoutes(mux *http.ServeMux) {
 	}))
 	mux.HandleFunc("/v1/groups/{name}/attachment", v1GroupRoute(handleGroupAttachment))
 
+	mux.HandleFunc("GET /v1/groups/{name}", v1GroupRoute(handleGroupShow))
 	mux.HandleFunc("PATCH /v1/groups/{name}", v1GroupRoute(handleGroupUpdate))
 	mux.HandleFunc("DELETE /v1/groups/{name}", v1GroupRoute(handleGroupDelete))
 }
