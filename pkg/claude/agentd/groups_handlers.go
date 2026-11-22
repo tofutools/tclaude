@@ -984,10 +984,17 @@ func (u *groupUpdate) normalize(w http.ResponseWriter) bool {
 			return false
 		}
 		// Check the expected hash before any field is written, so a stale
-		// caller changes nothing. The write itself compares again, atomically.
+		// caller changes nothing. The row is read again: the gate above may
+		// have waited on the human. The write itself compares again,
+		// atomically.
 		if u.body.DefaultContextIfMatch != nil {
-			if current := db.GroupContextHash(u.g.DefaultContext); !strings.EqualFold(strings.TrimSpace(*u.body.DefaultContextIfMatch), current) {
-				writeGroupContextConflict(w, current)
+			fresh, err := db.GetAgentGroupByName(u.g.Name)
+			if err != nil || fresh == nil {
+				writeError(w, http.StatusInternalServerError, "io", "read group: "+fmt.Sprint(err))
+				return false
+			}
+			if current := db.GroupContextHash(fresh.DefaultContext); !strings.EqualFold(strings.TrimSpace(*u.body.DefaultContextIfMatch), current) {
+				u.writeGroupContextConflict(w, current)
 				return false
 			}
 		}
@@ -1058,7 +1065,7 @@ func (u *groupUpdate) applyLaunchDefaults(w http.ResponseWriter) bool {
 		n, current, err := db.SetAgentGroupDefaultContextIfMatch(u.g.Name, u.ctx, *u.body.DefaultContextIfMatch)
 		switch {
 		case errors.Is(err, db.ErrGroupContextConflict):
-			writeGroupContextConflict(w, current)
+			u.writeGroupContextConflict(w, current)
 			return false
 		case err != nil:
 			writeError(w, http.StatusInternalServerError, "io", err.Error())
@@ -1187,14 +1194,20 @@ func (u *groupUpdate) writeFieldOr(w http.ResponseWriter, errStatus int, errCode
 }
 
 // writeGroupContextConflict answers a default_context compare-and-set whose
-// expected hash is stale, with the current one, as a process template save
-// answers a stale source hash.
-func writeGroupContextConflict(w http.ResponseWriter, currentHash string) {
-	writeJSON(w, http.StatusConflict, map[string]any{
-		"error":        "the group's startup context changed since it was read; read it again (groups show) and retry with its hash",
-		"code":         "group_context_conflict",
-		"current_hash": currentHash,
-	})
+// expected hash is stale, as a process template save answers a stale source
+// hash. The current hash goes only to a caller who may read the context
+// (groups.context.read, as groups show decides it): a hash confirms a guess
+// at a short text, and the check must reveal nothing the caller could not
+// already read.
+func (u *groupUpdate) writeGroupContextConflict(w http.ResponseWriter, currentHash string) {
+	resp := map[string]any{
+		"error": "the group's startup context changed since it was read; read it again (groups show) and retry with its hash",
+		"code":  "group_context_conflict",
+	}
+	if readable, err := groupSectionAllowed(u.r, u.g, PermGroupsContextRead); err == nil && readable {
+		resp["current_hash"] = currentHash
+	}
+	writeJSON(w, http.StatusConflict, resp)
 }
 
 // ownerScopesWireOmitEmpty is ownerScopesWire for a field tagged omitempty: it

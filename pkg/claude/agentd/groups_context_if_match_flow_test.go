@@ -131,3 +131,25 @@ func TestGroupContextIfMatch_AnOwnerWritesWithAFreshHash(t *testing.T) {
 	require.Zero(t, rc, stderr)
 	assert.Equal(t, "The owner's edit.", groupContextNow(t))
 }
+
+// A caller who may write the context but not read it learns of a conflict,
+// never the current hash: --if-match reveals nothing groups show withholds.
+func TestGroupContextIfMatch_AConflictHidesTheHashFromAWriterWhoCannotRead(t *testing.T) {
+	f := newFlow(t)
+	haveContextGroup(t, f)
+	const writer = "if-match-writer-cccc-3333"
+	f.HaveConvWithTitle(writer, "writer")
+	require.NoError(t, db.GrantAgentPermission(writer, agentd.PermGroupsSettingsDefaultContext, "test"))
+
+	rc, _, stderr := setContextAs(t, f, writer, "Blind.", "0000")
+	assert.NotZero(t, rc)
+	assert.Contains(t, stderr, "changed since you read it")
+	assert.NotContains(t, stderr, db.GroupContextHash(ifMatchOriginal))
+	assert.Equal(t, ifMatchOriginal, groupContextNow(t))
+
+	r := agentd.AsAgentPeer(testharness.JSONRequest(t, http.MethodPatch, "/v1/groups/alpha",
+		map[string]any{"default_context": "x", "default_context_if_match": "0000"}), writer)
+	rec := testharness.Serve(f.Mux, r)
+	require.Equal(t, http.StatusConflict, rec.Code, rec.Body.String())
+	assert.NotContains(t, rec.Body.String(), "current_hash")
+}

@@ -2079,6 +2079,11 @@ func renderGroupContextConflict(err error, group string, stderr io.Writer) (int,
 		CurrentHash string `json:"current_hash"`
 	}
 	_ = json.Unmarshal([]byte(daemonErr.Raw), &conflict)
+	if conflict.CurrentHash == "" {
+		fmt.Fprintf(stderr, "Error: %s's startup context changed since you read it; nothing was written.\n", group)
+		fmt.Fprintf(stderr, "Read it again with `tclaude agent groups show %s` (it needs groups.context.read), merge, and retry with its hash. Never blind-overwrite.\n", group)
+		return MapDaemonErrorToRC(err), true
+	}
 	fmt.Fprintf(stderr, "Error: %s's startup context changed since you read it (current hash %s); nothing was written.\n", group, conflict.CurrentHash)
 	fmt.Fprintf(stderr, "Read it again with `tclaude agent groups show %s`, merge, and retry with --if-match %s. Never blind-overwrite.\n", group, conflict.CurrentHash)
 	return MapDaemonErrorToRC(err), true
