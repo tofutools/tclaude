@@ -142,16 +142,7 @@ func ComposeReinjection(agentID string, boundary Boundary) (Reinjection, error) 
 	sections := []string{lead + "\n\n" + identity}
 
 	if boundary != BoundaryClear && !identityOnly {
-		groupContext := ""
-		if primary != nil {
-			if snap == nil || snap.IncludeGroupContext {
-				groupContext = primary.Group.DefaultContext
-			}
-			// The mission is delivered whatever include_group_context said.
-			if mission := primary.Group.MissionBlock(); mission != "" {
-				groupContext = strings.TrimSpace(strings.TrimSpace(groupContext) + "\n\n" + mission)
-			}
-		}
+		groupContext := ReinjectedGroupContext(snap, primary)
 		profileContext := ""
 		if snap != nil {
 			profileContext = snap.ProfileContext
@@ -167,6 +158,24 @@ func ComposeReinjection(agentID string, boundary Boundary) (Reinjection, error) 
 		sections = append(sections, managedBody)
 	}
 	return Reinjection{GroupID: groupID, Body: strings.Join(sections, sectionDivider)}, nil
+}
+
+// ReinjectedGroupContext is the group context a compaction re-injects from
+// the primary group: its startup context unless the spawn opted out, and its
+// mission whatever the spawn said.
+func ReinjectedGroupContext(snap *db.AgentStartupSnapshot, primary *db.AgentGroupMembership) string {
+	if primary == nil {
+		return ""
+	}
+	groupContext := ""
+	if snap == nil || snap.IncludeGroupContext {
+		groupContext = primary.Group.DefaultContext
+	}
+	// The mission is delivered whatever include_group_context said.
+	if mission := primary.Group.MissionBlock(); mission != "" {
+		groupContext = strings.TrimSpace(strings.TrimSpace(groupContext) + "\n\n" + mission)
+	}
+	return groupContext
 }
 
 // primaryMembership picks the group whose context is re-injected: the spawn

@@ -51,9 +51,10 @@ type WhoamiFull struct {
 		Recorded            bool   `json:"recorded"`
 	} `json:"startup"`
 	Reinject *struct {
-		Group        string `json:"group"`
-		Policy       string `json:"policy"`
-		GroupContext string `json:"group_context"`
+		Group           string `json:"group"`
+		Policy          string `json:"policy"`
+		GroupContext    string `json:"group_context"`
+		AfterCompaction string `json:"after_compaction"`
 	} `json:"reinject"`
 	Permissions struct {
 		Effective    []string            `json:"effective"`
@@ -109,8 +110,8 @@ func printWhoamiFull(w io.Writer, me WhoamiFull) {
 	if me.TaskRef != nil {
 		line("task", strings.TrimSpace(me.TaskRef.Label+" "+me.TaskRef.URL))
 	}
-	line("spawn profile", me.Spawn.Profile)
-	line("sandbox profile", me.Spawn.SandboxProfile)
+	line("spawn profile (named)", me.Spawn.Profile)
+	line("sandbox profile (named)", me.Spawn.SandboxProfile)
 	line("startup dir", me.Spawn.StartupDir)
 	line("current dir", me.Spawn.CurrentDir)
 	line("branch", me.Spawn.Branch)
@@ -176,6 +177,16 @@ func printWhoamiFull(w io.Writer, me WhoamiFull) {
 	}
 	if r := me.Reinject; r != nil {
 		line("reinject", fmt.Sprintf("%s (group %s)", r.Policy, r.Group))
+		if r.AfterCompaction == "" {
+			fmt.Fprintln(w, "  nothing is re-injected after a compaction")
+		} else {
+			fmt.Fprintln(w, "  after a compaction, tclaude re-injects:")
+			fmt.Fprintln(w, "  ---")
+			for _, l := range strings.Split(strings.TrimRight(r.AfterCompaction, "\n"), "\n") {
+				fmt.Fprintln(w, "  "+l)
+			}
+			fmt.Fprintln(w, "  ---")
+		}
 	}
 
 	fmt.Fprintln(w, "\nPermissions:")

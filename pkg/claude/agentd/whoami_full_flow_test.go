@@ -140,6 +140,28 @@ func TestWhoamiFull_OptedOutGroupContextIsNotReinjected(t *testing.T) {
 	assert.False(t, me.Startup.IncludeGroupContext)
 	require.NotNil(t, me.Reinject)
 	assert.Empty(t, me.Reinject.GroupContext)
+	assert.NotContains(t, me.Reinject.AfterCompaction, "Use worktrees.")
+
+	// A mission is re-injected whatever the spawn opted out of.
+	_, err = db.SetAgentGroupDeployMeta("alpha", "Ship the getters.", "Mission", "")
+	require.NoError(t, err)
+	me, rc, stderr = whoamiFull(t, f, conv)
+	require.Zero(t, rc, stderr)
+	assert.Equal(t, "## Mission\n\nShip the getters.", me.Reinject.GroupContext)
+	assert.Contains(t, me.Reinject.AfterCompaction, "Ship the getters.")
+}
+
+func TestWhoamiFull_OffStillReportsWhatIsReinjected(t *testing.T) {
+	f := newFlow(t)
+	conv, _ := haveIntrospectedAgent(t, f)
+	_, err := db.SetAgentGroupReinjectAfterCompact("alpha", db.ReinjectOff)
+	require.NoError(t, err)
+	require.NoError(t, db.GrantAgentPermission(conv, agentd.PermSelfIntrospect, "test"))
+	me, rc, stderr := whoamiFull(t, f, conv)
+	require.Zero(t, rc, stderr)
+	require.NotNil(t, me.Reinject)
+	assert.Equal(t, db.ReinjectOff, me.Reinject.Policy)
+	assert.Empty(t, me.Reinject.AfterCompaction, "off with no managed instructions re-injects nothing")
 }
 
 func TestWhoamiFull_HumanIsTheHuman(t *testing.T) {

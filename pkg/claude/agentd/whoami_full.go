@@ -35,7 +35,8 @@ type whoamiFullResp struct {
 // whoamiFullSpawn is how the agent was launched and where it works.
 type whoamiFullSpawn struct {
 	// Profile and SandboxProfile are the spawn and sandbox profile the spawn
-	// named; empty when it named none.
+	// request named; empty when it named none (a group's or the global default
+	// profile is not resolved here).
 	Profile        string `json:"profile,omitempty"`
 	SandboxProfile string `json:"sandbox_profile,omitempty"`
 	agentLocationView
@@ -80,10 +81,14 @@ type whoamiFullStartup struct {
 type whoamiFullReinject struct {
 	Group  string `json:"group"`
 	Policy string `json:"policy"`
-	// GroupContext is the primary group's startup context, read live, as a
-	// compaction re-injects it; empty when the spawn opted out or the policy
-	// re-injects identity only.
+	// GroupContext is the primary group's startup context and mission, read
+	// live, as a compaction re-injects them; empty when there is neither, or
+	// the policy re-injects identity only.
 	GroupContext string `json:"group_context,omitempty"`
+	// AfterCompaction is the whole message a compaction would re-inject now,
+	// as ComposeReinjection writes it; empty when nothing is re-injected (off,
+	// with no managed instructions).
+	AfterCompaction string `json:"after_compaction,omitempty"`
 }
 
 // whoamiFullPermissions is the agent's effective permissions as
@@ -191,8 +196,11 @@ func whoamiFullFor(convID string) (whoamiFullResp, error) {
 		if primary != nil {
 			policy := primary.Group.EffectiveReinjectAfterCompact()
 			out.Reinject = &whoamiFullReinject{Group: primary.Group.Name, Policy: policy}
-			if policy == db.ReinjectContexts && (snap == nil || snap.IncludeGroupContext) {
-				out.Reinject.GroupContext = primary.Group.DefaultContext
+			if policy == db.ReinjectContexts {
+				out.Reinject.GroupContext = startupctx.ReinjectedGroupContext(snap, primary)
+			}
+			if r, err := startupctx.ComposeReinjection(agentID, startupctx.BoundaryCompact); err == nil {
+				out.Reinject.AfterCompaction = r.Body
 			}
 		}
 	}

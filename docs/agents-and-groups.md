@@ -104,16 +104,16 @@ tclaude agent ls              # list agents reachable to you (your groups)
 ```
 
 `whoami --full` shows an agent its own setup:
-- name, task link, spawn and sandbox profile, startup and current directory
-  and worktree;
+- name, task link, the spawn and sandbox profile its spawn named, startup
+  and current directory and worktree;
 - each group it is in or owns, with its role there and the links that reach
   the group;
 - its effective permissions with their sources, as `permissions ls .`
   computes them, plus the groups whose membership confers each member slug;
 - its startup briefing as delivered, and whether the spawn opted out of the
   group's startup context;
-- the reinject policy that applies after a compaction, and the group it
-  comes from.
+- the reinject policy that applies after a compaction, the group it comes
+  from, and the exact message a compaction would re-inject now.
 
 It reads only the calling agent, and needs `self.introspect`, which
 `tclaude setup --install-default-agent-permissions` grants with the other
