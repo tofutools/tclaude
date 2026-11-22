@@ -193,6 +193,21 @@ slug it needs (`withheld` in `--json`). The `groups.admin` umbrella covers both
 slugs, and an explicit deny of either still wins. The human sees everything.
 `show` reads only; changing a setting keeps its own `groups.settings.*` slug.
 
+`groups show <group> --node <peer>` reads a group on a linked node, at the
+same route the dashboard reads through that node (`GET /v1/groups/{name}`).
+The node that holds the group decides what you see, under its federation
+read model:
+- **Summary:** a group it shares with you gives its summary, as its view of
+  the group already shows it (its roster, without owners, links or member
+  directories).
+- **Startup context and settings:** these need its `groups.settings` grant
+  for the group, which `groups.context.read` and `groups.settings.read`
+  alias. Each field shows only where its view of the group already shows it;
+  the default directory, for example, also needs the spawn directory grant.
+- **Agents:** a peer's agent gets the summary only.
+- **Unrestricted trust:** a node with unrestricted trust shows it as to its
+  own operator.
+
 `create` can bootstrap members inline
 (`--member name=..,role=..,descr=..,cwd=..`). Beyond the roster verbs
 (`add`, `remove`, `move`, `update-member`, `rename`, `rm`), groups carry a family

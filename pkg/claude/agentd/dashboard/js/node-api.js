@@ -26,11 +26,11 @@ export function selfNodeID() {
   return selfNode.value;
 }
 
-// peerPath addresses an /api/ path (or the /v1/process/ API, or a group's
-// task board) on a peer through this node's proxy.
+// peerPath addresses an /api/ path (or the /v1/process/ API, a group's
+// task board, or groups show) on a peer through this node's proxy.
 export function peerPath(node, path) {
   const url = new URL(String(path), 'http://node.invalid');
-  if (url.pathname.startsWith('/v1/process/') || isTaskboardPath(url.pathname)) return `/api/peer/${encodeURIComponent(node)}${url.pathname}${url.search}`;
+  if (url.pathname.startsWith('/v1/process/') || isTaskboardPath(url.pathname) || isGroupShowPath(url.pathname)) return `/api/peer/${encodeURIComponent(node)}${url.pathname}${url.search}`;
   if (!url.pathname.startsWith('/api/') || url.pathname.startsWith('/api/peer/')) {
     throw new Error(`not a node API path: ${url.pathname}`);
   }
@@ -40,6 +40,12 @@ export function peerPath(node, path) {
 // isTaskboardPath matches the task board's /v1 routes (taskboard.go).
 export function isTaskboardPath(pathname) {
   return pathname.startsWith('/v1/taskboard/') || /^\/v1\/groups\/[^/]+\/taskboard(\/|$)/.test(pathname);
+}
+
+// isGroupShowPath matches groups show's /v1 route (groups_show.go), which the
+// peer view serves too (groups_show_peer.go).
+export function isGroupShowPath(pathname) {
+  return /^\/v1\/groups\/[^/]+$/.test(pathname);
 }
 
 // onPeerPage reports whether this page is a peer's per-node view. Collab (the

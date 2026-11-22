@@ -39,7 +39,9 @@ var pinnedPeerMoveWithRetireGates = []string{"agent.bundle.export", "agent.move"
 // pinnedPeerGroupGates are the gates a peer-invoked group route answers for
 // each group grant held alone (grants not listed answer none).
 var pinnedPeerGroupGates = map[string][]string{
-	PermGroupsSettings:            {"groups.attachment", "groups.nest", "groups.rename", "groups.settings.default-context", "groups.settings.default-profile", "groups.settings.description", "groups.settings.max-members", "groups.settings.notifications", "groups.settings.remote-control-policy"},
+	// tk_361933d6: groups.context.read and groups.settings.read are its read
+	// aliases, for groups show of the group from the peer.
+	PermGroupsSettings:            {"groups.attachment", "groups.context.read", "groups.nest", "groups.rename", "groups.settings.default-context", "groups.settings.default-profile", "groups.settings.description", "groups.settings.max-members", "groups.settings.notifications", "groups.settings.read", "groups.settings.remote-control-policy"},
 	PermGroupsSettingsEnvironment: {"groups.settings.environment"},
 	// Each answers its own field gate on the group PATCH; what it confers is
 	// held to the peer ceiling there.
@@ -68,7 +70,7 @@ var pinnedPeerGroupGates = map[string][]string{
 
 // pinnedPeerSettingsWithCwdGates: the default directory also needs the
 // grant to choose a spawn's directory.
-var pinnedPeerSettingsWithCwdGates = []string{"groups.attachment", "groups.nest", "groups.rename", "groups.settings.default-context", "groups.settings.default-dir", "groups.settings.default-profile", "groups.settings.description", "groups.settings.max-members", "groups.settings.notifications", "groups.settings.remote-control-policy"}
+var pinnedPeerSettingsWithCwdGates = []string{"groups.attachment", "groups.context.read", "groups.nest", "groups.rename", "groups.settings.default-context", "groups.settings.default-dir", "groups.settings.default-profile", "groups.settings.description", "groups.settings.max-members", "groups.settings.notifications", "groups.settings.read", "groups.settings.remote-control-policy"}
 
 type peerGateFixture struct {
 	t      *testing.T

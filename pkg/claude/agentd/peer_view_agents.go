@@ -133,8 +133,10 @@ var agentPeerViewRoutes = map[string]agentPeerViewRoute{
 	"GET /api/snapshot":      {slugs: []string{PermAgentsStatusRead}, target: agentViewNode},
 	"GET /api/groups":        {slugs: []string{PermAgentsStatusRead}, target: agentViewNode},
 	"GET /api/groups/{name}": {slugs: []string{PermAgentsStatusRead}, target: agentViewGroup},
-	"GET /api/agents/{id}":   {slugs: []string{PermAgentsStatusRead}, target: agentViewAgent},
-	"GET /api/fleet":         {slugs: []string{PermFleetRead}, target: agentViewNode},
+	// groups show of a peer's group: the summary only, as the row above.
+	"GET /v1/groups/{name}": {slugs: []string{PermAgentsStatusRead}, target: agentViewGroup},
+	"GET /api/agents/{id}":  {slugs: []string{PermAgentsStatusRead}, target: agentViewAgent},
+	"GET /api/fleet":        {slugs: []string{PermFleetRead}, target: agentViewNode},
 	// Member lifecycle. A restart stops the session first, so it needs the
 	// stop grant too, as the receiver does.
 	"POST /api/agents/{id}/stop":    {slugs: []string{PermAgentStop}, target: agentViewAgent, destructive: true},
