@@ -41,12 +41,23 @@ func updateSubagentLedger(state *SessionState, input HookCallbackInput) (tracked
 	// attribution is ambiguous. An empty agent_id is the legacy shape;
 	// Remove falls back to decrement semantics for it, so it keeps its
 	// old stopped behaviour.
-	trackedSubagentStop = input.HookEventName == "SubagentStop" &&
-		(input.AgentID == "" || state.Subagents.Has(input.AgentID))
+	//
+	// A sub-agent that ends by handing its report back
+	// (isSubagentHandback) counts as a stop of that sub-agent too, but
+	// only when the ledger knows it: the handback names the sub-agent
+	// itself, so a known id is unambiguous attribution.
+	trackedSubagentStop = (input.HookEventName == "SubagentStop" &&
+		(input.AgentID == "" || state.Subagents.Has(input.AgentID))) ||
+		(isSubagentHandback(input) && state.Subagents.Has(input.AgentID))
 	switch {
 	case input.HookEventName == "SubagentStart":
 		state.Subagents = state.Subagents.Add(input.AgentID, input.AgentType, state.LastHook)
 	case input.HookEventName == "SubagentStop":
+		state.Subagents.Remove(input.AgentID)
+	case isSubagentHandback(input):
+		// The sub-agent's last hook. Sight() here would refresh Seen at
+		// the very moment it finished, and when no matching SubagentStop
+		// follows the entry would linger as a phantom for a full TTL.
 		state.Subagents.Remove(input.AgentID)
 	case input.AgentID != "" && input.HookEventName == "SessionEnd":
 		// A sub-agent's own conversation ending is as good as a
@@ -57,6 +68,26 @@ func updateSubagentLedger(state *SessionState, input HookCallbackInput) (tracked
 		state.Subagents = state.Subagents.Sight(input.AgentID, input.AgentType, state.LastHook)
 	}
 	return trackedSubagentStop
+}
+
+// subagentHandbackTool is the tool Claude Code (seen on 2.1.330) lets a
+// sub-agent end with: it hands its final report back to the main thread by
+// calling this tool rather than by ending on a plain assistant message.
+const subagentHandbackTool = "SubagentHandback"
+
+// isSubagentHandback reports the PostToolUse of a sub-agent's handback call:
+// the sub-agent has finished. Its PreToolUse is not a finish (the call can
+// still fail), and neither is a PostToolUseFailure, after which the
+// sub-agent carries on; both stay ordinary sightings.
+//
+// Claude Code does not reliably follow a handback with a SubagentStop that
+// names the sub-agent, so without this the handback's own PostToolUse (which
+// carries the sub-agent's agent_id) would be the last word on it, and a
+// sighting at that.
+func isSubagentHandback(input HookCallbackInput) bool {
+	return input.AgentID != "" &&
+		input.HookEventName == "PostToolUse" &&
+		input.ToolName == subagentHandbackTool
 }
 
 // updateBackgroundLedgers applies this hook's evidence to the background
