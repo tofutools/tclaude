@@ -89,6 +89,14 @@ func routeSubagentHook(ev *hookEvent) hookOutcome {
 	if input.AgentID == "" {
 		return hookContinue
 	}
+	if isSubagentHandback(input) {
+		// A sub-agent finishing by handback: the lifecycle settle in
+		// applyHookEvent handles it like a SubagentStop. Like a stop, it
+		// is not evidence that a prompt parked on the parent was
+		// answered, so it skips the awaiting_* rewrite below — a parent
+		// waiting on the human must not settle to idle.
+		return hookContinue
+	}
 	switch input.HookEventName {
 	case "SubagentStop":
 		// Fall through to the lifecycle settle below. An unknown id
@@ -116,11 +124,6 @@ func routeSubagentHook(ev *hookEvent) hookOutcome {
 	if state.Status == StatusAwaitingPermission || state.Status == StatusAwaitingInput {
 		state.Status = StatusMainAgentIdle
 		state.StatusDetail = state.backgroundActivityDetail()
-	}
-	if isSubagentHandback(input) {
-		// A sub-agent finishing by handback: the lifecycle settle in
-		// applyHookEvent handles it like a SubagentStop.
-		return hookContinue
 	}
 	return hookSaveAndReturn
 }

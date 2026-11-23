@@ -446,3 +446,19 @@ func TestSubagentLedger_FailedHandbackKeepsEntry(t *testing.T) {
 	assert.Equal(t, 1, got.SubagentCount)
 	assert.Equal(t, StatusMainAgentIdle, got.Status)
 }
+
+// A background sub-agent handing back while the main thread waits on a
+// permission prompt must leave the parent awaiting the human, as a
+// SubagentStop does — not settle it to idle and fire the stop side effects.
+func TestSubagentLedger_HandbackLeavesAwaitingAlone(t *testing.T) {
+	apply := ledgerWorld(t, "hb-await-sess", "conv-hb-await", nil)
+
+	apply(HookCallbackInput{HookEventName: "SubagentStart", AgentID: "ag-w", AgentType: "Explore"})
+	apply(HookCallbackInput{HookEventName: "PermissionRequest", ToolName: "Bash"})
+	require.Equal(t, StatusAwaitingPermission, loadState(t, "hb-await-sess").Status)
+
+	apply(HookCallbackInput{HookEventName: "PostToolUse", ToolName: "SubagentHandback", AgentID: "ag-w", AgentType: "Explore"})
+	got := loadState(t, "hb-await-sess")
+	assert.Equal(t, StatusAwaitingPermission, got.Status, "the parent is still waiting on the human")
+	assert.Equal(t, 0, got.SubagentCount)
+}
