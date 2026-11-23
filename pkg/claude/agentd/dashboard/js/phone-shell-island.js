@@ -39,6 +39,7 @@ import { NowView } from './phone-now.js';
 import { BoardView, boardRequest, openBoardTask } from './phone-board.js';
 import { MoreMenu } from './phone-more.js';
 import { navBadge, navShown, terminalDock } from './phone-nav-toggle.js';
+import { Chevron } from './chevron-icon.js';
 
 // The own views live in their own files; re-exported for this module's
 // callers.
@@ -272,13 +273,13 @@ export function PhoneShell({ shell, state, actions, boardSource, fetchImpl = glo
     ${hint && html`<div class=${`phone-pull${hint.ready ? ' ready' : ''}`} role="status" aria-live="polite"
       style=${`--phone-pull:${hint.offset}px`}>${hint.text}</div>`}
     <header class=${`phone-bar${page ? ' phone-bar-page' : ''}`}>
-      ${page ? html`<button data-ui-exempt type="button" class="phone-bar-back" aria-label="Back" onClick=${() => page.onBack?.()}>‹</button>
+      ${page ? html`<button data-ui-exempt type="button" class="phone-bar-back" aria-label="Back" onClick=${() => page.onBack?.()}><${Chevron} dir="left" size=${22} /></button>
         <h1 class="phone-bar-title">${page.title || ''}</h1>
         ${(page.actions || []).map((act) => html`<button data-ui-exempt key=${act.key || act.label} type="button"
           class=${`phone-bar-act${act.danger ? ' danger' : ''}`} aria-label=${act.label} title=${act.label}
           disabled=${!!act.disabled} aria-disabled=${act.muted ? 'true' : undefined} onClick=${act.onClick}>${act.icon || act.label}</button>`)}`
       : html`${desktopOther
-          ? html`<button data-ui-exempt type="button" class="phone-bar-back" aria-label=${`Back: ${desktopOther.label}`} onClick=${desktopOther.onClick}>‹</button>`
+          ? html`<button data-ui-exempt type="button" class="phone-bar-back" aria-label=${`Back: ${desktopOther.label}`} onClick=${desktopOther.onClick}><${Chevron} dir="left" size=${22} /></button>`
           : html`<img class="phone-bar-logo" src=${LOGO_SRC} alt="" />`}
         <h1 class="phone-bar-title">${added?.menu
           ? html`<button data-ui-exempt type="button" class="phone-bar-title-btn" aria-haspopup="dialog"

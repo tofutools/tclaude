@@ -7,6 +7,7 @@
 import { h } from 'preact';
 import htm from 'htm';
 import { Button } from './ui-components.js';
+import { Chevron } from './chevron-icon.js';
 
 const html = htm.bind(h);
 
@@ -35,7 +36,7 @@ export function DiffReviewBar({ controller, view }) {
         onClick=${() => controller.closeDiffReview()}>✕</button>
     </div>
     ${current && html`<div class=${`pdr-current is-${current.op} is-${current.state}${current.conflict ? ' is-conflict' : ''}`} data-diff-current=${current.id}>
-      <${Button} size="sm" icon=${true} class="pdr-step" aria-label="Previous change (K)" onClick=${() => controller.stepDiff(-1)}>‹<//>
+      <${Button} size="sm" icon=${true} class="pdr-step" aria-label="Previous change (K)" onClick=${() => controller.stepDiff(-1)}><${Chevron} dir="left" /><//>
       <span class="pdr-index">${diff.index + 1}/${counts.total}</span>
       <span class="pdr-op" aria-hidden="true">${OP_GLYPH[current.op] || '~'}</span>
       <span class="pdr-label">${current.kind === 'template' ? 'template settings' : current.label}</span>
@@ -49,7 +50,7 @@ export function DiffReviewBar({ controller, view }) {
         <${Button} size="sm" variant="primary" class="process-action" data-diff-action="accept" title="Accept (A)" onClick=${() => controller.decideDiff(current.id, 'accept')}>accept<//>`
       : html`<span class=${`pdr-verdict is-${current.state}`}>${current.state}</span>
         <${Button} size="sm" class="process-action" data-diff-action="undo" onClick=${() => controller.undoDiffDecision(current.id)}>undo<//>`}
-      <${Button} size="sm" icon=${true} class="pdr-step" aria-label="Next change (J)" onClick=${() => controller.stepDiff(1)}>›<//>
+      <${Button} size="sm" icon=${true} class="pdr-step" aria-label="Next change (J)" onClick=${() => controller.stepDiff(1)}><${Chevron} dir="right" /><//>
     </div>`}
   </div>`;
 }

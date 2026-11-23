@@ -472,6 +472,7 @@
 :root[data-layout="phone"] .phone-bar-page { gap: 4px; padding-left: 4px; }
 :root[data-layout="phone"] .phone-bar-back {
   flex: none; width: var(--phone-tap); height: var(--phone-tap);
+  display: inline-flex; align-items: center; justify-content: center; padding: 0;
   background: none; border: 0; color: var(--ui-text-strong); font-size: 28px; line-height: 1; cursor: pointer;
 }
 :root[data-layout="phone"] .phone-bar-act {

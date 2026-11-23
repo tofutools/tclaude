@@ -40,6 +40,7 @@ import { shellToast } from './shell-state.js';
 
 import { AgentTaskIndicator } from './taskboard-agent-indicator.js';
 import { onActivateKey } from './table-kit.js';
+import { Chevron } from './chevron-icon.js';
 const html = htm.bind(h);
 
 function ThemeText({ regular, wizard = regular }) {
@@ -529,9 +530,9 @@ export function SandboxBadge({ member, showDetails = false }) {
     data-action=${actionable ? action : null}
     ...${actionable ? memberAttrs(member) : {}}
     aria-label=${title} title=${title}>${badge.danger ? '⚠' : '🔒'}</span>${showDetails ? html`<button data-ui-exempt
-    type="button" class="sandbox-details-chevron" data-act="sandbox-details"
+    type="button" class="sandbox-details-chevron chevron-btn" data-act="sandbox-details"
     data-details=${sandboxRecordedDetails(member)} ...${memberAttrs(member)}
-    title="Recorded sandbox details" aria-label="Recorded sandbox details">›</button>` : null}</span>`;
+    title="Recorded sandbox details" aria-label="Recorded sandbox details"><${Chevron} dir="right" size=${12} /></button>` : null}</span>`;
 }
 
 // App-server observer provenance is retained in the session model for
