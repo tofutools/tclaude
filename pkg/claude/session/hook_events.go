@@ -37,8 +37,9 @@ type hookEvent struct {
 	// wasCompacting reports that this hook just cleared an attributed
 	// "working: compacting" phase.
 	wasCompacting bool
-	// trackedSubagentStop reports a SubagentStop for a sub-agent the ledger
-	// still knew after the TTL sweep (or a legacy stop with no agent_id).
+	// trackedSubagentStop reports a SubagentStop (or a SubagentHandback
+	// PostToolUse) for a sub-agent the ledger still knew after the TTL
+	// sweep, or a legacy stop with no agent_id.
 	trackedSubagentStop bool
 	// stopped is set by an arm whose event ends the main thread's turn. It
 	// drives the context nudge and the task-runner signal.
@@ -116,6 +117,11 @@ func routeSubagentHook(ev *hookEvent) hookOutcome {
 		state.Status = StatusMainAgentIdle
 		state.StatusDetail = state.backgroundActivityDetail()
 	}
+	if isSubagentHandback(input) {
+		// A sub-agent finishing by handback: the lifecycle settle in
+		// applyHookEvent handles it like a SubagentStop.
+		return hookContinue
+	}
 	return hookSaveAndReturn
 }
 
@@ -138,6 +144,12 @@ func routeSubagentHook(ev *hookEvent) hookOutcome {
 // last_hook is stamped, status is left untouched.
 func applyHookEvent(ev *hookEvent) hookOutcome {
 	state, input := ev.state, ev.input
+	if isSubagentHandback(input) {
+		// Not the main thread's tool: painting "working: SubagentHandback"
+		// would be the same pollution routeSubagentHook keeps out.
+		applySubagentStopHook(ev)
+		return hookContinue
+	}
 	switch input.HookEventName {
 	case "UserPromptSubmit":
 		state.Status = StatusWorking

@@ -379,3 +379,70 @@ func TestSubagentLedger_EarlySavesStoreTheSweptCount(t *testing.T) {
 		assert.Equal(t, 0, got.SubagentCount, "the stored count follows the ledger")
 	})
 }
+
+// Claude Code (2.1.330) can end a sub-agent with a SubagentHandback tool
+// call instead of a plain assistant message. Its PostToolUse carries the
+// sub-agent's agent_id and is the last hook naming it; no SubagentStop with
+// that id reliably follows. Seen as a sighting, it left a phantom "+1" (and
+// held every main-thread Stop at main_agent_idle) for a full TTL.
+func TestSubagentLedger_HandbackPostToolUseRemovesEntry(t *testing.T) {
+	apply := ledgerWorld(t, "handback-sess", "conv-handback", nil)
+
+	// A foreground sub-agent: the main thread's Agent call is in flight.
+	apply(HookCallbackInput{HookEventName: "PreToolUse", ToolName: "Agent"})
+	apply(HookCallbackInput{HookEventName: "SubagentStart", AgentID: "ag-hb", AgentType: "web-fetch"})
+	apply(HookCallbackInput{HookEventName: "PreToolUse", ToolName: "WebFetch", AgentID: "ag-hb", AgentType: "web-fetch"})
+	apply(HookCallbackInput{HookEventName: "PreToolUse", ToolName: "SubagentHandback", AgentID: "ag-hb", AgentType: "web-fetch"})
+	require.Equal(t, 1, loadState(t, "handback-sess").SubagentCount,
+		"the handback PreToolUse is still the sub-agent running")
+
+	apply(HookCallbackInput{HookEventName: "PostToolUse", ToolName: "SubagentHandback", AgentID: "ag-hb", AgentType: "web-fetch"})
+	got := loadState(t, "handback-sess")
+	assert.Equal(t, 0, got.SubagentCount, "the handback's PostToolUse ends the sub-agent")
+	assert.Empty(t, got.Subagents)
+	assert.Equal(t, StatusWorking, got.Status, "the main thread's own turn is still in flight")
+	assert.Equal(t, "Agent", got.StatusDetail, "the sub-agent's tool must not repaint the parent")
+
+	apply(HookCallbackInput{HookEventName: "PostToolUse", ToolName: "Agent"})
+	apply(HookCallbackInput{HookEventName: "Stop"})
+	got = loadState(t, "handback-sess")
+	assert.Equal(t, StatusIdle, got.Status, "the main Stop settles to idle, not main_agent_idle")
+	assert.Equal(t, 0, got.SubagentCount)
+
+	// A late SubagentStop for the same id, if one does arrive, finds it gone
+	// and must not move the settled status.
+	apply(HookCallbackInput{HookEventName: "SubagentStop", AgentID: "ag-hb", AgentType: "web-fetch"})
+	got = loadState(t, "handback-sess")
+	assert.Equal(t, StatusIdle, got.Status)
+	assert.Equal(t, 0, got.SubagentCount)
+}
+
+// A background sub-agent that hands back after the main thread's turn ended
+// settles the parent from main_agent_idle to idle, as its SubagentStop would.
+func TestSubagentLedger_BackgroundHandbackSettlesParent(t *testing.T) {
+	apply := ledgerWorld(t, "bg-handback-sess", "conv-bg-handback", nil)
+
+	apply(HookCallbackInput{HookEventName: "SubagentStart", AgentID: "ag-bg", AgentType: "Explore"})
+	apply(HookCallbackInput{HookEventName: "Stop"})
+	require.Equal(t, StatusMainAgentIdle, loadState(t, "bg-handback-sess").Status)
+
+	apply(HookCallbackInput{HookEventName: "PostToolUse", ToolName: "SubagentHandback", AgentID: "ag-bg", AgentType: "Explore"})
+	got := loadState(t, "bg-handback-sess")
+	assert.Equal(t, StatusIdle, got.Status, "the handback settles the parent")
+	assert.Empty(t, got.StatusDetail)
+	assert.Equal(t, 0, got.SubagentCount)
+}
+
+// A handback that failed does not end the sub-agent: it carries on, so the
+// failure is an ordinary sighting.
+func TestSubagentLedger_FailedHandbackKeepsEntry(t *testing.T) {
+	apply := ledgerWorld(t, "hb-fail-sess", "conv-hb-fail", nil)
+
+	apply(HookCallbackInput{HookEventName: "SubagentStart", AgentID: "ag-f", AgentType: "Explore"})
+	apply(HookCallbackInput{HookEventName: "Stop"})
+	apply(HookCallbackInput{HookEventName: "PostToolUseFailure", ToolName: "SubagentHandback", AgentID: "ag-f", AgentType: "Explore"})
+
+	got := loadState(t, "hb-fail-sess")
+	assert.Equal(t, 1, got.SubagentCount)
+	assert.Equal(t, StatusMainAgentIdle, got.Status)
+}
