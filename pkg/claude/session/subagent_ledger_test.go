@@ -533,3 +533,24 @@ func TestSubagentLedger_StalePromptFlagDoesNotClaimALaterPrompt(t *testing.T) {
 	assert.Equal(t, StatusAwaitingPermission, loadState(t, "stale-prompt-sess").Status,
 		"the main thread's own prompt is still pending")
 }
+
+// A sub-agent waiting on the human fires no hooks, so a prompt left open
+// past db.SubagentTTL must not sweep the entry that says who raised it:
+// once answered, that sub-agent's next hook still resolves the prompt.
+func TestSubagentLedger_LongPromptKeepsItsAttribution(t *testing.T) {
+	old := time.Now().Add(-2 * db.SubagentTTL)
+	apply := ledgerWorld(t, "long-prompt-sess", "conv-long-prompt", &SessionState{
+		Status:       StatusAwaitingPermission,
+		StatusDetail: "Bash",
+		Subagents: db.SubagentSet{
+			"ag-slow":  {Type: "Explore", Seen: old, Prompt: true},
+			"ag-other": {Type: "Plan", Seen: old},
+		},
+	})
+
+	apply(HookCallbackInput{HookEventName: "PostToolUse", ToolName: "Bash", AgentID: "ag-slow"})
+	got := loadState(t, "long-prompt-sess")
+	assert.Equal(t, StatusMainAgentIdle, got.Status, "the prompting sub-agent acting answers its prompt")
+	assert.Equal(t, 1, got.SubagentCount, "only the prompting entry outlives the TTL")
+	assert.Contains(t, got.Subagents, "ag-slow")
+}

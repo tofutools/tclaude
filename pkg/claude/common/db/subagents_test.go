@@ -36,13 +36,13 @@ func TestSubagentSet_SweepAndLiveCount(t *testing.T) {
 	assert.Equal(t, 2, set.LiveCount(now), "LiveCount filters without mutating")
 	assert.Len(t, set, 3, "LiveCount must not mutate the set")
 
-	set.Sweep(now)
+	set.Sweep(now, false)
 	assert.Len(t, set, 2)
 	assert.NotContains(t, set, "ag-phantom")
 
 	// nil-safety: both are read/mutate paths hooks hit on every event.
 	assert.Equal(t, 0, SubagentSet(nil).LiveCount(now))
-	SubagentSet(nil).Sweep(now) // must not panic
+	SubagentSet(nil).Sweep(now, false) // must not panic
 }
 
 func TestSubagentSet_AddSightRemove(t *testing.T) {
@@ -123,4 +123,21 @@ func TestSubagentSet_PromptFlag(t *testing.T) {
 	if set.HasPrompt("b") {
 		t.Fatal("ClearPrompts clears every flag")
 	}
+}
+
+func TestSubagentSet_SweepKeepsPromptingEntryOnlyWhileAwaiting(t *testing.T) {
+	now := time.Now()
+	old := now.Add(-2 * SubagentTTL)
+	fresh := func() SubagentSet {
+		return SubagentSet{"p": {Seen: old, Prompt: true}, "q": {Seen: old}}
+	}
+
+	set := fresh()
+	set.Sweep(now, true)
+	assert.Contains(t, set, "p", "the prompting entry survives while the parent is awaiting")
+	assert.NotContains(t, set, "q")
+
+	set = fresh()
+	set.Sweep(now, false)
+	assert.Empty(t, set, "outside a prompt the flag protects nothing")
 }

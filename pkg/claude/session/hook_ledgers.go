@@ -14,7 +14,7 @@ package session
 // any OTHER hook carrying agent_id proves that sub-agent is alive —
 // Sight() re-adds one whose SubagentStart was lost.
 func updateSubagentLedger(state *SessionState, input HookCallbackInput) (trackedSubagentStop bool) {
-	state.Subagents.Sweep(state.LastHook)
+	state.Subagents.Sweep(state.LastHook, isAwaitingStatus(state.Status))
 	// Whether this SubagentStop names a sub-agent the ledger still knows
 	// after the TTL sweep, captured before Remove erases that evidence.
 	// Claude Code 2.1.220 ends

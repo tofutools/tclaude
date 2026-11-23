@@ -95,8 +95,17 @@ func (set SubagentSet) Encode() string {
 
 // Sweep deletes entries not seen within SubagentTTL of now — the
 // self-healing for a lost SubagentStop. Safe on a nil set.
-func (set SubagentSet) Sweep(now time.Time) {
+//
+// While the parent is parked on a prompt (keepPrompting), the entry of the
+// sub-agent that raised it is kept however old: it is silent because it is
+// waiting on the human, not because its stop was lost, and dropping it would
+// lose the attribution that lets its next hook resolve the prompt. Outside a
+// prompt the flag is stale and protects nothing.
+func (set SubagentSet) Sweep(now time.Time, keepPrompting bool) {
 	for id, e := range set {
+		if keepPrompting && e.Prompt {
+			continue
+		}
 		if now.Sub(e.Seen) > SubagentTTL {
 			delete(set, id)
 		}
