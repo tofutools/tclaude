@@ -117,7 +117,6 @@ func routeSubagentHook(ev *hookEvent) hookOutcome {
 	// later SubagentStop settle a parent still waiting on the human
 	// to idle and fire the stop side effects (parkPrompt records
 	// who raised it). The resolved state must be
-	// main_agent_idle, NOT "working" via the tool arms — the resolved state must be
 	// main_agent_idle, NOT "working" via the tool arms: only
 	// main_agent_idle is a state the SubagentStop settle below
 	// can take back to idle, so painting "working" here wedged
