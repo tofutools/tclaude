@@ -155,7 +155,9 @@ type liveRowStatus struct {
 // terminal's drifted away from the display filter on the detail.
 //
 // codexInterrupted holds sub-agent IDs a Codex rollout shows were interrupted
-// without a SubagentStop hook; they are dropped from the hook ledger. background
+// without a SubagentStop hook; they are dropped from the hook ledger, as are
+// Claude Code sub-agents whose meta sidecar says they finished
+// (claudeFinishedSubagents). background
 // does the process-table reconcile, passed in so the dashboard can time it.
 func reconcileLiveRowStatus(
 	pick *db.SessionRow,
@@ -173,6 +175,9 @@ func reconcileLiveRowStatus(
 	// pre-ledger hook binary: surface its raw count rather than hiding real work.
 	if set := db.ParseSubagentSet(pick.SubagentsJSON); set != nil {
 		for id := range codexInterrupted {
+			delete(set, id)
+		}
+		for id := range claudeFinishedSubagents(pick, set) {
 			delete(set, id)
 		}
 		out.SubagentCount = set.LiveCount(time.Now())
