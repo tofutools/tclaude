@@ -1088,7 +1088,11 @@ test('native member rows preserve the legacy field, capability and selector matr
   // The window belongs to the context meter beside it, which measures the
   // EFFECTIVE window and so stays right under a pinned --auto-compact-window
   // where a name baked at launch could not.
-  assert.match(harnessLine.textContent, /·Opus 4\.8hi<1¢≈\$0\.42🔒›📱/);
+  assert.match(harnessLine.textContent, /·Opus 4\.8hi<1¢≈\$0\.42🔒📱/);
+  // The sandbox details button draws the shared chevron, labelled.
+  const details = harnessLine.querySelector('.sandbox-details-chevron');
+  assert.ok(details.querySelector('svg.chevron-ico'));
+  assert.equal(details.getAttribute('aria-label'), 'Recorded sandbox details');
   assert.equal(harnessLine.querySelector('.harness-effort').textContent, 'hi');
   assert.equal(harnessLine.querySelector('.harness-effort').title, 'high');
   assert.match(harnessLine.title, /WHAT-IF cost this session/);
