@@ -109,9 +109,14 @@ func routeSubagentHook(ev *hookEvent) hookOutcome {
 		// fall through to the status switch below
 		return hookContinue
 	}
-	// A sub-agent acting again while the parent shows awaiting_*
-	// is exactly the evidence that the prompt (parked on the
-	// parent) was answered — but the resolved state must be
+	// The sub-agent that raised the prompt parked on the parent
+	// acting again is exactly the evidence that the prompt was
+	// answered. Only that sub-agent: a hook from another sub-agent,
+	// or from one while the MAIN thread's own prompt is pending,
+	// proves nothing about it, and taking it as an answer let a
+	// later SubagentStop settle a parent still waiting on the human
+	// to idle and fire the stop side effects (parkPrompt records
+	// who raised it). The resolved state must be
 	// main_agent_idle, NOT "working" via the tool arms: only
 	// main_agent_idle is a state the SubagentStop settle below
 	// can take back to idle, so painting "working" here wedged
@@ -121,7 +126,8 @@ func routeSubagentHook(ev *hookEvent) hookOutcome {
 	// exists to fix). If the parent's own turn is genuinely in
 	// flight (a foreground Task), its next main-thread hook
 	// repaints "working"; both states style as busy either way.
-	if state.Status == StatusAwaitingPermission || state.Status == StatusAwaitingInput {
+	if isAwaitingStatus(state.Status) && state.Subagents.HasPrompt(input.AgentID) {
+		state.Subagents.ClearPrompt(input.AgentID)
 		state.Status = StatusMainAgentIdle
 		state.StatusDetail = state.backgroundActivityDetail()
 	}
@@ -188,6 +194,7 @@ func applyHookEvent(ev *hookEvent) hookOutcome {
 		return applySessionEndHook(ev)
 
 	case "PermissionRequest":
+		parkPrompt(ev)
 		state.Status = StatusAwaitingPermission
 		state.StatusDetail = input.ToolName
 		if state.StatusDetail == "" {
@@ -208,7 +215,7 @@ func applyHookEvent(ev *hookEvent) hookOutcome {
 		return applyPostCompactHook(ev)
 
 	case "Notification":
-		return applyNotificationHook(state, input)
+		return applyNotificationHook(ev)
 
 	default:
 		// Unknown hook event - log but don't update status
@@ -241,6 +248,25 @@ func recordToolUseWorkdir(input HookCallbackInput) {
 			slog.Warn("failed to record branch history", "error", err, "module", "hooks")
 		}
 	}
+}
+
+// isAwaitingStatus reports a parent parked on a prompt for the human.
+func isAwaitingStatus(status string) bool {
+	return status == StatusAwaitingPermission || status == StatusAwaitingInput
+}
+
+// parkPrompt records who raised the prompt this hook parks the parent on, so
+// routeSubagentHook takes only that sub-agent acting again as the prompt
+// being answered. A prompt raised from inside a sub-agent carries its
+// agent_id. A fresh prompt episode (the parent was not already awaiting)
+// forgets flags left from an earlier one first; within an episode a second
+// event (Claude Code pairs PermissionRequest with a permission_prompt
+// Notification) only adds to them.
+func parkPrompt(ev *hookEvent) {
+	if !isAwaitingStatus(ev.prevStatus) {
+		ev.state.Subagents.ClearPrompts()
+	}
+	ev.state.Subagents.MarkPrompt(ev.input.AgentID)
 }
 
 // applySubagentStopHook settles the main thread once its last sub-agent
@@ -508,13 +534,16 @@ func applyPostCompactHook(ev *hookEvent) hookOutcome {
 }
 
 // applyNotificationHook maps a harness notification onto the session status.
-func applyNotificationHook(state *SessionState, input HookCallbackInput) hookOutcome {
+func applyNotificationHook(ev *hookEvent) hookOutcome {
+	state, input := ev.state, ev.input
 	// Check notification type for legacy support
 	switch input.NotificationType {
 	case "permission_prompt":
+		parkPrompt(ev)
 		state.Status = StatusAwaitingPermission
 		state.StatusDetail = input.Message
 	case "elicitation_dialog":
+		parkPrompt(ev)
 		state.Status = StatusAwaitingInput
 		state.StatusDetail = input.Message
 	case "idle_prompt":
