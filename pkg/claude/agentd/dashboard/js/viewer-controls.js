@@ -329,9 +329,14 @@ const ICONS = {
   restore: html`<path d="M5 3h8v8M3 5h8v8H3z" />`,
   fullscreen: html`<path d="M2 6V2h4M10 2h4v4M14 10v4h-4M6 14H2v-4" />`,
   exitFullscreen: html`<path d="M6 2v4H2M14 6h-4V2M10 14v-4h4M2 10h4v4" />`,
+  // A viewer's previous / next attachment step: drawn, not the ‹ › glyphs,
+  // whose position in the button shifts with the font.
+  chevronLeft: html`<path d="M10 3L5 8l5 5" stroke-linecap="round" />`,
+  chevronRight: html`<path d="M6 3l5 5-5 5" stroke-linecap="round" />`,
 };
 
-function Icon({ name }) {
+// Icon is a viewer header button's 14px line icon, centred in its frame.
+export function Icon({ name }) {
   return html`<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"
     fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round">${ICONS[name]}</svg>`;
 }

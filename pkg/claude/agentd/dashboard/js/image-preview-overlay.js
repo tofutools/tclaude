@@ -6,7 +6,7 @@ import { useDialogFocus } from './dialog-focus.js';
 import { isTopmostOverlay } from './overlay-stack.js';
 import { DialogResizer, useDialogResize } from './dialog-resize.js';
 import {
-  ViewerDisplayButtons, ZOOM_STEP, clamp, useTouchZoom, useViewerDisplay, useZoomGestures,
+  Icon, ViewerDisplayButtons, ZOOM_STEP, clamp, useTouchZoom, useViewerDisplay, useZoomGestures,
 } from './viewer-controls.js';
 
 import { VideoPoster, PlayerState, formatDuration } from './video-preview-content.js';
@@ -326,11 +326,11 @@ export function MediaViewer({ source, attachment: launcherAttachment, siblings =
             ${items.length > 1 && html`<div role="group" class="attachment-preview-nav" aria-label="Message attachments">
               <button data-ui-exempt type="button" class="viewer-display-button attachment-preview-step"
                 onClick=${() => navigate(-1)} aria-label="Previous attachment"
-                title=${video ? 'Previous attachment (Shift+Left)' : 'Previous attachment (Left or Shift+Left)'}>‹</button>
+                title=${video ? 'Previous attachment (Shift+Left)' : 'Previous attachment (Left or Shift+Left)'}><${Icon} name="chevronLeft" /></button>
               <span class="attachment-preview-position" role="status" aria-live="polite" aria-atomic="true">${index + 1} of ${items.length}</span>
               <button data-ui-exempt type="button" class="viewer-display-button attachment-preview-step"
                 onClick=${() => navigate(1)} aria-label="Next attachment"
-                title=${video ? 'Next attachment (Shift+Right)' : 'Next attachment (Right or Shift+Right)'}>›</button>
+                title=${video ? 'Next attachment (Shift+Right)' : 'Next attachment (Right or Shift+Right)'}><${Icon} name="chevronRight" /></button>
             </div>`}
             ${loadState !== 'gone' && href && html`<a class="image-preview-download" href=${href} download=${filename}
               title=${downloadTitle}>Download</a>`}
