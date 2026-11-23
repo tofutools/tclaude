@@ -48,6 +48,11 @@ for (const startVideo of [false, true]) {
     assert.equal(dialog.getAttribute('data-display'), 'maximized');
     await key('ArrowRight');
     assert.equal(name(), 'first.png', 'navigation wraps');
+    for (const label of ['Previous attachment', 'Next attachment']) {
+      const step = dialog.querySelector(`[aria-label="${label}"]`);
+      assert.ok(step.querySelector('svg'), `${label} draws its chevron`);
+      assert.equal(step.textContent.trim(), '', `${label} carries no text glyph`);
+    }
     await harness.act(() => dialog.querySelector('[aria-label="Previous attachment"]').click());
     await settle(harness);
     assert.equal(name(), 'last.png');
