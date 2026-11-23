@@ -92,3 +92,35 @@ func TestSubagentSet_AddSightRemove(t *testing.T) {
 	assert.Empty(t, set)
 	set.Remove("") // and is nil/empty-safe
 }
+
+func TestSubagentSet_PromptFlag(t *testing.T) {
+	now := time.Now()
+	set := SubagentSet{}.Add("a", "Explore", now).Add("b", "", now)
+
+	set.MarkPrompt("")
+	set.MarkPrompt("unknown")
+	set.MarkPrompt("a")
+	if !set.HasPrompt("a") || set.HasPrompt("b") || set.HasPrompt("") || set.HasPrompt("unknown") {
+		t.Fatalf("only a should carry the prompt flag: %+v", set)
+	}
+
+	set = set.Sight("a", "", now.Add(time.Second))
+	if !set.HasPrompt("a") {
+		t.Fatal("Sight must keep the prompt flag")
+	}
+
+	round := ParseSubagentSet(set.Encode())
+	if !round.HasPrompt("a") {
+		t.Fatal("the prompt flag must survive storage")
+	}
+
+	set.MarkPrompt("b")
+	set.ClearPrompt("a")
+	if set.HasPrompt("a") || !set.HasPrompt("b") {
+		t.Fatalf("ClearPrompt clears only its id: %+v", set)
+	}
+	set.ClearPrompts()
+	if set.HasPrompt("b") {
+		t.Fatal("ClearPrompts clears every flag")
+	}
+}

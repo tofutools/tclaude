@@ -47,6 +47,12 @@ type SubagentSet map[string]SubagentSeen
 type SubagentSeen struct {
 	Type string    `json:"type,omitempty"`
 	Seen time.Time `json:"seen"`
+	// Prompt reports that this sub-agent raised the permission or input
+	// prompt the parent is currently parked on. Only that sub-agent acting
+	// again is evidence the prompt was answered; another sub-agent's hook
+	// says nothing about a prompt it did not raise, nor about one the main
+	// thread raised.
+	Prompt bool `json:"prompt,omitempty"`
 }
 
 // SubagentTTL is how long a ledger entry survives without any hook
@@ -155,8 +161,43 @@ func (set SubagentSet) Sight(id, agentType string, now time.Time) SubagentSet {
 		// type recorded at SubagentStart instead of blanking it.
 		agentType = prev.Type
 	}
-	set[id] = SubagentSeen{Type: agentType, Seen: now}
+	set[id] = SubagentSeen{Type: agentType, Seen: now, Prompt: set[id].Prompt}
 	return set
+}
+
+// MarkPrompt records that the sub-agent with this id raised the prompt the
+// parent is parked on. An empty or unknown id is a no-op.
+func (set SubagentSet) MarkPrompt(id string) {
+	if e, ok := set[id]; ok && id != "" {
+		e.Prompt = true
+		set[id] = e
+	}
+}
+
+// HasPrompt reports whether the sub-agent with this id raised the prompt the
+// parent is parked on.
+func (set SubagentSet) HasPrompt(id string) bool {
+	return id != "" && set[id].Prompt
+}
+
+// ClearPrompt forgets that the sub-agent with this id raised a prompt.
+func (set SubagentSet) ClearPrompt(id string) {
+	if e, ok := set[id]; ok && e.Prompt {
+		e.Prompt = false
+		set[id] = e
+	}
+}
+
+// ClearPrompts forgets every sub-agent's prompt, for a fresh prompt episode:
+// a flag left from an earlier prompt that the main thread moved past must
+// not claim a later one.
+func (set SubagentSet) ClearPrompts() {
+	for id, e := range set {
+		if e.Prompt {
+			e.Prompt = false
+			set[id] = e
+		}
+	}
 }
 
 // Has reports whether the ledger currently believes the sub-agent with

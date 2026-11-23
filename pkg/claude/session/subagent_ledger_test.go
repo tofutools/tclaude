@@ -462,3 +462,74 @@ func TestSubagentLedger_HandbackLeavesAwaitingAlone(t *testing.T) {
 	assert.Equal(t, StatusAwaitingPermission, got.Status, "the parent is still waiting on the human")
 	assert.Equal(t, 0, got.SubagentCount)
 }
+
+// A background sub-agent acting while the MAIN thread's own permission
+// prompt is pending proves nothing about that prompt. Taking it as the
+// prompt being answered moved the parent to main_agent_idle, and the
+// sub-agent's later stop then settled a parent still waiting on the human
+// to idle, firing the stop side effects.
+func TestSubagentLedger_SubagentHookLeavesMainThreadPromptAlone(t *testing.T) {
+	for _, end := range []HookCallbackInput{
+		{HookEventName: "SubagentStop", AgentID: "ag-bg", AgentType: "Explore"},
+		{HookEventName: "PostToolUse", ToolName: "SubagentHandback", AgentID: "ag-bg", AgentType: "Explore"},
+	} {
+		t.Run(end.HookEventName, func(t *testing.T) {
+			apply := ledgerWorld(t, "main-prompt-sess", "conv-main-prompt", nil)
+
+			apply(HookCallbackInput{HookEventName: "SubagentStart", AgentID: "ag-bg", AgentType: "Explore"})
+			apply(HookCallbackInput{HookEventName: "PermissionRequest", ToolName: "Bash"})
+			apply(HookCallbackInput{HookEventName: "Notification", NotificationType: "permission_prompt", Message: "Bash"})
+			require.Equal(t, StatusAwaitingPermission, loadState(t, "main-prompt-sess").Status)
+
+			apply(HookCallbackInput{HookEventName: "PreToolUse", ToolName: "SubagentHandback", AgentID: "ag-bg", AgentType: "Explore"})
+			assert.Equal(t, StatusAwaitingPermission, loadState(t, "main-prompt-sess").Status,
+				"another agent acting does not answer the main thread's prompt")
+
+			apply(end)
+			got := loadState(t, "main-prompt-sess")
+			assert.Equal(t, StatusAwaitingPermission, got.Status, "the parent is still waiting on the human")
+			assert.Equal(t, 0, got.SubagentCount)
+		})
+	}
+}
+
+// The prompt a sub-agent raised is answered by that sub-agent acting again,
+// not by a sibling sub-agent acting.
+func TestSubagentLedger_OnlyThePromptingSubagentAnswersIt(t *testing.T) {
+	apply := ledgerWorld(t, "sibling-sess", "conv-sibling", nil)
+
+	apply(HookCallbackInput{HookEventName: "SubagentStart", AgentID: "ag-a"})
+	apply(HookCallbackInput{HookEventName: "SubagentStart", AgentID: "ag-b"})
+	apply(HookCallbackInput{HookEventName: "Stop"})
+	apply(HookCallbackInput{HookEventName: "PermissionRequest", ToolName: "Bash", AgentID: "ag-a"})
+	// Claude Code pairs the request with a Notification; one without an
+	// agent_id must not erase who raised the prompt.
+	apply(HookCallbackInput{HookEventName: "Notification", NotificationType: "permission_prompt", Message: "Bash"})
+	require.Equal(t, StatusAwaitingPermission, loadState(t, "sibling-sess").Status)
+
+	apply(HookCallbackInput{HookEventName: "PostToolUse", ToolName: "Read", AgentID: "ag-b"})
+	require.Equal(t, StatusAwaitingPermission, loadState(t, "sibling-sess").Status,
+		"a sibling acting does not answer ag-a's prompt")
+
+	apply(HookCallbackInput{HookEventName: "PostToolUse", ToolName: "Bash", AgentID: "ag-a"})
+	got := loadState(t, "sibling-sess")
+	assert.Equal(t, StatusMainAgentIdle, got.Status, "ag-a acting again answers its own prompt")
+	assert.False(t, got.Subagents.HasPrompt("ag-a"), "the answered prompt is forgotten")
+}
+
+// A prompt flag left from an earlier episode the main thread moved past must
+// not claim a later prompt the main thread raised itself.
+func TestSubagentLedger_StalePromptFlagDoesNotClaimALaterPrompt(t *testing.T) {
+	apply := ledgerWorld(t, "stale-prompt-sess", "conv-stale-prompt", nil)
+
+	apply(HookCallbackInput{HookEventName: "SubagentStart", AgentID: "ag-s"})
+	apply(HookCallbackInput{HookEventName: "PermissionRequest", ToolName: "Bash", AgentID: "ag-s"})
+	// Answered, but the main thread's hook lands before ag-s acts again.
+	apply(HookCallbackInput{HookEventName: "PreToolUse", ToolName: "Read"})
+	apply(HookCallbackInput{HookEventName: "PermissionRequest", ToolName: "Write"})
+	require.Equal(t, StatusAwaitingPermission, loadState(t, "stale-prompt-sess").Status)
+
+	apply(HookCallbackInput{HookEventName: "PostToolUse", ToolName: "Bash", AgentID: "ag-s"})
+	assert.Equal(t, StatusAwaitingPermission, loadState(t, "stale-prompt-sess").Status,
+		"the main thread's own prompt is still pending")
+}
