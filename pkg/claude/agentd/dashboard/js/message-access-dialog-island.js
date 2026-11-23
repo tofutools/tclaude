@@ -26,6 +26,7 @@ import { PRChain } from './pr-chain.js';
 import { idTooltip, shortAgentId } from './helpers.js';
 import { wizWord } from './slop.js';
 import { modClickText, shortcutText } from './keybindings.js';
+import { Chevron } from './chevron-icon.js';
 
 const html = htm.bind(h);
 
@@ -667,8 +668,8 @@ function ScopeChipSheet({ dim, values, catalogue, remove }) {
       ${scopeValueLabel(value, catalogue).kind ? html`<span class="ui-hint">${value}</span>` : null}</div>`)
     : html`<div class="ui-hint">No selected value matches.</div>`}
     ${pages > 1 ? html`<div class="perm-scope-sheet-pager ui-hint">${at * SCOPE_SHEET_PAGE + 1}–${at * SCOPE_SHEET_PAGE + rows.length} of ${matched.length}
-      <button data-ui-exempt type="button" aria-label="Previous page" disabled=${at === 0} onClick=${() => setPage(at - 1)}>‹</button>
-      <button data-ui-exempt type="button" aria-label="Next page" disabled=${at >= pages - 1} onClick=${() => setPage(at + 1)}>›</button></div>` : null}
+      <button data-ui-exempt type="button" class="chevron-btn" aria-label="Previous page" disabled=${at === 0} onClick=${() => setPage(at - 1)}><${Chevron} dir="left" /></button>
+      <button data-ui-exempt type="button" class="chevron-btn" aria-label="Next page" disabled=${at >= pages - 1} onClick=${() => setPage(at + 1)}><${Chevron} dir="right" /></button></div>` : null}
   </div>`;
 }
 

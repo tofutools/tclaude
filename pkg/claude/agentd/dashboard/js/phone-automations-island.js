@@ -36,6 +36,7 @@ import { RunPage, RunsList, gateItems, runRequest } from './phone-process-runs.j
 import { DesktopOnlyNote, desktopSite } from './phone-desktop-only.js';
 import { Button, Input, Switch } from './ui-components.js';
 import { ChipRow, Empty, ErrorNote, errorText, Section } from './phone-ui.js';
+import { Chevron } from './chevron-icon.js';
 
 const html = htm.bind(h);
 
@@ -403,9 +404,9 @@ export function PhoneJobsApp({ state, actions, activeTab = dashboardState.active
     </div>`}
     ${body}
     ${kind !== 'trigger' && total > size && html`<div class="phone-auto-pager">
-      <${Button} size="sm" disabled=${offset === 0} onClick=${() => turn('prev')}>‹ Previous<//>
+      <${Button} size="sm" disabled=${offset === 0} onClick=${() => turn('prev')}><${Chevron} dir="left" />Previous<//>
       <span>${offset + 1}–${Math.min(total, offset + size)} of ${total}</span>
-      <${Button} size="sm" disabled=${offset + size >= total} onClick=${() => turn('next')}>Next ›<//>
+      <${Button} size="sm" disabled=${offset + size >= total} onClick=${() => turn('next')}>Next<${Chevron} dir="right" /><//>
     </div>`}
     <${DesktopOnlyNote} what="Creating and editing automations is" />
   </div>`;

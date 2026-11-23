@@ -15,6 +15,7 @@ import { shellToast } from './shell-state.js';
 import { watchPopover } from './hover-popover.js';
 import { Button, Input } from './ui-components.js';
 import { TableHead } from './table-kit.js';
+import { Chevron } from './chevron-icon.js';
 
 const html = htm.bind(h);
 
@@ -125,12 +126,12 @@ function Controls({ state, actions, current }) {
       <span id="costs-month-nav" title="Browse a month — click the month, then ‹ / › to step">
         <${Button} class="costs-month-step" id="costs-month-prev" title="Older month" aria-label="Older month"
           disabled=${current.monthOffset >= current.oldestMonthOffset}
-          onClick=${() => loadAfter(() => state.activateMonth(monthView ? current.monthOffset + 1 : current.monthOffset))}>‹<//>
+          onClick=${() => loadAfter(() => state.activateMonth(monthView ? current.monthOffset + 1 : current.monthOffset))}><${Chevron} dir="left" /><//>
         <${Button} pressed=${monthView} id="costs-month-cur" data-span="calmonth" title="View this month"
           onClick=${() => loadAfter(() => state.activateMonth(current.monthOffset))}>${current.monthLabel}<//>
         <${Button} class="costs-month-step" id="costs-month-next" title="Newer month" aria-label="Newer month"
           disabled=${current.monthOffset <= 0}
-          onClick=${() => loadAfter(() => state.activateMonth(monthView ? current.monthOffset - 1 : current.monthOffset))}>›<//>
+          onClick=${() => loadAfter(() => state.activateMonth(monthView ? current.monthOffset - 1 : current.monthOffset))}><${Chevron} dir="right" /><//>
       </span>
       <label class=${`filter-toggle${current.span !== 'month' ? ' disabled' : ''}`} id="costs-fill-weekdays-label"
         title="Fill the empty weekdays before your first run this month with the per-weekday average.">

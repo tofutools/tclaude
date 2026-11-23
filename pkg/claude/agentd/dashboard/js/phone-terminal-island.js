@@ -38,6 +38,7 @@ import { shellToast } from './shell-state.js';
 import { openTypeSheet } from './phone-terminal-type.js';
 import { isAgentTerminalPath } from './terminal-interactions.js';
 import { NavToggle, terminalDock } from './phone-nav-toggle.js';
+import { Chevron } from './chevron-icon.js';
 
 const html = htm.bind(h);
 
@@ -455,7 +456,7 @@ export function PhoneTerminal({ seed, deps, onClose }) {
   const style = viewport ? `height:${viewport.height}px;top:${viewport.top}px` : undefined;
   return html`<div ref=${rootRef} class="phone-term" role="dialog" aria-modal="true" aria-label=${dirShell ? dirShell.label : label ? `Terminal: ${label}` : 'Terminal'} style=${style}>
     <header class="phone-term-bar">
-      <button data-ui-exempt type="button" class="phone-bar-back" aria-label="Back" onClick=${onClose}>‹</button>
+      <button data-ui-exempt type="button" class="phone-bar-back" aria-label="Back" onClick=${onClose}><${Chevron} dir="left" size=${22} /></button>
       ${dirShell
         ? html`<h1 class="phone-bar-title phone-term-dir-title"><span>${dirShell.label}</span>${dirShell.sub && html`<small><bdi>${dirShell.sub}</bdi></small>`}</h1>`
         : html`<${Title} label=${label} mark=${seed.agent ? deps.groupMark?.(seed.agent, seed.group || row?.group || '') || null : null} />`}

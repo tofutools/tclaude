@@ -6,12 +6,13 @@ import { useDialogFocus } from './dialog-focus.js';
 import { isTopmostOverlay } from './overlay-stack.js';
 import { DialogResizer, useDialogResize } from './dialog-resize.js';
 import {
-  Icon, ViewerDisplayButtons, ZOOM_STEP, clamp, useTouchZoom, useViewerDisplay, useZoomGestures,
+  ViewerDisplayButtons, ZOOM_STEP, clamp, useTouchZoom, useViewerDisplay, useZoomGestures,
 } from './viewer-controls.js';
 
 import { VideoPoster, PlayerState, formatDuration } from './video-preview-content.js';
 import { attachmentNavigationStep, previewAttachments } from './attachment-navigation.js';
 import { attachmentSize } from './human-attachments.js';
+import { Chevron } from './chevron-icon.js';
 import { messageFileSource } from './attachment-source.js';
 
 const html = htm.bind(h);
@@ -326,11 +327,11 @@ export function MediaViewer({ source, attachment: launcherAttachment, siblings =
             ${items.length > 1 && html`<div role="group" class="attachment-preview-nav" aria-label="Message attachments">
               <button data-ui-exempt type="button" class="viewer-display-button attachment-preview-step"
                 onClick=${() => navigate(-1)} aria-label="Previous attachment"
-                title=${video ? 'Previous attachment (Shift+Left)' : 'Previous attachment (Left or Shift+Left)'}><${Icon} name="chevronLeft" /></button>
+                title=${video ? 'Previous attachment (Shift+Left)' : 'Previous attachment (Left or Shift+Left)'}><${Chevron} dir="left" /></button>
               <span class="attachment-preview-position" role="status" aria-live="polite" aria-atomic="true">${index + 1} of ${items.length}</span>
               <button data-ui-exempt type="button" class="viewer-display-button attachment-preview-step"
                 onClick=${() => navigate(1)} aria-label="Next attachment"
-                title=${video ? 'Next attachment (Shift+Right)' : 'Next attachment (Right or Shift+Right)'}><${Icon} name="chevronRight" /></button>
+                title=${video ? 'Next attachment (Shift+Right)' : 'Next attachment (Right or Shift+Right)'}><${Chevron} dir="right" /></button>
             </div>`}
             ${loadState !== 'gone' && href && html`<a class="image-preview-download" href=${href} download=${filename}
               title=${downloadTitle}>Download</a>`}

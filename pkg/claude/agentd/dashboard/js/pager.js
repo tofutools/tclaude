@@ -21,14 +21,15 @@
 import { Fragment, h } from 'preact';
 import htm from 'htm';
 import { Button, Select } from './ui-components.js';
+import { Chevron } from './chevron-icon.js';
 
 const html = htm.bind(h);
 
 const NAV = [
-  ['first', '«', 'First page'],
-  ['prev', '‹', 'Previous page'],
-  ['next', '›', 'Next page'],
-  ['last', '»', 'Last page'],
+  ['first', html`<${Chevron} dir="left" double=${true} />`, 'First page'],
+  ['prev', html`<${Chevron} dir="left" />`, 'Previous page'],
+  ['next', html`<${Chevron} dir="right" />`, 'Next page'],
+  ['last', html`<${Chevron} dir="right" double=${true} />`, 'Last page'],
 ];
 
 // pagerTarget is the page a pager action moves to.
@@ -64,7 +65,7 @@ export function Pager({
     const title = titles[action] || fallback;
     return html`<${Button} key=${action} size="sm" icon=${true} class=${range ? `${prefix}-btn` : undefined}
       data-pager=${delegated ? action : undefined} ...${data} disabled=${disabled || atBoundary}
-      title=${title} aria-label=${range ? title : undefined} onClick=${delegated ? undefined : () => act(action)}>${glyph}<//>`;
+      title=${title} aria-label=${title} onClick=${delegated ? undefined : () => act(action)}>${glyph}<//>`;
   };
   const position = range
     ? html`<span class=${`${prefix}-count`}>${total ? offset + 1 : 0}–${Math.min(offset + limit, total)} of ${total}</span>`
