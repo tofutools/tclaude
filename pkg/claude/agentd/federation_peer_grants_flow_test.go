@@ -248,6 +248,45 @@ func TestFederation_AutoSpawnSlowLaunchFailure(t *testing.T) {
 	require.Empty(t, f.ListGroupMembers("team"))
 }
 
+// Scenario: the same OpenCode launch failure, but it comes back before the
+// async-response grace runs out, so the spawn answers with it inline. That is
+// what TestFederation_AutoSpawnSlowLaunchFailure hit on a slow runner: the
+// launch reached the runtime only after the test released it, failed at once,
+// and the inline path left the request launching and unconfirmed, with no
+// notice. A definite failure must return the request to pending and file the
+// same notice whichever way it is reported. A long grace keeps it inline.
+func TestFederation_AutoSpawnLaunchFailureWithinGrace(t *testing.T) {
+	fh := newFedHarness(t)
+	f, p := fh.f, fh.peer
+	f.HaveGroup("team")
+	t.Cleanup(agentd.SetOpenCodeAsyncSpawnResponseGraceForTest(30 * time.Second))
+	release := make(chan struct{})
+	close(release)
+	blockedOpenCodeRuntime(t, release, errors.New("runtime startup failed"))
+	rec := fedHuman(t, f, http.MethodPost, "/v1/federation/grants", map[string]any{"peer": "bob", "slug": agentd.PermGroupsMembersSpawn, "scope": "group=team", "spawn_policy": map[string]any{"harness": "opencode", "max_live": 1}})
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	env := p.envelope(proto.KindSpawnReq, proto.Endpoint{}, proto.SpawnRequestPayload{Group: "team", Name: "fast-failure", Brief: "review changes"})
+	p.send(env)
+	require.Equal(t, proto.AckAccepted, fedAckFor(t, p, env.ID).Status)
+	fedEventually(t, "inline launch failure notice", func() bool {
+		for _, m := range fedInbox(t, f) {
+			if m.Subject == "remote spawn request #1 needs approval" {
+				return true
+			}
+		}
+		return false
+	})
+	rows, err := db.ListFederationSpawnRequests(100)
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	require.Equal(t, db.FedSpawnPending, rows[0].Status)
+	require.Contains(t, rows[0].Reason, "runtime startup failed")
+	workers, err := db.ListFederationAutoWorkers(p.id.ID())
+	require.NoError(t, err)
+	require.Empty(t, workers)
+	require.Empty(t, f.ListGroupMembers("team"))
+}
+
 func TestFederation_AutoSpawnSlowLaunchOccupiesCap(t *testing.T) {
 	fh := newFedHarness(t)
 	f, p := fh.f, fh.peer
