@@ -30,6 +30,9 @@ const offlineSwitch = (sheet) => sheet.getByRole('switch', { name: /^Offline age
 const offlinePref = (page) => page.evaluate(() => fetch('/api/dashboard/prefs', { credentials: 'same-origin' })
   .then((r) => r.json()).then((prefs) => prefs['tclaude.dash.phone.agents.offline'] ?? null));
 
+// webshopFold is webshop's header button, which folds the group.
+const webshopFold = (page) => page.getByRole('button', { name: /^webshop, .*\. (Fold|Unfold)$/ });
+
 // hideIt folds webshop and turns Show offline off in the Agents view on
 // screen, so perf-audit's row is nowhere to be seen.
 async function hideIt(page) {
@@ -37,7 +40,9 @@ async function hideIt(page) {
     if (await offlineSwitch(sheet).isChecked()) await offlineSwitch(sheet).click();
     await expect(offlineSwitch(sheet)).not.toBeChecked();
   });
-  const caret = page.getByRole('button', { name: /^(Fold|Unfold) webshop$/ });
+  // The group header's name button folds it (the caret beside it is
+  // aria-hidden): "webshop, 7 of 8 online: …. Fold".
+  const caret = webshopFold(page);
   if (await caret.getAttribute('aria-expanded') === 'true') await caret.click();
   await expect(caret).toHaveAttribute('aria-expanded', 'false');
   await expect(page.locator('.phone-agent-title', { hasText: /^perf-audit$/ })).toHaveCount(0);
@@ -61,7 +66,7 @@ async function expectFound(page) {
   await expect(row).toHaveClass(/phone-agent-found/);
   await expect(row).toBeInViewport();
   await expect.poll(() => offlinePref(page), 'Show offline is on again').toBe(null);
-  await expect(page.getByRole('button', { name: /^Fold webshop$/ })).toHaveAttribute('aria-expanded', 'true');
+  await expect(webshopFold(page)).toHaveAttribute('aria-expanded', 'true');
   // The glow goes after a while (FOUND_MS).
   await expect(row).not.toHaveClass(/phone-agent-found/, { timeout: 8_000 });
   return row;
