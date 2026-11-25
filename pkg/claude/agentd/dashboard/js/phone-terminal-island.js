@@ -103,6 +103,19 @@ const AGENT_TERMINAL = /^window:([A-Za-z0-9_-]{1,128})$/;
 // An open terminal is part of the location (the terminal overlay param,
 // overlay-routes.js): opening one is a history step, so the phone's Back
 // closes it, and closing it steps back.
+// phoneTermFloat is the Steward's terminal floating over the page (a card
+// above the nav, the page usable around it) instead of docked full screen:
+// an experiment (tk_6f591b11). Only the Steward's terminal floats, and only
+// while the phone keyboard is down; it lasts for this page load.
+export const phoneTermFloat = signal(false);
+
+// FLOAT_ICON and DOCK_ICON are the bar's float and full-screen buttons:
+// a small window over a big one, and the four corners out.
+const FLOAT_ICON = html`<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8"
+  stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.5" y="4.5" width="17" height="15" rx="2.5" /><rect x="11" y="11.5" width="7" height="5.5" rx="1.2" fill="currentColor" stroke="none" /></svg>`;
+const DOCK_ICON = html`<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8"
+  stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" /></svg>`;
+
 export function openPhoneTerminal(seed) {
   const key = keyOf(seed);
   const shown = keyOf(phoneTerminal.value);
@@ -384,12 +397,18 @@ export function PhoneTerminal({ seed, deps, onClose }) {
     return () => { live = false; };
   }, []);
 
-  // The page behind does not scroll under the terminal.
+  // The Steward's terminal may float over the page (phoneTermFloat). The
+  // keyboard brings it back full screen: a card above the nav would sit
+  // under it.
+  const steward = !!seed.agent && !!deps.isSteward?.(seed.agent);
+  const floating = steward && phoneTermFloat.value && !keyboard;
+  // The page behind does not scroll under a docked terminal; under a
+  // floating one it does, and keeps room at its end for it.
   useEffect(() => {
     const root = documentRef.documentElement;
-    root.dataset.phoneTerminal = 'open';
+    root.dataset.phoneTerminal = floating ? 'float' : 'open';
     return () => { delete root.dataset.phoneTerminal; };
-  }, []);
+  }, [floating]);
 
   // The phone shell shows the bottom nav under the terminal (or not, by the
   // ▾/▴ toggle's choice), and a view picked there closes the terminal.
@@ -399,12 +418,13 @@ export function PhoneTerminal({ seed, deps, onClose }) {
   // the nav stays away while it is open, as over the keyboard.
   const covered = !!select;
   useEffect(() => {
-    terminalDock.value = { keyboard: keyboard || covered, close: () => closeRef.current?.() };
-  }, [keyboard, covered]);
+    terminalDock.value = { keyboard: keyboard || covered, float: floating && !covered, close: () => closeRef.current?.() };
+  }, [keyboard, covered, floating]);
   useEffect(() => () => { terminalDock.value = null; }, []);
 
   const toggleKeyboard = () => {
     const next = !keyboard;
+    if (next) phoneTermFloat.value = false;
     setKeyboard(next);
     widget.current?.setSoftKeyboard(next);
   };
@@ -453,8 +473,8 @@ export function PhoneTerminal({ seed, deps, onClose }) {
   const name = label || 'the agent';
   const dirShell = dirShellTitle(seed, row);
 
-  const style = viewport ? `height:${viewport.height}px;top:${viewport.top}px` : undefined;
-  return html`<div ref=${rootRef} class="phone-term" role="dialog" aria-modal="true" aria-label=${dirShell ? dirShell.label : label ? `Terminal: ${label}` : 'Terminal'} style=${style}>
+  const style = viewport && !floating ? `height:${viewport.height}px;top:${viewport.top}px` : undefined;
+  return html`<div ref=${rootRef} class=${`phone-term${floating ? ' phone-term-float' : ''}`} role="dialog" aria-modal=${floating ? 'false' : 'true'} aria-label=${dirShell ? dirShell.label : label ? `Terminal: ${label}` : 'Terminal'} style=${style}>
     <header class="phone-term-bar">
       <button data-ui-exempt type="button" class="phone-bar-back" aria-label="Back" onClick=${onClose}><${Chevron} dir="left" size=${22} /></button>
       ${dirShell
@@ -464,6 +484,9 @@ export function PhoneTerminal({ seed, deps, onClose }) {
         ? html`<${StatePill} state=${row.variant} title=${live ? undefined : `Terminal: ${status}`}>${row.waking ? 'waking' : VARIANT_LABELS[row.variant]}<//>`
         : html`<span class=${`phone-bar-live ${live ? 'connected' : status === 'disconnected' ? 'disconnected' : ''}`} role="status"
           aria-label=${live ? 'Connected' : `Terminal: ${status}`} title=${status}></span>`}
+      ${steward && html`<button data-ui-exempt type="button" class="phone-term-float-btn" aria-pressed=${floating ? 'true' : 'false'}
+        aria-label=${floating ? 'Full screen' : 'Float over the page'} title=${floating ? 'Full screen' : 'Float over the page'}
+        onClick=${() => { phoneTermFloat.value = !floating; }}>${floating ? DOCK_ICON : FLOAT_ICON}</button>`}
       ${row && deps.agentMenu && html`<${RowMore} label=${`${row.name}: more`} onClick=${() => deps.agentMenu(row, { selectText: () => openSelect() })} />`}
     </header>
     <div class="phone-term-body">

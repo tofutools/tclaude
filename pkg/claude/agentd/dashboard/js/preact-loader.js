@@ -254,13 +254,14 @@ const phoneTerminalDescriptor = createIslandDescriptor({
     const sheetModule = import('./phone-sheet.js');
     const groupOrderModule = import('./group-order.js');
     const navHistoryModule = import('./nav-history.js');
+    const companionModelModule = import('./companion-model.js');
     const [
       { mountPhoneTerminalIsland, closePhoneTerminal }, { setPhoneTerminals }, { mountTerminalWidget }, { loadXtermRuntime },
       { terminalAttachWidgetOptions }, { dashboardState }, { agentGroups, findRow }, { AgentMenu },
-      { phoneAgentActions }, { openPhoneSheet }, { sortGroupsByPref }, { navigateToPath },
+      { phoneAgentActions }, { openPhoneSheet }, { sortGroupsByPref }, { navigateToPath }, { companionAgents, stewardAgent },
     ] = await Promise.all([
       islandModule, terminalsTabModule, terminalsCoreModule, xtermLoaderModule, attachConfigModule, snapshotStoreModule,
-      agentsModelModule, agentsIslandModule, actionsModule, sheetModule, groupOrderModule, navHistoryModule,
+      agentsModelModule, agentsIslandModule, actionsModule, sheetModule, groupOrderModule, navHistoryModule, companionModelModule,
     ]);
     const order = (groups) => sortGroupsByPref(groups);
     // The menu's Grant sudo… goes to Access: the terminal closes first, or the
@@ -278,6 +279,9 @@ const phoneTerminalDescriptor = createIslandDescriptor({
     };
     const deps = {
       agent,
+      // The Steward in the seat (companion-model.js), whose terminal can
+      // float over the page.
+      isSteward: (id) => stewardAgent(companionAgents(dashboardState.snapshot.value))?.agentId === id,
       // The snapshot's harness catalog (tmux_scrollback), for wheelCopyMode.
       harnesses: () => dashboardState.snapshot.value?.harnesses || [],
       widgetFactory: mountTerminalWidget,

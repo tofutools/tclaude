@@ -660,3 +660,38 @@ test('a compose sheet\'s keyboard leaves the terminal its size; the terminal\'s 
   assert.match(height(), /height:500px/);
   sheet.remove();
 });
+
+test('the Steward\'s terminal floats over the page and docks back; the keyboard docks it; no other agent\'s floats', async (t) => {
+  const { harness, island, tab, host, button, tap } = await setup(t, { isSteward: (id) => id === AGENT });
+  const nav = await harness.importDashboardModule('js/phone-nav-toggle.js');
+  t.after(() => { island.phoneTermFloat.value = false; });
+  await harness.act(() => tab.openWebWindowPane(AGENT, 'checkout-ui', { harness: 'claude' }));
+  await harness.act(() => {});
+  const term = () => host.querySelector('.phone-term');
+  const root = harness.document.documentElement;
+  assert.equal(button('Float over the page').getAttribute('aria-pressed'), 'false');
+  assert.equal(term().getAttribute('aria-modal'), 'true');
+
+  await tap(button('Float over the page'));
+  assert.ok(term().classList.contains('phone-term-float'));
+  assert.equal(term().getAttribute('aria-modal'), 'false', 'the page around it stays usable');
+  assert.equal(root.dataset.phoneTerminal, 'float', 'the page scrolls under a floating terminal');
+  assert.equal(nav.terminalDock.value.float, true, 'the shell keeps its view and nav');
+  assert.equal(button('Full screen').getAttribute('aria-pressed'), 'true');
+
+  await tap(button('Full screen'));
+  assert.ok(!term().classList.contains('phone-term-float'));
+  assert.equal(root.dataset.phoneTerminal, 'open');
+
+  await tap(button('Float over the page'));
+  await tap(button('Keyboard'));
+  assert.ok(!term().classList.contains('phone-term-float'), 'typing docks it full screen');
+  assert.equal(island.phoneTermFloat.value, false);
+});
+
+test('an agent that is not the Steward has no float button', async (t) => {
+  const { harness, tab, button } = await setup(t, { isSteward: () => false });
+  await harness.act(() => tab.openWebWindowPane(AGENT, 'checkout-ui', { harness: 'claude' }));
+  await harness.act(() => {});
+  assert.equal(button('Float over the page'), undefined);
+});
