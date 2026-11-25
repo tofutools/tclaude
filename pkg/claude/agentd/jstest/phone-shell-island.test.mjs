@@ -552,3 +552,14 @@ test('the toggle: ▾ while the nav shows, ▴ with the nav\'s count while hidde
   toggles.setNavShown('terminal', false, broken);
   assert.equal(toggles.navShown('terminal', broken), false);
 });
+
+test('the Steward\'s ✦ button floats over Now and Agents only', async (t) => {
+  const { mounted, navItem, tap, shell } = await setup(t);
+  const fab = () => mounted.container.querySelector('.phone-steward-fab');
+  assert.ok(fab(), 'on Now');
+  await tap(navItem('Agents'));
+  assert.ok(fab(), 'on Agents');
+  await tap(navItem('Board'));
+  assert.equal(fab(), null, 'not on Board');
+  shell.view.value = 'now';
+});
