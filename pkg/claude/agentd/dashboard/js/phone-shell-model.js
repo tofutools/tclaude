@@ -143,12 +143,15 @@ export function nowView(snapshot) {
   const carded = new Set(approvals.map((request) => request.agent_id).filter(Boolean));
   const byName = (a, b) => a.name.localeCompare(b.name);
   const asking = agents.filter((agent) => agent.online && NEEDS.has(agent.status) && !carded.has(agent.agentId)).sort(byName);
-  const errors = agents.filter((agent) => agent.online && ERRORS.has(agent.status)).sort(byName);
-  const working = agents.filter((agent) => agent.online && WORKING.has(agent.status)).sort(byName);
+  // Errors, work and the rest list the most recently active first (the
+  // latest hook), so the agent heard from a minute ago is not buried under
+  // ones idle since yesterday.
+  const errors = agents.filter((agent) => agent.online && ERRORS.has(agent.status)).sort(byRecency);
+  const working = agents.filter((agent) => agent.online && WORKING.has(agent.status)).sort(byRecency);
   // The rest online: neither asking (a card above) nor at work, most often
-  // idle between turns. Grouped, so a group's agents sit together.
+  // idle between turns.
   const resting = agents.filter((agent) => agent.online && !NEEDS.has(agent.status) && !ERRORS.has(agent.status) && !WORKING.has(agent.status))
-    .sort((a, b) => a.group.localeCompare(b.group) || byName(a, b));
+    .sort(byRecency);
   return {
     approvals,
     elsewhere,
@@ -181,6 +184,14 @@ export function hookAt(agent) {
   return Number.isFinite(at) ? at : null;
 }
 
+// latest is an agent's hookAt for sorting: one that never called a hook
+// sorts as the oldest.
+const latest = (agent) => hookAt(agent) ?? -Infinity;
+
+// byRecency orders agents by their latest hook, newest first, then by name;
+// those never heard from go last.
+const byRecency = (a, b) => latest(b) - latest(a) || a.name.localeCompare(b.name);
+
 // rowState is an agent's state word for its row's pill.
 export function rowState(agent) {
   if (ERRORS.has(agent.status)) return 'error';
@@ -203,24 +214,22 @@ export function agentRows(view, { showAll = false, few = FEW_ONLINE, now = Date.
   return { rows: all ? [...busy, ...rest] : [...busy, ...rest.filter(recent)], all, total };
 }
 
-// idleGroups is the Idle chip: the online idle agents by group, each group's
-// longest-idle last.
+// idleGroups is the Idle chip: the online idle agents by group, the groups
+// A–Z, each group's longest-idle last.
 export function idleGroups(view) {
   const groups = new Map();
   for (const agent of view.resting) {
     if (!groups.has(agent.group)) groups.set(agent.group, []);
     groups.get(agent.group).push(agent);
   }
-  const latest = (agent) => hookAt(agent) ?? -Infinity;
-  return [...groups].map(([group, agents]) => ({ group, agents: agents.sort((a, b) => latest(b) - latest(a)) }));
+  return [...groups].sort(([a], [b]) => a.localeCompare(b))
+    .map(([group, agents]) => ({ group, agents: agents.sort(byRecency) }));
 }
 
 // recentRows is the Recent chip: every online agent, the latest hook first;
 // an agent that never called one goes last.
 export function recentRows(view) {
-  const latest = (agent) => hookAt(agent) ?? -Infinity;
-  return [...view.online].sort((a, b) => latest(b) - latest(a) || a.name.localeCompare(b.name))
-    .map((agent) => ({ agent, state: rowState(agent) }));
+  return [...view.online].sort(byRecency).map((agent) => ({ agent, state: rowState(agent) }));
 }
 
 // stuckRows is the agents at work, quiet the longest first (Problems' quiet
