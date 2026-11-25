@@ -118,6 +118,11 @@ test('with no Steward running, a tap offers Resume and Start fresh; Resume opens
   await until(harness, () => !mounted.container.querySelector('[role="dialog"]'), 'the sheet closes');
   assert.deepEqual(requests, [[`/api/agents/${STEWARD}/resume`, 'POST']]);
   assert.ok(!calls.some(([kind]) => kind === 'open'), 'nothing to open until it runs');
+  // While it comes up, a tap offers no second start.
+  assert.match(button().getAttribute('aria-label'), /starting/);
+  await harness.act(() => button().click());
+  assert.equal(mounted.container.querySelector('[role="dialog"]'), null, 'no second start sheet');
+  assert.equal(requests.length, 1);
   await harness.act(() => { snap.value = snapshotWith({ online: true, roster }); });
   assert.deepEqual(calls.filter(([kind]) => kind === 'open'), [['open', STEWARD]]);
 });

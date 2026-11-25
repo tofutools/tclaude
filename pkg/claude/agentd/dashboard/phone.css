@@ -597,10 +597,13 @@
   box-shadow: 0 0 0 4px color-mix(in srgb, var(--phone-warn) 60%, transparent), 0 6px 18px rgba(0, 0, 0, 0.5);
 }
 :root[data-layout="phone"] .phone-steward-fab.offline { background: var(--ui-bg); color: var(--phone-purple); border: 1px solid var(--phone-line); }
+:root[data-layout="phone"] .phone-steward-fab.starting .phone-steward-fab-glyph { animation: phone-steward-pulse 1.2s ease-in-out infinite; }
+@keyframes phone-steward-pulse { 50% { opacity: 0.35; } }
 :root[data-layout="phone"] .phone-steward-fab.shrunk { transform: scale(0.72); transform-origin: bottom right; }
 :root[data-layout="phone"] .phone-steward-fab:focus-visible { outline: 2px solid var(--phone-accent); outline-offset: 3px; }
 :root[data-layout="phone"] .phone-steward-fab-badge { position: absolute; top: -2px; right: -2px; }
 :root[data-layout="phone"] .phone-steward-note { margin: 6px 4px 0; color: var(--ui-muted-text); font-size: 13px; }
 @media (prefers-reduced-motion: reduce) {
   :root[data-layout="phone"] .phone-steward-fab { transition: none; }
+  :root[data-layout="phone"] .phone-steward-fab.starting .phone-steward-fab-glyph { animation: none; }
 }

@@ -64,8 +64,14 @@ export function stewardFab(snapshot) {
   };
 }
 
+// STEWARD_START_MS is how long a Steward started here may take to show as
+// running before the button stops waiting for it (the desktop companion's
+// PENDING_MS).
+export const STEWARD_START_MS = 30000;
+
 // fabLabel is the button's accessible name: who, and what waits there.
-export function fabLabel(fab) {
+export function fabLabel(fab, starting = false) {
+  if (!fab.agent && starting) return `${fab.label}: starting`;
   if (!fab.agent) return `${fab.label}: not running. Start it`;
   const waits = fab.count > 0 ? `${fab.count} waiting for you` : companionStatusLabel(fab.status);
   return `${fab.label}: ${waits}. Open it`;
@@ -141,13 +147,23 @@ function StewardStart({ fab, start, close }) {
 export function StewardFab({ snapshot, actions, fetchImpl = globalThis.fetch, doc = globalThis.document }) {
   const fab = stewardFab(snapshot);
   const shrunk = useScrollShrink(doc);
-  // A Steward started from here opens once the snapshot shows it running.
+  // A Steward started from here opens once the snapshot shows it running,
+  // within STEWARD_START_MS. Until then a tap offers no second start: Start
+  // fresh would make two Stewards.
   const [starting, setStarting] = useState('');
   useEffect(() => {
     if (!starting || fab?.agent?.agentId !== starting) return;
     setStarting('');
     actions.openTerminal(fab.agent);
   }, [starting, fab?.agent?.agentId]);
+  useEffect(() => {
+    if (!starting) return undefined;
+    const timer = setTimeout(() => {
+      setStarting('');
+      actions.notify?.(`${fab?.label || 'The Steward'} did not come up. Try again, or look in Agents.`, true);
+    }, STEWARD_START_MS);
+    return () => clearTimeout(timer);
+  }, [starting]);
   // The views keep room at their end while the button floats over them.
   useEffect(() => {
     if (!fab || !doc) return undefined;
@@ -179,11 +195,15 @@ export function StewardFab({ snapshot, actions, fetchImpl = globalThis.fetch, do
       actions.openTerminal(fab.agent);
       return;
     }
+    if (starting) {
+      actions.notify?.(`${fab.label} is starting…`);
+      return;
+    }
     openPhoneSheet({ label: `Start ${fab.label}`, Body: StewardStart, props: { fab, start } });
   };
-  const cls = ['phone-steward-fab', fab.attention && 'attention', shrunk && 'shrunk', !fab.agent && 'offline'].filter(Boolean).join(' ');
-  return html`<button data-ui-exempt type="button" class=${cls} aria-label=${fabLabel(fab)} title=${fab.label}
-    aria-haspopup=${fab.agent ? undefined : 'dialog'} onClick=${onClick}>
+  const cls = ['phone-steward-fab', fab.attention && 'attention', shrunk && 'shrunk', !fab.agent && 'offline', !fab.agent && starting && 'starting'].filter(Boolean).join(' ');
+  return html`<button data-ui-exempt type="button" class=${cls} aria-label=${fabLabel(fab, !!starting)} title=${fab.label}
+    aria-haspopup=${fab.agent || starting ? undefined : 'dialog'} aria-busy=${!fab.agent && starting ? 'true' : undefined} onClick=${onClick}>
     <span class="phone-steward-fab-glyph" aria-hidden="true">✦</span>
     ${fab.count > 0 && html`<span class="ui-badge ui-badge-warn phone-steward-fab-badge" aria-hidden="true">${fab.count}</span>`}
   </button>`;
