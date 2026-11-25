@@ -67,7 +67,7 @@ test('Agents: the chips filter by several groups, a caret folds its group across
     .then((r) => r.json()).then((prefs) => prefs[key] ?? null), `tclaude.dash.phone.tree.fold.${first}`)).toBe('1');
   await page.reload();
   await booted(page);
-  await nav(page, 'Agents').click();
+  await nav(page, 'Groups').click();
   await expect(page.getByRole('group', { name: first, exact: true }).locator('.phone-agents-caret-btn')).toHaveAttribute('aria-expanded', 'false');
   await page.getByRole('group', { name: first, exact: true }).locator('.phone-agents-caret-btn').click();
   await expect(page.getByRole('group', { name: first, exact: true }).locator('.phone-agent').first()).toBeVisible();
@@ -78,7 +78,7 @@ test('the nav: one-colour icons, the tab on screen in a filled pill', async ({ p
   const errors = collectErrors(page);
   await page.goto('/groups');
   await booted(page);
-  const agents = nav(page, 'Agents');
+  const agents = nav(page, 'Groups');
   await expect(agents).toHaveAttribute('aria-current', 'page');
   await expect(agents.locator('svg')).toBeVisible();
   const look = (button) => button.evaluate((el) => {
@@ -118,7 +118,7 @@ test('Agents: each header counts its agents by state, folded too; workers sit un
   const errors = collectErrors(page);
   await page.goto('/');
   await booted(page);
-  await nav(page, 'Agents').click();
+  await nav(page, 'Groups').click();
   const webshop = page.getByRole('group', { name: 'webshop', exact: true });
   const summary = webshop.locator('.phone-agents-sum');
   await expect(summary.first()).toBeVisible();

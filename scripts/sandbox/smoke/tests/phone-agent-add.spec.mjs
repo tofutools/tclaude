@@ -1,7 +1,7 @@
 // ＋ Agent on the phone's agent headers (js/phone-agents-island.js,
 // js/phone-now.js) in a real browser: each group header on Agents has it
 // before Board ›, and it opens the short spawn sheet on that group; Now's
-// Active head has it before All agents ›, opening the sheet with no group
+// Active head has it before All groups ›, opening the sheet with no group
 // picked (the first).
 //
 //   scripts/sandbox/ui.sh smoke phone-agent-add
@@ -36,7 +36,7 @@ test('＋ Agent on Agents\' group headers and Now\'s Active head opens the spawn
   });
   await shot(page, 'now');
   const nav = page.getByRole('navigation', { name: 'Views' });
-  await nav.getByRole('button', { name: /Agents/ }).click();
+  await nav.getByRole('button', { name: /Groups/ }).click();
   await expect(page.locator('.phone-agents-head').first()).toBeVisible();
   await shot(page, 'agents');
   if (process.env.SHOTS_ONLY) return;

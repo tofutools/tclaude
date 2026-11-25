@@ -14,7 +14,8 @@ import { agentPR } from './phone-agents-model.js';
 // are the shell's own views (now, board) or the More sheet.
 export const PHONE_SLOTS = Object.freeze([
   Object.freeze({ id: 'now', label: 'Now', icon: '◉' }),
-  Object.freeze({ id: 'agents', label: 'Agents', icon: 'robot', tab: 'groups' }),
+  // The Groups slot's id stays 'agents' (internal): it shows the groups tab.
+  Object.freeze({ id: 'agents', label: 'Groups', icon: 'group', tab: 'groups' }),
   Object.freeze({ id: 'mail', label: 'Mail', icon: '✉\uFE0E', tab: 'messages' }),
   Object.freeze({ id: 'board', label: 'Board', icon: '▤' }),
   Object.freeze({ id: 'more', label: 'More', icon: '☰' }),
@@ -44,7 +45,7 @@ export const MORE_TABS = Object.freeze([
   Object.freeze({ tab: 'fleet-admin', label: 'Fleet', icon: '🌐', path: '/fleet-admin', byAnchor: true, scope: Object.freeze({ kind: 'ro', text: 'nodes, read-only' }) }),
 ]);
 const TAB_TITLES = Object.freeze({
-  groups: 'Agents',
+  groups: 'Groups',
   messages: 'Mail',
   ...Object.fromEntries(MORE_TABS.map((entry) => [entry.tab, entry.label])),
   'drawing-boards': 'Drawing boards',

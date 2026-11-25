@@ -70,9 +70,9 @@ test('the terminal: the nav under it, hidden by the toggle and remembered; a slo
   await expect(nav).toBeVisible();
 
   // A view picked in the nav closes the terminal.
-  await nav.getByRole('button', { name: /Agents/ }).click();
+  await nav.getByRole('button', { name: /Groups/ }).click();
   await expect(term).toHaveCount(0);
-  await expect(nav.getByRole('button', { name: /Agents/ })).toHaveAttribute('aria-current', 'page');
+  await expect(nav.getByRole('button', { name: /Groups/ })).toHaveAttribute('aria-current', 'page');
 
   // A terminal opened as a history step (from Agents), then Now picked
   // under it: the close steps history back and Now still lands; Back
@@ -84,7 +84,7 @@ test('the terminal: the nav under it, hidden by the toggle and remembered; a slo
   await expect(nav.getByRole('button', { name: /Now/ })).toHaveAttribute('aria-current', 'page');
   await page.goBack();
   await expect(term).toHaveCount(0);
-  await expect(nav.getByRole('button', { name: /Agents/ })).toHaveAttribute('aria-current', 'page');
+  await expect(nav.getByRole('button', { name: /Groups/ })).toHaveAttribute('aria-current', 'page');
   expect(errors).toEqual([]);
 });
 

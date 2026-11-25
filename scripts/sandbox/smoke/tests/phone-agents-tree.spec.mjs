@@ -186,7 +186,7 @@ for (const [phone, device] of Object.entries(PHONES)) {
         await expect.poll(() => pref(page, 'tclaude.dash.phone.agents.empty')).toBe('1');
         await page.reload();
         await booted(page);
-        await page.getByRole('navigation', { name: 'Views' }).getByRole('button', { name: /^Agents/ }).click();
+        await page.getByRole('navigation', { name: 'Views' }).getByRole('button', { name: /^Groups/ }).click();
         await expect(page.locator('.phone-ib-dot')).toHaveCount(1);
         await expect(node(EMPTY)).toBeVisible();
         await resetView(page);

@@ -210,7 +210,7 @@ export function mountPhoneShellFeature(dependencies = {}) {
 // its form from the group's board in that tree.
 const phoneAgentsDescriptor = createIslandDescriptor({
   name: 'phone-agents',
-  label: 'Agents',
+  label: 'Groups',
   hosts: { host: '#phone-agents-root' },
   failureClass: 'phone-agents-error',
   load: async ({ hosts: { host }, dependencies }) => {

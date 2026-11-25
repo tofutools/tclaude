@@ -24,7 +24,7 @@ const more = (name) => async (page) => {
     .filter({ has: page.locator('.phone-menu-label', { hasText: new RegExp(`^${name}$`) }) }).first().click();
 };
 const VIEWS = [
-  ['Now', tab(/Now/)], ['Agents', tab(/Agents/)], ['Board', tab(/Board/)], ['Mail', tab(/Mail/)],
+  ['Now', tab(/Now/)], ['Groups', tab(/Groups/)], ['Board', tab(/Board/)], ['Mail', tab(/Mail/)],
   ['Access', more('Access')], ['Usage', more('Usage')], ['Automations', more('Automations')], ['Diagnostics', more('Diagnostics')],
 ];
 

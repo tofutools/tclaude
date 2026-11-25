@@ -328,14 +328,14 @@ test('a row\'s ⋯ or a hold on it opens the agent\'s menu; so does a hold on an
 });
 
 // Active's head: ＋ Agent opens the short spawn sheet (no group: the
-// shell's spawnAgent), beside All agents ›; a node with no group to spawn
+// shell's spawnAgent), beside All groups ›; a node with no group to spawn
 // into has none.
-test('Active\'s head has ＋ Agent beside All agents ›', async (t) => {
+test('Active\'s head has ＋ Agent beside All groups ›', async (t) => {
   const { root: c, calls, harness } = await setup(t);
   const add = c.querySelector('[data-agent-add]');
   assert.equal(add.textContent, '＋ Agent');
   assert.equal(add.getAttribute('aria-label'), 'New agent');
-  assert.equal(add.nextElementSibling.textContent, 'All agents ›');
+  assert.equal(add.nextElementSibling.textContent, 'All groups ›');
   await harness.act(() => add.click());
   assert.deepEqual(calls.at(-1), ['spawnAgent', '']);
 });

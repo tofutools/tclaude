@@ -259,7 +259,7 @@ export function NowView({ state, actions, fetchImpl = globalThis.fetch, processS
       more=${html`<span class="phone-section-links">
         ${actions.spawnAgent && spawnable(snapshot) && html`<button data-ui-exempt type="button" class="phone-link" data-agent-add
           aria-label="New agent" aria-haspopup="dialog" onClick=${() => actions.spawnAgent('')}>＋ Agent</button>`}
-        <button data-ui-exempt type="button" class="phone-link" onClick=${() => actions.navigate('/')}>All agents ›</button></span>`}>
+        <button data-ui-exempt type="button" class="phone-link" onClick=${() => actions.navigate('/')}>All groups ›</button></span>`}>
       ${rows.length === 0
         ? html`<${Empty}>${list.all ? 'No agent is online.' : 'No agent is active right now.'}<//>`
         : html`<${AgentRows} rows=${rows} onOpen=${actions.openTerminal} onMenu=${actions.agentMenu} />`}

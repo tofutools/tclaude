@@ -82,7 +82,7 @@ test('Find › on an offline sender: its row in Agents, glowing, Power on a tap 
   await expect(page.locator('.toast').filter({ hasText: /perf-audit is offline\. Find ›/ }).first()).toBeVisible();
   await expect(page.locator('.phone-terminal, .phone-term')).toHaveCount(0);
 
-  await page.getByRole('button', { name: 'Find perf-audit in Agents' }).click();
+  await page.getByRole('button', { name: 'Find perf-audit in Groups' }).click();
   const row = await expectFound(page);
   await row.getByRole('button', { name: 'perf-audit: more' }).click();
   const menu = page.locator('.phone-sheet[role=dialog]');
@@ -103,7 +103,7 @@ test('Find › in the List layout goes to the agent', async ({ page }) => {
   try {
     await hideIt(page);
     await openPerfMail(page);
-    await page.getByRole('button', { name: 'Find perf-audit in Agents' }).click();
+    await page.getByRole('button', { name: 'Find perf-audit in Groups' }).click();
     await expect(page.locator('.phone-agents-sub')).toHaveCount(0);
     await expectFound(page);
   } finally {

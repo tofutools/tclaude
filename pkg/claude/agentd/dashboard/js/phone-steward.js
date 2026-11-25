@@ -160,7 +160,7 @@ export function StewardFab({ snapshot, actions, fetchImpl = globalThis.fetch, do
     if (!starting) return undefined;
     const timer = setTimeout(() => {
       setStarting('');
-      actions.notify?.(`${fab?.label || 'The Steward'} did not come up. Try again, or look in Agents.`, true);
+      actions.notify?.(`${fab?.label || 'The Steward'} did not come up. Try again, or look in Groups.`, true);
     }, STEWARD_START_MS);
     return () => clearTimeout(timer);
   }, [starting]);
