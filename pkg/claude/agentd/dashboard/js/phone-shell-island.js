@@ -40,6 +40,7 @@ import { BoardView, boardRequest, openBoardTask } from './phone-board.js';
 import { MoreMenu } from './phone-more.js';
 import { navBadge, navShown, terminalDock } from './phone-nav-toggle.js';
 import { Chevron } from './chevron-icon.js';
+import { STEWARD_FAB_SLOTS, StewardFab } from './phone-steward.js';
 
 // The own views live in their own files; re-exported for this module's
 // callers.
@@ -309,6 +310,8 @@ export function PhoneShell({ shell, state, actions, boardSource, fetchImpl = glo
         <span class="phone-nav-icon" aria-hidden="true">${NAV_ICONS[target.icon] || target.icon}</span>${target.label}${badge(target.id)}
       </button>`)}
     </nav>`}
+    ${STEWARD_FAB_SLOTS.includes(slot) && !page && !dock && !desktopOnly
+      && html`<${StewardFab} snapshot=${snapshot} actions=${viewActions} fetchImpl=${fetchImpl} />`}
     <${PhoneSheetHost} />
   </div>`;
 }
