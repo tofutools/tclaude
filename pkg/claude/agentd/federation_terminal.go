@@ -574,6 +574,13 @@ func (rt *fedRuntime) acceptSessionOpen(peer *db.FederationPeer, env *proto.Enve
 }
 func (rt *fedRuntime) handleSessionOpen(peer *db.FederationPeer, p proto.SessionOpenPayload, v *fedTerminalView, answer func(bool, []byte, string)) {
 	defer v.close()
+	// refuse closes v before answering: by the time the peer reads a refusal
+	// (and may open again at once), v no longer counts as another viewer of
+	// the window it had pinned (fedWindowViewers).
+	refuse := func(reason string) {
+		v.close()
+		answer(false, nil, reason)
+	}
 	var pin *fedPanePin
 	var err error
 	if p.Shell != "" {
@@ -582,7 +589,7 @@ func (rt *fedRuntime) handleSessionOpen(peer *db.FederationPeer, p proto.Session
 		pin, err = resolveFedPane(peer.InstanceID, p)
 	}
 	if err != nil {
-		answer(false, nil, err.Error())
+		refuse(err.Error())
 		recordFederationAudit("sessions.attach.open", peerDisplay(peer), "", p.Group, "refused: "+err.Error(), 403)
 		return
 	}
@@ -606,7 +613,7 @@ func (rt *fedRuntime) handleSessionOpen(peer *db.FederationPeer, p proto.Session
 	}
 	// Take-over needs its own grant; this side's check is authoritative.
 	if p.TakeOver && !fedPeerAllows(peer.InstanceID, pin.group, PermSessionsTakeover) {
-		answer(false, nil, "take-over requires the "+PermSessionsTakeover+" grant")
+		refuse("take-over requires the " + PermSessionsTakeover + " grant")
 		recordFederationAudit("sessions.attach.open", peerDisplay(peer), "", p.Group, "refused: take-over not granted", 403)
 		return
 	}
@@ -627,30 +634,30 @@ func (rt *fedRuntime) handleSessionOpen(peer *db.FederationPeer, p proto.Session
 	if p.FixedSize {
 		cols, rows, err := pin.size()
 		if err != nil {
-			answer(false, nil, "target terminal size unavailable")
+			refuse("target terminal size unavailable")
 			return
 		}
 		p.Cols, p.Rows = cols, rows
 	}
 	restore, err := setFedIndicator(pin, v.ID, peerDisplay(peer), p.ReadOnly)
 	if err != nil {
-		answer(false, nil, "could not install remote viewer indicator")
+		refuse("could not install remote viewer indicator")
 		return
 	}
 	v.addCleanup(restore)
 	backend, err := openFedPaneTerminal(pin, p.Cols, p.Rows)
 	if err != nil {
-		answer(false, nil, err.Error())
+		refuse(err.Error())
 		return
 	}
 	v.addCleanup(func() { _ = backend.Close() })
 	kp, err := stream.NewKeyPair()
 	if err != nil {
-		answer(false, nil, "stream unavailable")
+		refuse("stream unavailable")
 		return
 	}
 	if v.ctx.Err() != nil {
-		answer(false, nil, "viewer closed")
+		refuse("viewer closed")
 		return
 	}
 	v.mu.Lock()

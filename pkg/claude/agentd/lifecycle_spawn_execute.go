@@ -1460,11 +1460,24 @@ func executeServerSpawnDeferred(g *db.AgentGroup, p spawnParams, syncProofCleanu
 		}
 	})
 
+	// inline answers with the continuation's outcome. A failure reaches a
+	// federation spawn request the same way as past the grace
+	// (surfaceDeferredSpawnFailure): the request's launch label is already
+	// set, so its caller alone would take a definite failure for an
+	// unconfirmed launch, leave the request launching and never file the
+	// needs-approval notice. federationSpawnFailed is a no-op when the launch
+	// already reported it.
+	inline := func(r deferredResult) (*spawnOutcome, *spawnFailure) {
+		if r.fail != nil {
+			federationSpawnFailed(p.AgentID, r.fail.Kind, r.fail.Msg)
+		}
+		return r.out, r.fail
+	}
 	timer := time.NewTimer(openCodeAsyncSpawnResponseGrace)
 	defer timer.Stop()
 	select {
 	case r := <-done:
-		return r.out, r.fail
+		return inline(r)
 	case <-timer.C:
 	}
 	mu.Lock()
@@ -1473,7 +1486,7 @@ func executeServerSpawnDeferred(g *db.AgentGroup, p spawnParams, syncProofCleanu
 	select {
 	case r := <-done:
 		mu.Unlock()
-		return r.out, r.fail
+		return inline(r)
 	default:
 	}
 	responded = true

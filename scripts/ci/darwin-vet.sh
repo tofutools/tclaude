@@ -17,7 +17,14 @@ export GOOS=darwin GOARCH=arm64 CGO_ENABLED=0
 work="$(mktemp -d "${TMPDIR:-/tmp}/darwin-vet.XXXXXX")"
 trap 'rm -rf -- "$work"' EXIT
 
+# go list -m does not download: on a cold module cache (a go.sum change misses
+# the CI cache) it prints an empty Dir, and the cp below fails on ''.
+go mod download fyne.io/systray
 systray_dir="$(go list -m -f '{{.Dir}}' fyne.io/systray)"
+if [ -z "$systray_dir" ]; then
+  echo "darwin-vet: fyne.io/systray has no module directory" >&2
+  exit 1
+fi
 cp -R "$systray_dir" "$work/systray"
 chmod -R u+w "$work/systray"
 python3 - "$work/systray/systray_darwin.go" <<'PY'

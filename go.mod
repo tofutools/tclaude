@@ -18,7 +18,7 @@ require (
 	github.com/google/nftables v0.3.0
 	github.com/google/pprof v0.0.0-20261102214848-0031fcd306b0
 	github.com/google/uuid v1.6.0
-	github.com/gorilla/websocket v1.5.3
+	github.com/gorilla/websocket v1.5.4-0.20240701034025-d67f41855da4
 	github.com/jedib0t/go-pretty/v6 v6.8.3
 	github.com/jezek/xgb v1.3.1
 	github.com/klauspost/compress v1.20.3
