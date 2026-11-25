@@ -16,6 +16,12 @@ import { Tabs } from './ui-tabs.js';
 
 const html = htm.bind(h);
 
+// ViewIcon is a top bar's sliders: it opens a view's View sheet (Agents,
+// Now).
+export const ViewIcon = html`<svg class="phone-agents-view-icon" viewBox="0 0 24 24" width="22" height="22" aria-hidden="true" fill="none"
+  stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12" />
+  <circle cx="16" cy="6" r="2" /><circle cx="10" cy="12" r="2" /><circle cx="18" cy="18" r="2" /></svg>`;
+
 const join = (...parts) => parts.filter(Boolean).join(' ');
 
 // AVATAR_HUES is how many avatar colours phone.css has (data-hue 0..7).
