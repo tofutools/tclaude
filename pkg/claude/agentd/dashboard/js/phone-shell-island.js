@@ -232,8 +232,9 @@ export function PhoneShell({ shell, state, actions, boardSource, fetchImpl = glo
     // More's sheet sits above the nav: More again closes it.
     const wasMore = phoneSheet.peek()?.slot === 'more';
     // A view picked under a docked terminal takes the terminal down first; a
-    // floating one stays over the view picked.
-    if (!terminalDock.peek()?.float) terminalDock.peek()?.close();
+    // floating one stays over Now and Agents, the views it floats over, and
+    // goes with any other (it would cover their bottom controls).
+    if (!terminalDock.peek()?.float || !STEWARD_FAB_SLOTS.includes(target.id)) terminalDock.peek()?.close();
     closePhoneSheet();
     if (target.id === 'more') {
       if (!wasMore) openPhoneSheet({ label: 'More', Body: MoreMenu, props: { state, actions: viewActions, fleet }, overNav: true, slot: 'more' });

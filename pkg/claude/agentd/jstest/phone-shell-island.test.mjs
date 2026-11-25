@@ -574,7 +574,9 @@ test('a floating terminal keeps the view and its nav, and a nav pick leaves it o
   assert.equal(harness.document.documentElement.dataset.phoneTerminalNav, undefined, 'not the docked terminal\'s nav');
   await tap(navItem('Agents'));
   assert.equal(closed, 0, 'the floating terminal stays open');
+  await tap(navItem('Board'));
+  assert.equal(closed, 1, 'another view takes a floating one down: it would cover its controls');
   await harness.act(() => { nav.terminalDock.value = { keyboard: false, float: false, close: () => { closed += 1; } }; });
   await tap(navItem('Now'));
-  assert.equal(closed, 1, 'a docked one closes');
+  assert.equal(closed, 2, 'a docked one closes');
 });

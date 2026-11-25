@@ -679,6 +679,15 @@ test('the Steward\'s terminal floats over the page and docks back; the keyboard 
   assert.equal(nav.terminalDock.value.float, true, 'the shell keeps its view and nav');
   assert.equal(button('Full screen').getAttribute('aria-pressed'), 'true');
 
+  // A field on the page takes the keyboard: the card gets out of the way.
+  const field = harness.document.createElement('input');
+  harness.document.body.append(field);
+  await harness.act(() => { field.focus(); harness.document.dispatchEvent(new harness.window.Event('focusin')); });
+  assert.ok(term().classList.contains('phone-term-away'));
+  await harness.act(() => { field.blur(); harness.document.dispatchEvent(new harness.window.Event('focusout')); });
+  assert.ok(!term().classList.contains('phone-term-away'));
+  field.remove();
+
   await tap(button('Full screen'));
   assert.ok(!term().classList.contains('phone-term-float'));
   assert.equal(root.dataset.phoneTerminal, 'open');

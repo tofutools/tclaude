@@ -207,6 +207,27 @@ export function composingOutside(documentRef, root) {
   return el.tagName === 'INPUT' && /^(|text|search|email|url|tel|number|password)$/i.test(el.getAttribute?.('type') || '');
 }
 
+// useComposingOutside follows whether a field outside the terminal (the page
+// under a floating one, or a sheet over it) has the keyboard, while on.
+function useComposingOutside(documentRef, rootRef, on) {
+  const [composing, setComposing] = useState(false);
+  useEffect(() => {
+    if (!on) { setComposing(false); return undefined; }
+    const sync = () => setComposing(composingOutside(documentRef, rootRef.current));
+    // While focus moves, activeElement is the body: where it lands is the
+    // event's relatedTarget, and a focusin follows if it lands anywhere.
+    const leave = (event) => { if (!event.relatedTarget) setComposing(false); };
+    sync();
+    documentRef.addEventListener('focusin', sync);
+    documentRef.addEventListener('focusout', leave);
+    return () => {
+      documentRef.removeEventListener('focusin', sync);
+      documentRef.removeEventListener('focusout', leave);
+    };
+  }, [on]);
+  return composing;
+}
+
 // The part of the screen the on-screen keyboard leaves, so the key strip
 // rides above the keyboard while ⌨ is on (tk_1e2337c3). A keyboard raised for
 // a sheet's own field over the terminal does not shrink it: the box keeps its
@@ -402,6 +423,10 @@ export function PhoneTerminal({ seed, deps, onClose }) {
   // under it.
   const steward = !!seed.agent && !!deps.isSteward?.(seed.agent);
   const floating = steward && phoneTermFloat.value && !keyboard;
+  // A keyboard raised for a field outside the card (the page's search, a
+  // sheet's text) puts the card out of the way until it goes: the card would
+  // sit under it, or over the field.
+  const away = useComposingOutside(documentRef, rootRef, floating);
   // The page behind does not scroll under a docked terminal; under a
   // floating one it does, and keeps room at its end for it.
   useEffect(() => {
@@ -474,7 +499,7 @@ export function PhoneTerminal({ seed, deps, onClose }) {
   const dirShell = dirShellTitle(seed, row);
 
   const style = viewport && !floating ? `height:${viewport.height}px;top:${viewport.top}px` : undefined;
-  return html`<div ref=${rootRef} class=${`phone-term${floating ? ' phone-term-float' : ''}`} role="dialog" aria-modal=${floating ? 'false' : 'true'} aria-label=${dirShell ? dirShell.label : label ? `Terminal: ${label}` : 'Terminal'} style=${style}>
+  return html`<div ref=${rootRef} class=${`phone-term${floating ? ' phone-term-float' : ''}${away ? ' phone-term-away' : ''}`} role="dialog" aria-modal=${floating ? 'false' : 'true'} aria-label=${dirShell ? dirShell.label : label ? `Terminal: ${label}` : 'Terminal'} style=${style}>
     <header class="phone-term-bar">
       <button data-ui-exempt type="button" class="phone-bar-back" aria-label="Back" onClick=${onClose}><${Chevron} dir="left" size=${22} /></button>
       ${dirShell
