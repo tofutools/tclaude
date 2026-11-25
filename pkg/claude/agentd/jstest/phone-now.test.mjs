@@ -25,7 +25,7 @@ const SNAPSHOT = {
   authored_open_prs: { available: true, total: 1, items: [{ url: 'https://github.com/o/r/pull/1482', title: 'Checkout redesign', checks: { state: 'passing' } }] },
 };
 
-async function setup(t, snapshot = SNAPSHOT, { stored = null, looked = null } = {}) {
+async function setup(t, snapshot = SNAPSHOT, { stored = null, looked = null, prefs = memPrefs() } = {}) {
   const harness = await createPreactHarness(t);
   const store = new Map(stored ? [['tclaude.phone.now.chip', stored]] : []);
   if (looked) store.set('tclaude.phone.now.looked', JSON.stringify(looked));
@@ -33,10 +33,11 @@ async function setup(t, snapshot = SNAPSHOT, { stored = null, looked = null } = 
   const saved = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');
   Object.defineProperty(globalThis, 'localStorage', { value: storage, configurable: true });
   t.after(() => { if (saved) Object.defineProperty(globalThis, 'localStorage', saved); else delete globalThis.localStorage; });
-  const [{ createDashboardState }, now, sheet] = await Promise.all([
+  const [{ createDashboardState }, now, sheet, page] = await Promise.all([
     harness.importDashboardModule('js/snapshot-store.js'),
     harness.importDashboardModule('js/phone-now.js'),
     harness.importDashboardModule('js/phone-sheet.js'),
+    harness.importDashboardModule('js/phone-page.js'),
   ]);
   t.after(() => sheet.closePhoneSheet());
   // The access request's deadline counts from this mount, not from when the
@@ -57,9 +58,15 @@ async function setup(t, snapshot = SNAPSHOT, { stored = null, looked = null } = 
   const fetchImpl = async (url, init) => { posts.push([url, JSON.parse(init.body)]); return { ok: true }; };
   const { signal } = harness.signals;
   const processSource = { context: signal(null), status: signal('ready'), error: signal(''), refresh: () => Promise.resolve() };
-  const mounted = await harness.mount(harness.html`<div><${now.NowView} state=${state} actions=${actions} fetchImpl=${fetchImpl} processSource=${processSource} /><${sheet.PhoneSheetHost} /></div>`);
+  const mounted = await harness.mount(harness.html`<div><${now.NowView} state=${state} actions=${actions} fetchImpl=${fetchImpl} processSource=${processSource} prefs=${prefs} /><${sheet.PhoneSheetHost} /></div>`);
   const tap = (element) => harness.act(() => element.click());
-  return { harness, mounted, calls, posts, tap, store, root: mounted.container };
+  return { harness, mounted, calls, posts, tap, store, page, prefs, root: mounted.container };
+}
+
+// memPrefs is a dashPrefs stand-in (prefs.js) over a Map.
+function memPrefs(entries = []) {
+  const map = new Map(entries);
+  return { map, getItem: (k) => map.get(k) ?? null, setItem: (k, v) => { map.set(k, v); }, removeItem: (k) => { map.delete(k); } };
 }
 
 test('the usage strip shows each subscription\'s fullest window and opens Usage', async (t) => {
@@ -349,4 +356,41 @@ test('a group owner wears the desktop owner tag by its group, and a screen reade
   assert.equal(tag.previousElementSibling.textContent, 'webshop', 'it says it owns the group shown beside it');
   assert.match(rowOf('lead').querySelector('.phone-row').getAttribute('aria-label'), /^lead, working, owner of webshop/);
   assert.equal(rowOf('release-bot').querySelector('.owner-badge'), null, 'a member that owns nothing has none');
+});
+
+test('the sliders open View: Group by group first sorts each section by group, dots the sliders, is remembered, and Reset undoes it', async (t) => {
+  const ago = (min) => new Date(Date.now() - min * 60_000).toISOString();
+  const m = (n, title, status, min) => ({ agent_id: `agt_${String(n).padStart(32, '0')}`, conv_id: `c${n}`, title, online: true, state: { status, last_hook: ago(min) } });
+  const snapshot = { groups: [
+    { name: 'alpha', members: [m(1, 'old', 'idle', 20 * 60), m(2, 'alpha-busy', 'working', 30)] },
+    { name: 'tclaude', members: [m(3, 'fresh', 'idle', 1), m(4, 'lead', 'working', 0)] },
+  ] };
+  const prefs = memPrefs();
+  const { harness, root, page } = await setup(t, snapshot, { prefs });
+  const names = () => [...harness.getByRole(root, 'group', { name: 'Online' }).querySelectorAll('.phone-who-name')].map((n) => n.textContent);
+  const view = () => page.phoneBar.value.actions.find((act) => act.key === 'view');
+  assert.deepEqual(names(), ['lead', 'alpha-busy', 'fresh', 'old'], 'off: most recent first in each section');
+  assert.equal(view().dot, false);
+  await harness.act(() => view().onClick());
+  const box = root.querySelector('[data-now-view] input[name="now-view-bygroup"]');
+  const reset = () => root.querySelector('[data-now-view] .phone-agents-view-reset');
+  assert.ok(box, 'the View sheet has the toggle');
+  assert.equal(reset().disabled, true);
+  await harness.act(() => { box.checked = true; harness.fireEvent(box, 'change'); });
+  assert.deepEqual(names(), ['alpha-busy', 'lead', 'old', 'fresh'], 'on: by group, then most recent first');
+  assert.equal(view().dot, true, 'off its default: the sliders carry a dot');
+  assert.equal(prefs.map.get('tclaude.dash.phone.now.bygroup'), '1', 'kept per viewer');
+  await harness.act(() => reset().click());
+  assert.deepEqual(names(), ['lead', 'alpha-busy', 'fresh', 'old']);
+  assert.equal(prefs.map.has('tclaude.dash.phone.now.bygroup'), false);
+});
+
+test('a remembered Group by group first comes back on the next visit', async (t) => {
+  const ago = (min) => new Date(Date.now() - min * 60_000).toISOString();
+  const m = (n, title, min) => ({ agent_id: `agt_${String(n).padStart(32, '0')}`, conv_id: `c${n}`, title, online: true, state: { status: 'idle', last_hook: ago(min) } });
+  const snapshot = { groups: [{ name: 'alpha', members: [m(1, 'old', 600)] }, { name: 'tclaude', members: [m(2, 'fresh', 1)] }] };
+  const { harness, root, page } = await setup(t, snapshot, { prefs: memPrefs([['tclaude.dash.phone.now.bygroup', '1']]) });
+  const names = [...harness.getByRole(root, 'group', { name: 'Online' }).querySelectorAll('.phone-who-name')].map((n) => n.textContent);
+  assert.deepEqual(names, ['old', 'fresh']);
+  assert.equal(page.phoneBar.value.actions.find((act) => act.key === 'view').dot, true);
 });

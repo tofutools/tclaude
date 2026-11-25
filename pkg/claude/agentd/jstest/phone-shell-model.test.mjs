@@ -76,14 +76,63 @@ test('Now\'s rows: every online agent when there are few, else the busy ones unt
   const few = agentRows(nowView(snapshot(2)));
   assert.equal(few.all, true);
   assert.deepEqual(few.rows.map((r) => [r.agent.name, r.state]),
-    [['bot', 'error'], ['lead', 'working'], ['zed', 'idle'], ['idle-0', 'idle'], ['idle-1', 'idle']],
-    'busy first, then the rest by group; never the asker (a card) or an offline agent');
+    [['bot', 'error'], ['lead', 'working'], ['idle-0', 'idle'], ['idle-1', 'idle'], ['zed', 'idle']],
+    'busy first, then the rest (no hooks here, so by name); never the asker (a card) or an offline agent');
   const many = nowView(snapshot(FEW_ONLINE));
   const busy = agentRows(many);
   assert.equal(busy.all, false);
   assert.equal(busy.total, FEW_ONLINE + 3);
   assert.deepEqual(busy.rows.map((r) => r.agent.name), ['bot', 'lead']);
   assert.equal(agentRows(many, { showAll: true }).rows.length, FEW_ONLINE + 3);
+});
+
+test('Now lists errors, work and the rest most recently active first, whatever the group', async (t) => {
+  const { nowView, agentRows, idleGroups } = await load(t);
+  const now = Date.parse('2026-11-15T12:00:00Z');
+  const ago = (min) => new Date(now - min * 60_000).toISOString();
+  const id = (n) => `agt_${String(n).padStart(32, '0')}`;
+  const m = (n, title, status, hook) => member(id(n), title, status, { state: { status, last_hook: hook } });
+  const view = nowView({ groups: [
+    { name: 'a', members: [m(1, 'yesterday', 'idle', ago(20 * 60)), m(2, 'never', 'idle', ''), m(3, 'old-err', 'error', ago(90)), m(4, 'slow', 'working', ago(30))] },
+    { name: 't', members: [m(5, 'just-now', 'idle', ago(1)), m(6, 'bravo', 'idle', ago(5)), m(7, 'alpha', 'idle', ago(5)), m(8, 'new-err', 'error', ago(2)), m(9, 'busy', 'working', ago(1))] },
+  ] });
+  assert.deepEqual(view.resting.map((a) => a.name), ['just-now', 'alpha', 'bravo', 'yesterday', 'never'],
+    'the just-active idle agent in group t sorts above the one idle since yesterday in group a; ties by name; never heard from last');
+  assert.deepEqual(view.errors.map((a) => a.name), ['new-err', 'old-err']);
+  assert.deepEqual(view.working.map((a) => a.name), ['busy', 'slow']);
+  assert.deepEqual(agentRows(view, { now }).rows.map((r) => r.agent.name),
+    ['new-err', 'old-err', 'busy', 'slow', 'just-now', 'alpha', 'bravo', 'yesterday', 'never']);
+  assert.deepEqual(idleGroups(view).map(({ group }) => group), ['a', 't'], 'the Idle chip keeps its groups A–Z');
+});
+
+test('Group by group first: each section by group A–Z, then most recently active first; kept per viewer, off by default', async (t) => {
+  const { nowView, nowSettings, saveNowSettings, NOW_BY_GROUP_PREF } = await load(t);
+  const now = Date.parse('2026-11-15T12:00:00Z');
+  const ago = (min) => new Date(now - min * 60_000).toISOString();
+  const id = (n) => `agt_${String(n).padStart(32, '0')}`;
+  const m = (n, title, status, hook) => member(id(n), title, status, { state: { status, last_hook: hook } });
+  const snapshot = { groups: [
+    { name: 'a', members: [m(1, 'yesterday', 'idle', ago(20 * 60)), m(2, 'never', 'idle', ''), m(3, 'old-err', 'error', ago(90)), m(4, 'slow', 'working', ago(30)), m(10, 'a-fresh', 'idle', ago(10))] },
+    { name: 't', members: [m(5, 'just-now', 'idle', ago(1)), m(8, 'new-err', 'error', ago(2)), m(9, 'busy', 'working', ago(1))] },
+  ] };
+  const view = nowView(snapshot, { byGroup: true });
+  assert.deepEqual(view.resting.map((a) => a.name), ['a-fresh', 'yesterday', 'never', 'just-now'], 'group a first, its latest first, never heard from last in it');
+  assert.deepEqual(view.errors.map((a) => a.name), ['old-err', 'new-err']);
+  assert.deepEqual(view.working.map((a) => a.name), ['slow', 'busy']);
+  assert.deepEqual(nowView(snapshot).resting.map((a) => a.name), ['just-now', 'a-fresh', 'yesterday', 'never'], 'off: most recent first, whatever the group');
+
+  const store = new Map();
+  const prefs = { getItem: (k) => store.get(k) ?? null, setItem: (k, v) => store.set(k, v), removeItem: (k) => store.delete(k) };
+  assert.deepEqual(nowSettings(prefs), { byGroup: false }, 'off by default');
+  saveNowSettings(prefs, { byGroup: true });
+  assert.equal(store.get(NOW_BY_GROUP_PREF), '1');
+  assert.deepEqual(nowSettings(prefs), { byGroup: true });
+  saveNowSettings(prefs, { byGroup: false });
+  assert.equal(store.has(NOW_BY_GROUP_PREF), false, 'the default is forgotten, not stored');
+  const broken = { getItem: () => { throw new Error('no store'); }, setItem: () => { throw new Error('no store'); }, removeItem: () => { throw new Error('no store'); } };
+  assert.deepEqual(nowSettings(broken), { byGroup: false }, 'a failing store reads as the defaults');
+  assert.doesNotThrow(() => saveNowSettings(broken, { byGroup: true }));
+  assert.deepEqual(nowSettings(undefined), { byGroup: false });
 });
 
 test('Now\'s chips: Idle by group, Recent latest first, Stuck? quiet the longest first, and All above few keeps the recent', async (t) => {

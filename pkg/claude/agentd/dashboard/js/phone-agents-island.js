@@ -37,7 +37,7 @@ import { DiscardAsk, useDraftGuard } from './phone-draft-guard.js';
 import { AgentMenu } from './phone-agent-menu.js';
 import { useHold } from './phone-hold.js';
 import { usePhoneBar, usePhonePage } from './phone-page.js';
-import { Avatar, ButtonRow, Card, ChipRow, Empty, RowMore, Section, SheetHead, SheetTitle, StatePill } from './phone-ui.js';
+import { Avatar, ButtonRow, Card, ChipRow, Empty, RowMore, Section, SheetHead, SheetTitle, StatePill, ViewIcon } from './phone-ui.js';
 import { ContextMeter } from './context-meter.js';
 import { dashPrefs } from './prefs.js';
 import { openBoardGroup } from './phone-board.js';
@@ -212,11 +212,6 @@ function AgentList({ g, isSteward, onTap, onMore, found = null }) {
     ${kids.map((kid, i) => html`<${AgentRow} key=${kid.key} row=${kid} under=${row} last=${i === kids.length - 1}
       steward=${isSteward(kid)} onTap=${onTap} onMore=${onMore} found=${kid.key === found} />`)}`)}</ul>`;
 }
-
-// ViewIcon is the header's sliders: it opens the View sheet.
-const ViewIcon = html`<svg class="phone-agents-view-icon" viewBox="0 0 24 24" width="22" height="22" aria-hidden="true" fill="none"
-  stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12" />
-  <circle cx="16" cy="6" r="2" /><circle cx="10" cy="12" r="2" /><circle cx="18" cy="18" r="2" /></svg>`;
 
 const LAYOUT_LABELS = Object.freeze({ tree: 'Tree', list: 'List' });
 const ORDER_LABELS = Object.freeze({

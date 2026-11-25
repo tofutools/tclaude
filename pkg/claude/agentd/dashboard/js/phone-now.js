@@ -17,12 +17,18 @@ import htm from 'htm';
 import { companionAgents } from './companion-model.js';
 import { authoredOpenPRsView } from './shell-model.js';
 import { featureState } from './peer-view-limits.js';
-import { FEW_ONLINE, PROBLEMS, agentRows, askerName, hookAt, idleGroups, contextHigh, nowView, problemRows, recentRows } from './phone-shell-model.js';
+import {
+  FEW_ONLINE, NOW_DEFAULTS, PROBLEMS, agentRows, askerName, hookAt, idleGroups, contextHigh, nowSettings, nowView, problemRows, recentRows,
+  saveNowSettings,
+} from './phone-shell-model.js';
 import { usageStrip } from './phone-now-model.js';
 import { AskCard, PhoneApprovalCard, PhoneDecisionCard } from './phone-approval.js';
 import { ContextMeter } from './context-meter.js';
-import { Button } from './ui-components.js';
-import { Card, ChipRow, Empty, RowMore, Section, StatePill } from './phone-ui.js';
+import { Button, Switch } from './ui-components.js';
+import { Card, ChipRow, Empty, RowMore, Section, SheetHead, SheetTitle, StatePill, ViewIcon } from './phone-ui.js';
+import { openPhoneSheet } from './phone-sheet.js';
+import { usePhoneBar } from './phone-page.js';
+import { dashPrefs } from './prefs.js';
 import { useHold } from './phone-hold.js';
 import { relTime } from './helpers.js';
 import { processContext } from './process-context.js';
@@ -154,8 +160,38 @@ function OpenPRs({ snapshot }) {
 // CHECK_TONES colour a PR's checks state.
 const CHECK_TONES = Object.freeze({ success: 'work', passing: 'work', failure: 'err', failing: 'err', pending: 'key', running: 'key' });
 
-export function NowView({ state, actions, fetchImpl = globalThis.fetch, processSource = processContext }) {
+// NowViewSheet is Now's View settings (phone-shell-model.js nowSettings),
+// in the Agents View sheet's look: Group by group first, and Reset (off at
+// the defaults). A change applies at once and is kept per viewer.
+export function NowViewSheet({ prefs, onChange }) {
+  const [settings, setSettings] = useState(() => nowSettings(prefs));
+  const set = (patch) => {
+    const next = { ...settings, ...patch };
+    saveNowSettings(prefs, next);
+    setSettings(next);
+    onChange?.(next);
+  };
+  return html`<div class="phone-agents-view" data-now-view>
+    <div class="phone-agents-view-head"><${SheetTitle}>View<//>
+      <button data-ui-exempt type="button" class="phone-link phone-agents-view-reset" disabled=${!settings.byGroup}
+        onClick=${() => set({ ...NOW_DEFAULTS })}>Reset</button></div>
+    <${SheetHead}>Order<//>
+    <label class="phone-agents-view-switch">
+      <span class="phone-agents-view-text">Group by group first<small>then the most recently active first in each group</small></span>
+      <${Switch} name="now-view-bygroup" checked=${settings.byGroup} onChange=${(event) => set({ byGroup: event.currentTarget.checked })} />
+    </label>
+    <p class="ui-hint phone-agents-view-hint">Off, errors, work and idle agents each list the most recently active first.</p>
+  </div>`;
+}
+
+export function NowView({ state, actions, fetchImpl = globalThis.fetch, processSource = processContext, prefs = dashPrefs }) {
   const [showAll, setShowAll] = useState(false);
+  const [settings, setSettings] = useState(() => nowSettings(prefs));
+  const changed = settings.byGroup !== NOW_DEFAULTS.byGroup;
+  usePhoneBar({ tab: 'now', actions: [
+    { key: 'view', icon: ViewIcon, label: changed ? 'View: changed from the defaults' : 'View', dot: changed,
+      onClick: () => openPhoneSheet({ label: 'View', Body: NowViewSheet, props: { prefs, onChange: setSettings } }) },
+  ] });
   const [chip, setChip] = useState(storedChip);
   const pick = (key) => { setChip(key); storeChip(key); };
   useEffect(() => { dropLegacyLooked(); }, []);
@@ -164,7 +200,7 @@ export function NowView({ state, actions, fetchImpl = globalThis.fetch, processS
   const gates = gateItems(useProcessRuns(processSource).context);
   const snapshot = state.snapshot.value;
   if (!snapshot) return html`<${Empty}>Loading…<//>`;
-  const now = nowView(snapshot);
+  const now = nowView(snapshot, settings);
   const view = { ...now, needs: now.needs + gates.length };
   const agents = companionAgents(snapshot);
   const asker = askerName(snapshot, agents);
