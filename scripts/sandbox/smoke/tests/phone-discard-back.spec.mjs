@@ -89,7 +89,7 @@ const openMail = async (page) => {
   await page.getByRole('group', { name: 'Mailboxes' }).getByRole('button', { name: /^Human/ }).click();
 };
 const openTerminal = async (page) => {
-  await views(page).getByRole('button', { name: /Agents/ }).click();
+  await views(page).getByRole('button', { name: /Groups/ }).click();
   await page.getByRole('button', { name: /^lead, idle.*open its terminal/ }).click();
   await expect(page.locator('.phone-term[role=dialog]')).toBeVisible();
 };
@@ -131,7 +131,7 @@ const GUARDED = [
   {
     name: "Agents: an agent's ⋯ › Message",
     open: async (page) => {
-      await views(page).getByRole('button', { name: /Agents/ }).click();
+      await views(page).getByRole('button', { name: /Groups/ }).click();
       await page.getByRole('button', { name: 'lead: more' }).click();
       await sheet(page).locator('.phone-agent-tile[data-act="message"]').click();
     },
@@ -141,7 +141,7 @@ const GUARDED = [
   {
     name: 'Agents: New agent › All options…',
     open: async (page) => {
-      await views(page).getByRole('button', { name: /Agents/ }).click();
+      await views(page).getByRole('button', { name: /Groups/ }).click();
       await page.getByRole('button', { name: 'New agent', exact: true }).click();
       await sheet(page).getByRole('button', { name: 'All options…' }).click();
     },
@@ -151,7 +151,7 @@ const GUARDED = [
   {
     name: 'Agents: New agent (its prompt)',
     open: async (page) => {
-      await views(page).getByRole('button', { name: /Agents/ }).click();
+      await views(page).getByRole('button', { name: /Groups/ }).click();
       await page.getByRole('button', { name: 'New agent', exact: true }).click();
     },
     type: (page) => sheet(page).getByLabel('Prompt').fill('migrate the checkout'),
@@ -251,7 +251,7 @@ const UNGUARDED = [
   {
     name: 'Terminal: › Type into the shell',
     open: async (page) => {
-      await views(page).getByRole('button', { name: /Agents/ }).click();
+      await views(page).getByRole('button', { name: /Groups/ }).click();
       await page.getByRole('button', { name: 'steward: more', exact: true }).first().click();
       await sheet(page).locator('[data-act="shell"]').first().click();
       await page.locator('.phone-term-type').click();

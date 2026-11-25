@@ -32,8 +32,8 @@ const SHEETS = [
     await page.locator('.phone-now-more').first().click();
     await sheet(page).getByRole('button', { name: /Message/ }).first().click();
   }],
-  ['new-agent', async (page) => { await nav(page).getByRole('button', { name: /Agents/ }).click(); await page.getByRole('button', { name: /^New agent in / }).first().click(); }],
-  ['agents-view', async (page) => { await nav(page).getByRole('button', { name: /Agents/ }).click(); await page.locator('.phone-bar').getByRole('button', { name: /View/ }).click(); }],
+  ['new-agent', async (page) => { await nav(page).getByRole('button', { name: /Groups/ }).click(); await page.getByRole('button', { name: /^New agent in / }).first().click(); }],
+  ['agents-view', async (page) => { await nav(page).getByRole('button', { name: /Groups/ }).click(); await page.locator('.phone-bar').getByRole('button', { name: /View/ }).click(); }],
   ['mailboxes', async (page) => { await nav(page).getByRole('button', { name: /Mail/ }).click(); await page.locator('.phone-bar-title-btn').click(); }],
   ['move', async (page) => { await nav(page).getByRole('button', { name: /Board/ }).click(); await page.locator('.phone-board-card').first().getByRole('button', { name: 'Move ▸' }).click(); }],
   ['comment', async (page) => { await nav(page).getByRole('button', { name: /Board/ }).click(); await page.locator('.phone-board-card').first().getByRole('button', { name: 'Comment' }).click(); }],

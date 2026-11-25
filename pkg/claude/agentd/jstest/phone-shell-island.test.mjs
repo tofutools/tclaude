@@ -57,20 +57,20 @@ async function setup(t, { startOnNow = true, available = () => true, processes =
 test('a fresh load lands on Now, with the counts on the nav', async (t) => {
   const { mounted, root, navItem } = await setup(t);
   const items = [...mounted.container.querySelectorAll('.phone-nav-item')];
-  assert.deepEqual(items.map((b) => b.querySelector('.phone-nav-icon').nextSibling.textContent), ['Now', 'Agents', 'Mail', 'Board', 'More']);
+  assert.deepEqual(items.map((b) => b.querySelector('.phone-nav-icon').nextSibling.textContent), ['Now', 'Groups', 'Mail', 'Board', 'More']);
   assert.equal(navItem('Now').getAttribute('aria-current'), 'page');
   assert.equal(root.dataset.phoneView, 'now', 'main is hidden under the own view');
   assert.equal(mounted.container.querySelector('.phone-bar-title').textContent, 'Now');
   assert.equal(navItem('Now').querySelector('.ui-badge').textContent, '1', 'one agent is asking');
   assert.equal(navItem('Mail').querySelector('.ui-badge').textContent, '3');
   assert.ok(mounted.container.querySelector('[aria-label="Needs you"]').textContent.includes('checkout-ui'));
-  // Every nav icon is one colour: Agents' is drawn in currentColor, not the
+  // Every nav icon is one colour: Groups' is drawn in currentColor, not the
   // 🤖 emoji, and no glyph is left to an emoji presentation.
-  assert.equal(navItem('Agents').querySelector('.phone-nav-icon svg').getAttribute('stroke'), 'currentColor');
+  assert.equal(navItem('Groups').querySelector('.phone-nav-icon svg').getAttribute('stroke'), 'currentColor');
   for (const item of items) assert.doesNotMatch(item.querySelector('.phone-nav-icon').textContent, /\p{Extended_Pictographic}(?!\uFE0E)/u);
 });
 
-test('Agents and Mail show their tab; Now and Board come back over it', async (t) => {
+test('Groups and Mail show their tab; Now and Board come back over it', async (t) => {
   const { harness, shell, calls, mounted, root, navItem, tap, state } = await setup(t);
   await tap(navItem('Mail'));
   assert.deepEqual(calls.at(-1), ['showTab', 'messages']);
@@ -116,7 +116,7 @@ test('Agents and Mail show their tab; Now and Board come back over it', async (t
 test('a deep link starts on its tab, not Now', async (t) => {
   const { root, navItem } = await setup(t, { startOnNow: false });
   assert.equal(root.dataset.phoneView, undefined);
-  assert.equal(navItem('Agents').getAttribute('aria-current'), 'page', 'the default tab is Groups');
+  assert.equal(navItem('Groups').getAttribute('aria-current'), 'page', 'the default tab is Groups');
 });
 
 test('landsOnNow: the bare dashboard, with or without a look param, lands on Now; a deep link does not', async (t) => {
@@ -205,8 +205,8 @@ test('leaving Now for the tab already under it still shows that tab', async (t) 
   // A fresh load lands on Now with Groups as the active tab: navigating to
   // Groups changes no tab, so the shell must leave the own view itself.
   const { shell, calls, mounted, root, tap } = await setup(t);
-  const allAgents = [...mounted.container.querySelectorAll('.phone-link')].find((b) => b.textContent.includes('All agents'));
-  await tap(allAgents);
+  const allGroups = [...mounted.container.querySelectorAll('.phone-link')].find((b) => b.textContent.includes('All groups'));
+  await tap(allGroups);
   assert.deepEqual(calls.at(-1), ['navigate', '/']);
   assert.equal(shell.view.value, null);
   assert.equal(root.dataset.phoneView, undefined);
@@ -249,7 +249,7 @@ test('the More sheet sits above the nav: More lit, the rest of the shell inert, 
 
 test('a sheet from the top bar is modal: the nav is inert under it', async (t) => {
   const { harness, mounted, navItem, tap } = await setup(t);
-  await tap(navItem('Agents'));
+  await tap(navItem('Groups'));
   await tap(mounted.container.querySelector('.phone-bar [aria-label="Search"]'));
   const nav = mounted.container.querySelector('.phone-nav');
   assert.equal(nav.inert, true);
@@ -293,7 +293,7 @@ test('a tab\'s pushed page takes the top bar and the bottom edge until it goes',
   assert.ok(mounted.container.querySelector('.phone-bar-back'), 'the page is back with its back button');
 
   // Another tab drops it, so it never outlives its tab.
-  await tap(navItem('Agents'));
+  await tap(navItem('Groups'));
   assert.equal(phonePage.value, null);
   assert.equal(mounted.container.querySelector('.phone-bar-back'), null);
 });
@@ -333,7 +333,7 @@ test('a tab a phone does not offer gets a desktop-only page in its place', async
   assert.equal(root.dataset.phoneView, undefined, 'a tab with a phone view shows');
 });
 
-test('a deep link left Groups on the route map: Agents and Show agents both go back to the list', async (t) => {
+test('a deep link left Groups on the route map: Groups and Show groups both go back to the list', async (t) => {
   const { harness, state, calls, mounted, navItem, tap } = await setup(t, { startOnNow: false });
   const { registerFeatureState } = await harness.importDashboardModule('js/feature-state-registry.js');
   const subview = harness.signals.signal('routes');
@@ -341,12 +341,12 @@ test('a deep link left Groups on the route map: Agents and Show agents both go b
   await harness.act(() => state.setActiveTab('config'));
   await harness.act(() => state.setActiveTab('groups'));
   assert.match(mounted.container.querySelector('.phone-desktop-page').textContent, /Route map is desktop only/);
-  await tap(harness.getByRole(mounted.container, 'button', { name: 'Show agents' }));
+  await tap(harness.getByRole(mounted.container, 'button', { name: 'Show groups' }));
   assert.deepEqual(calls.at(-1), ['navigate', '/']);
   calls.length = 0;
   await tap(mounted.container.querySelector('.phone-bar .phone-bar-back'));
   assert.deepEqual(calls.at(-1), ['navigate', '/'], 'the bar\'s ‹ goes back to the list too, as in the mock');
-  await tap(navItem('Agents'));
+  await tap(navItem('Groups'));
   assert.deepEqual(calls.at(-1), ['navigate', '/'], 'not a no-op showTab of the active tab');
   await harness.act(() => { subview.value = 'members'; });
   assert.equal(mounted.container.querySelector('.phone-desktop-page'), null);
@@ -363,13 +363,13 @@ test('More → Fleet over Now shows Fleet even when it is the tab underneath', a
   assert.equal(shell.view.value, null, 'Now steps aside for the tab');
 });
 
-test('each root view has its own top-bar actions: node chip and 🔍 on Now, 🔍 on Agents, and no ⏻', async (t) => {
+test('each root view has its own top-bar actions: node chip and 🔍 on Now, 🔍 on Groups, and no ⏻', async (t) => {
   const { harness, bar, navItem, tap } = await setup(t);
   const named = (name) => harness.getByRole(bar(), 'button', { name });
   assert.ok(named('Search'), 'Now has search');
   assert.equal(bar().querySelector('.phone-node-chip').textContent.trim(), '⌂dev@box', 'and names the node on screen');
   assert.equal(bar().querySelector('[aria-label="Power"]'), null);
-  await tap(navItem('Agents'));
+  await tap(navItem('Groups'));
   assert.equal(bar().querySelector('[aria-label="Power"]'), null, 'powering on or off is in ☰ More');
   assert.ok(named('Search'));
   assert.equal(bar().querySelector('.phone-node-chip'), null, 'the node chip is on Now and More only');
@@ -430,7 +430,7 @@ test('🔍 finds agents, groups, mail and tasks, and opens what is tapped', asyn
   assert.ok(bar().querySelector('.phone-bar-back'), "the task's page, with its back button");
 });
 
-test('a search for a group opens Agents on that group', async (t) => {
+test('a search for a group opens Groups on that group', async (t) => {
   const { harness, calls, bar, sheet, tap } = await setup(t);
   const { agentsFilter } = await harness.importDashboardModule('js/phone-agents-model.js');
   t.after(() => { agentsFilter.value = []; });
@@ -460,9 +460,9 @@ test('with linked nodes the node chip opens a picker, on Now and atop More', asy
   assert.ok(sheet().querySelector('.phone-more-node .phone-node-chip'), 'More names the node too');
 });
 
-test('Agents\' Board › brings the Board up over the tab, on that group', async (t) => {
+test('Groups\' Board › brings the Board up over the tab, on that group', async (t) => {
   const { harness, shell, mounted, navItem, tap, root } = await setup(t);
-  await tap(navItem('Agents'));
+  await tap(navItem('Groups'));
   assert.equal(shell.view.value, null);
   const board = await harness.importDashboardModule('js/phone-board.js');
   await harness.act(() => board.openBoardGroup('webshop'));
@@ -553,12 +553,12 @@ test('the toggle: ▾ while the nav shows, ▴ with the nav\'s count while hidde
   assert.equal(toggles.navShown('terminal', broken), false);
 });
 
-test('the Steward\'s ✦ button floats over Now and Agents only', async (t) => {
+test('the Steward\'s ✦ button floats over Now and Groups only', async (t) => {
   const { mounted, navItem, tap, shell } = await setup(t);
   const fab = () => mounted.container.querySelector('.phone-steward-fab');
   assert.ok(fab(), 'on Now');
-  await tap(navItem('Agents'));
-  assert.ok(fab(), 'on Agents');
+  await tap(navItem('Groups'));
+  assert.ok(fab(), 'on Groups');
   await tap(navItem('Board'));
   assert.equal(fab(), null, 'not on Board');
   shell.view.value = 'now';
@@ -572,7 +572,7 @@ test('a floating terminal keeps the view and its nav, and a nav pick leaves it o
   t.after(() => { nav.terminalDock.value = null; });
   assert.ok(mounted.container.querySelector('.phone-nav'), 'the nav stays');
   assert.equal(harness.document.documentElement.dataset.phoneTerminalNav, undefined, 'not the docked terminal\'s nav');
-  await tap(navItem('Agents'));
+  await tap(navItem('Groups'));
   assert.equal(closed, 0, 'the floating terminal stays open');
   await tap(navItem('Board'));
   assert.equal(closed, 1, 'another view takes a floating one down: it would cover its controls');

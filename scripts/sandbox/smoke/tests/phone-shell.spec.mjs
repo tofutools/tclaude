@@ -66,7 +66,7 @@ test.describe('on a phone', () => {
     await expect(page.locator('#agent-dock')).toBeHidden();
     await expectNoSideScroll(page, 'Now');
 
-    for (const [slot, heading, section] of [['Agents', 'Agents', '#tab-groups'], ['Mail', 'Mail', '#tab-messages']]) {
+    for (const [slot, heading, section] of [['Groups', 'Groups', '#tab-groups'], ['Mail', 'Mail', '#tab-messages']]) {
       await nav.getByRole('button', { name: new RegExp(slot) }).click();
       await expect(title).toHaveText(new RegExp(`^${heading}`));
       await expect(page.locator(section)).toBeVisible();
@@ -98,11 +98,11 @@ test.describe('on a phone', () => {
     const errors = collectErrors(page);
     await page.goto('/');
     await booted(page);
-    await page.getByRole('navigation', { name: 'Views' }).getByRole('button', { name: /Agents/ }).click();
+    await page.getByRole('navigation', { name: 'Views' }).getByRole('button', { name: /Groups/ }).click();
     const items = page.locator('.phone-agent:not(.phone-agent-off)');
     await expect(items.first()).toBeVisible();
     await expect(page.locator('#groups-list')).not.toBeInViewport();
-    await expectNoSideScroll(page, 'Agents');
+    await expectNoSideScroll(page, 'Groups');
     const name = await items.first().locator('.phone-agent-title').textContent();
     // ⋯ is the agent's sheet, with the desktop's confirmations behind it.
     await items.first().locator('.phone-agent-more').click();

@@ -138,7 +138,7 @@ test('the context meter by the pill, its figure in the agent menu, and no contex
   await expect(problems.locator('.phone-now-when')).not.toContainText([/context \d+% full/]);
   await shot('now-problems');
 
-  await page.getByRole('navigation', { name: 'Views' }).getByRole('button', { name: /^Agents/ }).click();
+  await page.getByRole('navigation', { name: 'Views' }).getByRole('button', { name: /^Groups/ }).click();
   const row = page.locator('.phone-agent').filter({ has: page.locator('.phone-agent-title', { hasText: /^db-migrations$/ }) });
   await expect(row.locator('.phone-agent-line > .ctx-meter.ctx-regular .ctx-seg.lit-red')).toHaveCount(1);
   await expect(row.locator('.phone-agent-meta')).not.toContainText('ctx');

@@ -12,9 +12,9 @@ const member = (agent_id, title, status, extra = {}) => ({
   agent_id, conv_id: `conv-${agent_id}`, title, online: true, state: { status }, ...extra,
 });
 
-test('the bottom nav is Now · Agents · Mail · Board · More', async (t) => {
+test('the bottom nav is Now · Groups · Mail · Board · More', async (t) => {
   const { PHONE_SLOTS } = await load(t);
-  assert.deepEqual(PHONE_SLOTS.map((slot) => slot.label), ['Now', 'Agents', 'Mail', 'Board', 'More']);
+  assert.deepEqual(PHONE_SLOTS.map((slot) => slot.label), ['Now', 'Groups', 'Mail', 'Board', 'More']);
 });
 
 test('the highlighted slot follows the own view, else the active tab', async (t) => {
@@ -25,7 +25,7 @@ test('the highlighted slot follows the own view, else the active tab', async (t)
   assert.equal(slotFor(null, 'messages'), 'mail');
   assert.equal(slotFor(null, 'config'), 'more', 'every other tab is under More');
   assert.equal(titleFor('now', 'groups'), 'Now');
-  assert.equal(titleFor(null, 'groups'), 'Agents');
+  assert.equal(titleFor(null, 'groups'), 'Groups');
   assert.equal(titleFor(null, 'config'), 'Settings');
   assert.equal(titleFor(null, 'nonesuch'), 'tclaude');
 });

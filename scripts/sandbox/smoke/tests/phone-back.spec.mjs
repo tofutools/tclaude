@@ -36,13 +36,13 @@ test('Back returns to Now and Board, and closes sheets', async ({ page }) => {
   await page.goBack();
   await expect(title(page)).toHaveText(/^Board/);
 
-  await nav(page, 'Agents');
+  await nav(page, 'Groups');
   await page.locator('.phone-agent-more').first().click();
   const sheet = page.locator('.phone-sheet');
   await expect(sheet).toBeVisible();
   await page.goBack();
   await expect(sheet).toHaveCount(0);
-  await expect(title(page)).toHaveText('Agents');
+  await expect(title(page)).toHaveText('Groups');
 });
 
 test('a page inside a tab is a step of its own, and its ‹ leaves no extra step', async ({ page }) => {

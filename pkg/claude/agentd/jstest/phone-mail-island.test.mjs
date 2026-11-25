@@ -470,7 +470,7 @@ test('Find › sits beside Terminal ›, on in either case; a sender that is not
   assert.equal(phonePage.value.actions[0].muted, true, '⌖ too');
   const find = $('.phone-mail-find');
   assert.equal(find.textContent, 'Find ›');
-  assert.equal(find.getAttribute('aria-label'), 'Find Alpha in Agents');
+  assert.equal(find.getAttribute('aria-label'), 'Find Alpha in Groups');
   assert.equal(find.disabled, false, 'an offline sender is what Find is for');
   assert.equal(terminal.nextElementSibling, find);
   assert.equal(route.agentPath('agt_alpha'), '/groups?agent=agt_alpha');
@@ -479,7 +479,7 @@ test('Find › sits beside Terminal ›, on in either case; a sender that is not
   const snapshot = { agents: [{ agent_id: 'agt_alpha', conv_id: 'conv-a', online: false }], ungrouped: [] };
   const msg = { from_agent: 'agt_alpha', from_conv: 'conv-a' };
   const never = async () => { throw new Error('not asked'); };
-  assert.match(await island.whyNotLive(msg, 'Alpha', { snapshot, fetchImpl: never }), /^Alpha is offline\. Find › shows it in Agents/);
+  assert.match(await island.whyNotLive(msg, 'Alpha', { snapshot, fetchImpl: never }), /^Alpha is offline\. Find › shows it in Groups/);
   const asked = [];
   const retired = (rows) => async (url) => { asked.push(url); return { ok: true, json: async () => ({ rows }) }; };
   assert.equal(await island.whyNotLive(msg, 'Alpha', { snapshot: {}, fetchImpl: retired([{ agent_id: 'agt_alpha' }]) }), 'Alpha was retired.');

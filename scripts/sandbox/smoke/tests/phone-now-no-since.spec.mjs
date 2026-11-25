@@ -48,7 +48,7 @@ test('Now shows no Since you looked section, and forgets a stored look', async (
     await expect(page.getByText('Mark seen')).toHaveCount(0);
     expect(await page.evaluate((key) => localStorage.getItem(key), KEY)).toBeNull();
   }
-  await page.locator('.phone-nav').getByRole('button', { name: /Agents/ }).first().click();
+  await page.locator('.phone-nav').getByRole('button', { name: /Groups/ }).first().click();
   await expect(page.locator('.phone-bar')).toBeVisible();
   if (process.env.SHOTS) await page.locator('.phone-bar').screenshot({ path: path.join(process.env.SHOTS, 'agents-bar.png') });
   if (!process.env.BEFORE) {

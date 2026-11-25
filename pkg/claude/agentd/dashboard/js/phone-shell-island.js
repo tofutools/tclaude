@@ -75,14 +75,14 @@ export function landsOnNow(loc = globalThis.location) {
 
 // NAV_ICONS are the bottom nav's drawn icons, by a slot's icon name: one
 // colour (currentColor), like the text glyphs beside them, where an emoji
-// (🤖) would be drawn in its own colours and look like the tab on screen.
+// (👥) would be drawn in its own colours and look like the tab on screen.
 const NAV_ICONS = Object.freeze({
-  robot: html`<svg class="phone-nav-svg" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor"
+  // Groups: three people, the one in front over the two behind.
+  group: html`<svg class="phone-nav-svg" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor"
     stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-    <path d="M12 3v3" /><circle cx="12" cy="2.6" r="0.9" fill="currentColor" stroke="none" />
-    <rect x="4.5" y="6.5" width="15" height="12" rx="3.5" />
-    <circle cx="9.2" cy="12" r="1.4" fill="currentColor" stroke="none" /><circle cx="14.8" cy="12" r="1.4" fill="currentColor" stroke="none" />
-    <path d="M9.5 15.6h5" /><path d="M2.5 11.5v3M21.5 11.5v3" />
+    <circle cx="12" cy="8" r="3.2" /><path d="M5.5 20v-1a6.5 6.5 0 0 1 13 0v1" />
+    <circle cx="5" cy="9.5" r="2.2" /><path d="M1.5 17.5v-.5a4 4 0 0 1 4.2-4" />
+    <circle cx="19" cy="9.5" r="2.2" /><path d="M22.5 17.5v-.5a4 4 0 0 0-4.2-4" />
   </svg>`,
 });
 
@@ -263,7 +263,7 @@ export function PhoneShell({ shell, state, actions, boardSource, fetchImpl = glo
   // A desktop-only page over a tab with a phone view of its own offers it,
   // both as a button on the page and as the bar's ‹ (as in the mock).
   const desktopOther = !desktopOnly ? null
-    : activeTab === 'groups' ? { label: 'Show agents', onClick: () => viewActions.navigate('/') }
+    : activeTab === 'groups' ? { label: 'Show groups', onClick: () => viewActions.navigate('/') }
       : activeTab === 'map' ? { label: 'Show fleet', onClick: () => actions.showTab('fleet-admin') }
         : activeTab === 'diagnostics' ? { label: 'Open the Doctor', onClick: () => viewActions.navigate('/diagnostics/doctor') }
           : null;

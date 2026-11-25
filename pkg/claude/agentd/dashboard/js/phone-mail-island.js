@@ -528,7 +528,7 @@ export async function whyNotLive(item, sender, { snapshot = dashboardState.snaps
   if (!id) return 'Unknown sender: there is no agent to open.';
   const same = (m) => m && (m.agent_id === id || m.conv_id === id || (item.from_conv && m.conv_id === item.from_conv));
   if ([...(snapshot?.agents || []), ...(snapshot?.ungrouped || [])].some(same)) {
-    return `${sender} is offline. Find › shows it in Agents, where you can power it on.`;
+    return `${sender} is offline. Find › shows it in Groups, where you can power it on.`;
   }
   try {
     const response = await fetchImpl(`/api/retired?limit=20&q=${encodeURIComponent(id)}`, { credentials: 'same-origin' });
@@ -549,7 +549,7 @@ const tryTerminal = (item, sender, live) => {
 // opened up, the row glowing. Never off: finding an offline sender to power
 // it on is what it is for.
 function FindButton({ item, sender }) {
-  return html`<${Button} class="phone-btn phone-mail-find" aria-label=${`Find ${sender} in Agents`}
+  return html`<${Button} class="phone-btn phone-mail-find" aria-label=${`Find ${sender} in Groups`}
     onClick=${() => findAgentRoute(item.from_agent)}>Find ›<//>`;
 }
 
@@ -641,7 +641,7 @@ function DesktopReader({ current, controller, model, item, active, back }) {
       key: 'terminal', icon: 'Terminal ›', label: live ? `Open ${sender}'s terminal` : `${sender} is offline`, muted: !live,
       onClick: () => tryTerminal(item, sender, live),
     }, ...(findable(item) ? [{
-      key: 'find', icon: 'Find ›', label: `Find ${sender} in Agents`, onClick: () => findAgentRoute(item.from_agent),
+      key: 'find', icon: 'Find ›', label: `Find ${sender} in Groups`, onClick: () => findAgentRoute(item.from_agent),
     }] : [])] : [],
   }, active);
   useLayoutEffect(() => { globalThis.scrollTo?.(0, 0); }, [item.id]);

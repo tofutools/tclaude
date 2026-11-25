@@ -39,14 +39,14 @@ test('the Fleet map and the Route map say they are desktop only, with a way on',
   await booted(page);
   await expect(page.locator('.phone-bar-title')).toHaveText('Route map');
   await expect(desktopPage(page)).toContainText('Route map is desktop only');
-  await desktopPage(page).getByRole('button', { name: 'Show agents' }).click();
-  await expect(page.locator('.phone-bar-title')).toHaveText('Agents');
+  await desktopPage(page).getByRole('button', { name: 'Show groups' }).click();
+  await expect(page.locator('.phone-bar-title')).toHaveText('Groups');
 
   // The bar's ‹ leads the same way, as in the mock.
   await page.goto('/groups/routes');
   await booted(page);
-  await page.getByRole('button', { name: 'Back: Show agents' }).click();
-  await expect(page.locator('.phone-bar-title')).toHaveText('Agents');
+  await page.getByRole('button', { name: 'Back: Show groups' }).click();
+  await expect(page.locator('.phone-bar-title')).toHaveText('Groups');
   expect(errors).toEqual([]);
 });
 
@@ -61,8 +61,8 @@ test('a Groups run link opens the run in Automations, and Back goes to the Runs'
   await expect(page.locator('.phone-run-open').first()).toBeVisible();
   // Agents is Agents, not the run link again (the hidden Groups island's
   // single-run focus is cleared).
-  await page.locator('.phone-nav').getByRole('button', { name: /Agents/ }).click();
-  await expect(page.locator('.phone-bar-title')).toHaveText('Agents');
+  await page.locator('.phone-nav').getByRole('button', { name: /Groups/ }).click();
+  await expect(page.locator('.phone-bar-title')).toHaveText('Groups');
   await expect(page).toHaveURL(/\/groups$|\/$/);
   expect(errors).toEqual([]);
 });
