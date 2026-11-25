@@ -563,3 +563,20 @@ test('the Steward\'s ✦ button floats over Now and Agents only', async (t) => {
   assert.equal(fab(), null, 'not on Board');
   shell.view.value = 'now';
 });
+
+test('a floating terminal keeps the view and its nav, and a nav pick leaves it open', async (t) => {
+  const { harness, mounted, navItem, tap } = await setup(t);
+  const nav = await harness.importDashboardModule('js/phone-nav-toggle.js');
+  let closed = 0;
+  await harness.act(() => { nav.terminalDock.value = { keyboard: false, float: true, close: () => { closed += 1; } }; });
+  t.after(() => { nav.terminalDock.value = null; });
+  assert.ok(mounted.container.querySelector('.phone-nav'), 'the nav stays');
+  assert.equal(harness.document.documentElement.dataset.phoneTerminalNav, undefined, 'not the docked terminal\'s nav');
+  await tap(navItem('Agents'));
+  assert.equal(closed, 0, 'the floating terminal stays open');
+  await tap(navItem('Board'));
+  assert.equal(closed, 1, 'another view takes a floating one down: it would cover its controls');
+  await harness.act(() => { nav.terminalDock.value = { keyboard: false, float: false, close: () => { closed += 1; } }; });
+  await tap(navItem('Now'));
+  assert.equal(closed, 2, 'a docked one closes');
+});

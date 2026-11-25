@@ -110,12 +110,15 @@ export function PhoneShell({ shell, state, actions, boardSource, fetchImpl = glo
   // operator hid it there, or the phone's keyboard is up (the nav would sit
   // on the keys).
   const dock = terminalDock.value;
-  const navOff = dock ? dock.keyboard || !navShown('terminal') : hideNav;
+  // A terminal floating over the page (the Steward's, phone-terminal-island.js
+  // phoneTermFloat) leaves the page and its nav as they are.
+  const docked = dock && !dock.float;
+  const navOff = docked ? dock.keyboard || !navShown('terminal') : hideNav;
   useEffect(() => {
     const root = document.documentElement;
-    if (dock && !navOff) root.dataset.phoneTerminalNav = '';
+    if (docked && !navOff) root.dataset.phoneTerminalNav = '';
     else delete root.dataset.phoneTerminalNav;
-  }, [!!dock, navOff]);
+  }, [!!docked, navOff]);
   // A view a phone does not offer (js/phone-desktop-only.js) gets a page
   // that says so in place of its desktop content.
   const routeMap = featureState('groups')?.subview?.value === 'routes';
@@ -228,8 +231,10 @@ export function PhoneShell({ shell, state, actions, boardSource, fetchImpl = glo
   function pick(target) {
     // More's sheet sits above the nav: More again closes it.
     const wasMore = phoneSheet.peek()?.slot === 'more';
-    // A view picked under a terminal takes the terminal down first.
-    terminalDock.peek()?.close();
+    // A view picked under a docked terminal takes the terminal down first; a
+    // floating one stays over Now and Agents, the views it floats over, and
+    // goes with any other (it would cover their bottom controls).
+    if (!terminalDock.peek()?.float || !STEWARD_FAB_SLOTS.includes(target.id)) terminalDock.peek()?.close();
     closePhoneSheet();
     if (target.id === 'more') {
       if (!wasMore) openPhoneSheet({ label: 'More', Body: MoreMenu, props: { state, actions: viewActions, fleet }, overNav: true, slot: 'more' });

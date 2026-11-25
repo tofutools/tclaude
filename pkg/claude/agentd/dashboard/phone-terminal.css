@@ -2,7 +2,7 @@
    One terminal, docked full screen over everything but dialogs, which open
    above it (the agent's message sheet). The island sets the height to the
    visual viewport, so the key strip rides above an on-screen keyboard. */
-:root[data-layout="phone"][data-phone-terminal] body { overflow: hidden; }
+:root[data-layout="phone"][data-phone-terminal="open"] body { overflow: hidden; }
 :root[data-layout="phone"] .phone-term {
   position: fixed; left: 0; right: 0; top: 0; height: 100dvh; z-index: var(--z-panel);
   display: flex; flex-direction: column;
@@ -115,6 +115,14 @@
   font: 16px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif;
 }
 :root[data-layout="phone"] .phone-compose-body:focus { outline: none; border-color: var(--phone-accent-bg); }
+/* With the keyboard up, the message sheet takes the room above it (not 85% of
+   the screen less the keyboard, which left its Send row below the fold), and
+   its text field gives up height first. min() with the keyboard's height
+   times a large number is 0 with no keyboard and the full step with one. */
+:root[data-layout="phone"] .phone-sheet:has(.phone-compose) {
+  max-height: calc(85vh - var(--phone-keyboard) + min(15vh - 48px, var(--phone-keyboard) * 1000));
+}
+:root[data-layout="phone"] .phone-compose-body { min-height: calc(110px - min(50px, var(--phone-keyboard) * 1000)); }
 :root[data-layout="phone"] .phone-compose-attachments { display: flex; flex-wrap: wrap; gap: 6px; margin: 0; padding: 0; list-style: none; }
 :root[data-layout="phone"] .phone-compose-att {
   display: inline-flex; align-items: center; gap: 4px; max-width: 100%; padding: 2px 4px 2px 12px; border-radius: 16px;
@@ -188,3 +196,25 @@
 
 /* The Diagnostics overlay (dashboard.css .term-diag): below the pinch chip. */
 :root[data-layout="phone"] .term-diag { top: 40px; }
+
+/* The Steward's terminal floating over the page (phoneTermFloat): a card
+   above the nav, the view usable above it and scrolling clear of it at its
+   end. An experiment: the keyboard and the ⤢ button dock it full screen. */
+:root[data-layout="phone"] {
+  --phone-float-h: min(46dvh, 420px);
+}
+:root[data-layout="phone"] .phone-term.phone-term-float {
+  top: auto; left: 8px; right: 8px; bottom: calc(var(--footer-h) + 8px); height: var(--phone-float-h);
+  border: 1px solid var(--ui-line); border-radius: 16px; overflow: hidden;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.55);
+}
+:root[data-layout="phone"] .phone-term.phone-term-float.phone-term-away { visibility: hidden; }
+:root[data-layout="phone"] .phone-term-float .phone-term-bar { padding-top: 0; min-height: 48px; }
+:root[data-layout="phone"][data-phone-terminal="float"] :is(.phone-view, main) {
+  padding-bottom: calc(var(--phone-float-h) + 24px);
+}
+:root[data-layout="phone"] .phone-term-float-btn {
+  flex: none; display: grid; place-items: center; width: var(--phone-tap); height: var(--phone-tap); padding: 0;
+  border: 0; border-radius: var(--phone-btn-r); background: none; color: var(--ui-text);
+}
+:root[data-layout="phone"] .phone-term-float-btn[aria-pressed="true"] { color: var(--phone-accent); }
