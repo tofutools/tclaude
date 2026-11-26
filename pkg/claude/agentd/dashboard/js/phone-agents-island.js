@@ -45,6 +45,7 @@ import { Check, Switch } from './ui-components.js';
 import { shellToast } from './shell-state.js';
 import { agentFocus, doneAgentFocus } from './agent-route.js';
 import { groupShellOffer, openGroupShell } from './phone-open-shell.js';
+import { GroupLinks } from './phone-group-links.js';
 
 // FOUND_MS is how long a found row glows (phone-agents.css
 // .phone-agent-found): long enough to spot it after the scroll.
@@ -335,9 +336,10 @@ function SubgroupCard({ node, onOpen }) {
 
 // GroupPage is one group's page: where it sits (the crumbs, each a tap to
 // that group's page), a card with what is up and the group's own actions
-// (through the desktop's handlers, so its confirmations), its subgroups, then
-// its members as the lead/worker tree. An archived group refuses changes, so
-// its card offers only its board and mail.
+// (through the desktop's handlers, so its confirmations), its subgroups, its
+// links (phone-group-links.js), then its members as the lead/worker tree. An
+// archived group refuses changes, so its card offers only its board and
+// mail, and its links can be looked at only.
 export function GroupPage({ page, actions, list, onOpen, spawn, snapshot = null, openShell = openGroupShell }) {
   const offline = page.total - page.live;
   const name = page.name;
@@ -373,6 +375,7 @@ export function GroupPage({ page, actions, list, onOpen, spawn, snapshot = null,
         ? html`<ul class="phone-list phone-agents-subcards">${page.children.map((child) => html`<${SubgroupCard} key=${child.key} node=${child} onOpen=${onOpen} />`)}</ul>`
         : html`<p class="phone-agents-note">None. Nest one from the desktop.</p>`}
     <//>
+    <${GroupLinks} group=${name} snapshot=${snapshot} readOnly=${page.archived} />
     <${Section} title="Members" count=${page.total}>
       ${page.total
         ? html`<${AgentList} g=${page} isSteward=${list.isSteward} onTap=${list.tap(page)} onMore=${list.more(page)} />

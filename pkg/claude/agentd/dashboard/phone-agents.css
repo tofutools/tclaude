@@ -222,3 +222,20 @@
   0%, 70% { box-shadow: 0 0 0 2px var(--phone-accent); }
   100% { box-shadow: 0 0 0 2px transparent; }
 }
+/* A group page's Links (phone-group-links.js): one row per link, a tap
+   opens its sheet; ＋ Link in the section head adds one. */
+:root[data-layout="phone"] .phone-links .phone-section-head { display: flex; align-items: center; justify-content: space-between; }
+:root[data-layout="phone"] .phone-links-add { flex: none; min-height: var(--phone-tap); margin: -6px 0; font-size: 13px; font-weight: 600; text-transform: none; letter-spacing: 0; }
+:root[data-layout="phone"] .phone-links-list { display: flex; flex-direction: column; gap: 8px; }
+:root[data-layout="phone"] .phone-links-row {
+  width: 100%; min-height: var(--phone-tap); display: flex; align-items: center; gap: 10px; padding: 10px 12px;
+  border: 1px solid var(--phone-line); border-radius: var(--phone-r); background: var(--phone-panel);
+  color: var(--ui-text); font: inherit; text-align: left; cursor: pointer;
+}
+:root[data-layout="phone"] .phone-links-dir { flex: none; width: 1.2em; color: var(--ui-muted-text); font-weight: 600; text-align: center; }
+:root[data-layout="phone"] .phone-links-text { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+:root[data-layout="phone"] .phone-links-other { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; color: var(--ui-text-strong); }
+:root[data-layout="phone"] .phone-links-mode { color: var(--ui-muted-text); font-size: 13px; }
+:root[data-layout="phone"] .phone-links-row .phone-agents-chev { flex: none; }
+:root[data-layout="phone"] .phone-link-peer-note { margin: 0; }
+:root[data-layout="phone"] .phone-link-ask .phone-agents-note { margin: 0 0 8px; }
