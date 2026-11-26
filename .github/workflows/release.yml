@@ -204,9 +204,10 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TCLAUDE_RELEASE_VERSION: ${{ needs.version.outputs.new_version }}
           TCLAUDE_INSTALL_METHOD: release
-          # Built in its own empty GOCACHE, apart from setup-go's restored
-          # one.
-          GOCACHE: ${{ runner.temp }}/gocache-release-build
+          # No GOCACHE override: the build uses setup-go's restored cache, and
+          # the Seatbelt smoke after it compiles the same packages warm. (An
+          # empty cache was once needed to keep the agentd build snapshot,
+          # saved from this job, clean; agentd now has its own job.)
 
       # Same assertion as the Linux build job.
       - name: Verify every binary was built and version stamped
