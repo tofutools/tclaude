@@ -2772,8 +2772,11 @@ test('a set-up node whose hub drops keeps Peers on screen', async (t) => {
   assert.ok(settled.q('#fleet-trusted'));
   const dropped = status();
   settled.actions.status = async () => ({ ...dropped, hub: { state: 'disconnected' } });
-  await settled.harness.act(() => { settled.timers.queue.find((q) => q.ms !== 5000)?.fn(); });
-  await settled.harness.act(() => new Promise((r) => setTimeout(r, 25)));
+  // Await the status poll itself: it is async, and a fixed real-time wait
+  // after firing it raced its reads on a slow runner.
+  const poll = settled.timers.queue.find((q) => q.ms !== 5000);
+  assert.ok(poll, 'the status poll is queued');
+  await settled.harness.act(async () => { settled.timers.queue.splice(settled.timers.queue.indexOf(poll), 1); await poll.fn(); });
   assert.match(settled.q('.fa-identity').textContent, /disconnected/, 'the status read saw the drop');
   assert.ok(settled.q('#fleet-trusted'), 'Peers stays while the hub is down');
 });
