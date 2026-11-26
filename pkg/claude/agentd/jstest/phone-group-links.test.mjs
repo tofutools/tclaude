@@ -161,5 +161,17 @@ test('an archived group\'s links can be looked at, not changed', async (t) => {
   assert.equal(q('.phone-links-add'), null);
   await harness.act(() => q('[data-link-id="1"]').click());
   assert.ok(dialog());
-  assert.equal(dialog().querySelectorAll('button').length, 0);
+  assert.deepEqual([...dialog().querySelectorAll('button')].map((b) => b.textContent.trim()), ['Close'], 'only a way out');
+});
+
+test('a save in flight holds the sheet: Back does not drop it, and the refusal shows', async (t) => {
+  const { harness, q, dialog, button, net } = await mount(t, { refuse: 'permission denied: groups.links' });
+  const sheets = await harness.importDashboardModule('js/phone-sheet.js');
+  await harness.act(() => q('[data-link-id="1"]').click());
+  await pick(harness, dialog().querySelector('[name="link-mode"]'), 'owners->members');
+  await harness.act(() => button('Save').click());
+  await harness.act(() => sheets.requestClosePhoneSheet({ back: true }));
+  await until(harness, () => dialog()?.querySelector('[role="alert"]'), 'the refusal');
+  assert.match(dialog().querySelector('[role="alert"]').textContent, /permission denied/);
+  assert.equal(net.writes().length, 1);
 });

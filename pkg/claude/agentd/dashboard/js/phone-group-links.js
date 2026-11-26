@@ -13,7 +13,7 @@
 // the desktop.
 
 import { h } from 'preact';
-import { useEffect, useRef, useState } from 'preact/hooks';
+import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { createLinksActions } from './links-actions.js';
 import { createLinksState } from './links-state.js';
@@ -121,13 +121,15 @@ export function GroupLinks({ group, snapshot, readOnly = false, fetchImpl = glob
 }
 
 // useAsk is a removal question the sheet shows in place of its buttons: ask
-// resolves true on its OK, false on Keep or on Back.
-function useAsk() {
+// resolves true on its OK, false on Keep or on Back. While busy() (a save or
+// a removal in flight) the sheet holds: a close then would leave the result
+// with nowhere to show.
+function useAsk(busy) {
   const [spec, setSpec] = useState(null);
   const answer = useRef(null);
   const settle = (yes) => { answer.current?.(yes); answer.current = null; setSpec(null); };
   useSheetGuard(() => {
-    if (!answer.current) return false;
+    if (!answer.current) return busy();
     settle(false);
     return true;
   });
@@ -151,13 +153,21 @@ function ModeField({ mode, setMode, disabled }) {
 // link's mode is the two nodes' agreement, so it can only be removed (or a
 // request withdrawn) here, as on the desktop.
 export function LinkSheet({ row, group, readOnly = false, close, fetchImpl, refresh, notify, actions: given = null }) {
-  const asking = useAsk();
+  const lock = useRef(false);
+  const asking = useAsk(() => lock.current);
   const [actions] = useState(() => given || phoneLinkActions({ fetchImpl, refresh, notify, ask: asking.ask }));
   const { link, remote } = row;
   const [mode, setMode] = useState(link.mode || 'members->members');
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
-  const lock = useRef(false);
+  // The question takes the focus (its Keep); Keep gives it back to Remove.
+  const sheet = useRef(null);
+  const asked = useRef(false);
+  useLayoutEffect(() => {
+    if (asking.spec) sheet.current?.querySelector('.phone-link-ask button')?.focus();
+    else if (asked.current) sheet.current?.querySelector('[data-link-remove]')?.focus();
+    asked.current = !!asking.spec;
+  }, [asking.spec]);
   const run = async (what, job) => {
     if (lock.current) return;
     lock.current = true;
@@ -177,7 +187,7 @@ export function LinkSheet({ row, group, readOnly = false, close, fetchImpl, refr
   const remove = () => run('remove', () => actions.deleteLink(deleteFields(link)));
   const pending = !remote ? false : deleteFields(link).pending;
   const spec = asking.spec;
-  return html`<div class="phone-agents-spawn phone-link-sheet" data-link-sheet=${link.id}>
+  return html`<div ref=${sheet} class="phone-agents-spawn phone-link-sheet" data-link-sheet=${link.id}>
     <${SheetTitle} clip>${link.from || '(deleted)'} → ${remote && row.out ? row.other : link.to || '(deleted)'}<//>
     <p class="phone-agent-sheet-meta">#${link.id} · ${row.out ? `from ${group}` : `into ${group}`}${remote ? ` · across nodes${row.state ? `: ${row.state}` : ''}` : ''}</p>
     ${remote || readOnly
@@ -193,8 +203,11 @@ export function LinkSheet({ row, group, readOnly = false, close, fetchImpl, refr
             { key: 'ok', label: spec.okLabel || 'Remove', tone: 'no', onClick: () => asking.settle(true) },
           ]} />
         </div>`
-      : !readOnly && html`<${ButtonRow} buttons=${[
-          { key: 'remove', label: busy === 'remove' ? 'Removing…' : pending ? 'Cancel request' : 'Remove link', tone: 'no', disabled: !!busy, onClick: remove },
+      : readOnly
+        ? html`<${ButtonRow} buttons=${[{ key: 'close', label: 'Close', onClick: () => close() }]} />`
+        : html`<${ButtonRow} buttons=${[
+          { key: 'remove', label: busy === 'remove' ? 'Removing…' : pending ? 'Cancel request' : 'Remove link', tone: 'no', disabled: !!busy, onClick: remove,
+            attrs: { 'data-link-remove': '' } },
           !remote && { key: 'save', label: busy === 'save' ? 'Saving…' : 'Save', tone: 'pri', disabled: !!busy || mode === link.mode, onClick: save },
         ].filter(Boolean)} />`}
   </div>`;
@@ -277,7 +290,7 @@ export function LinkAddSheet({ from, snapshot, close, fetchImpl, refresh, notify
       ${seg('local', 'This node')}${seg('peer', 'Peer node 🌐', !connected)}
     </div>`}
     ${remote
-      ? html`<label class="phone-agents-label">Peer node
+      ? peers.length > 0 && html`<label class="phone-agents-label">Peer node
           <select name="link-peer" class="ui-select phone-agents-field" value=${peer?.peer || ''} disabled=${busy}
             onChange=${(event) => { setPeerID(event.currentTarget.value); setPeerGroupID(''); }}>
             ${peers.map((p) => html`<option key=${p.peer} value=${p.peer} disabled=${!p.link_capable} selected=${p.peer === peer?.peer}>${p.label || p.peer}${p.link_capable ? '' : ' (no group links)'}</option>`)}
