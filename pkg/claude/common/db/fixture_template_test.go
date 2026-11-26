@@ -66,6 +66,19 @@ func fixtureTemplate(t *testing.T, name string, build func(d *sql.DB)) string {
 		fixtureTemplateDir = dir
 	}
 	src := filepath.Join(fixtureTemplateDir, name+".sqlite")
+	// A failed build must not leave a half-migrated file for the next caller.
+	defer func() {
+		if _, ok := fixtureTemplatePath[name]; !ok {
+			_ = os.Remove(src)
+		}
+	}()
+	// Hermetic: some migration steps read the home directory (the legacy
+	// config import), and the template is shared by every caller whatever
+	// HOME the first one runs under. Build under an empty home, restored
+	// afterwards; the package runs no parallel tests, so the process-wide
+	// change cannot leak into another test.
+	restoreHome := isolatedHome(t)
+	defer restoreHome()
 	d, err := sql.Open("sqlite", src+"?_pragma=foreign_keys(1)")
 	require.NoError(t, err)
 	d.SetMaxOpenConns(1)
@@ -76,6 +89,31 @@ func fixtureTemplate(t *testing.T, name string, build func(d *sql.DB)) string {
 	require.NoError(t, d.Close(), "close fixture %s", name)
 	fixtureTemplatePath[name] = src
 	return src
+}
+
+// isolatedHome points HOME (and USERPROFILE) at a fresh empty directory and
+// returns the function that restores them.
+func isolatedHome(t *testing.T) func() {
+	t.Helper()
+	home := t.TempDir()
+	saved := map[string]*string{}
+	for _, key := range []string{"HOME", "USERPROFILE"} {
+		if v, ok := os.LookupEnv(key); ok {
+			saved[key] = &v
+		} else {
+			saved[key] = nil
+		}
+		require.NoError(t, os.Setenv(key, home))
+	}
+	return func() {
+		for key, v := range saved {
+			if v == nil {
+				_ = os.Unsetenv(key)
+			} else {
+				_ = os.Setenv(key, *v)
+			}
+		}
+	}
 }
 
 // migratedTo builds a fixture at schema version upTo: the base schema plus
