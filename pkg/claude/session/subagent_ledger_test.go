@@ -447,6 +447,53 @@ func TestSubagentLedger_FailedHandbackKeepsEntry(t *testing.T) {
 	assert.Equal(t, StatusMainAgentIdle, got.Status)
 }
 
+// A background sub-agent killed with TaskStop fires no SubagentStop, no
+// SessionEnd and no handback, so the main thread's TaskStop PostToolUse is the
+// only evidence it ended. The shape is a real Claude Code 2.1.323 transcript's:
+// TaskStop's task_id is the sub-agent's agent id and the response reports
+// task_type local_agent. Left counted, the parent showed main_agent_idle
+// (rendered as working) with an idle pane until the ledger TTL expired.
+func TestSubagentLedger_TaskStopKilledSubagentRemovesEntry(t *testing.T) {
+	apply := ledgerWorld(t, "killed-sess", "conv-killed", nil)
+
+	apply(HookCallbackInput{HookEventName: "UserPromptSubmit"})
+	apply(HookCallbackInput{HookEventName: "PreToolUse", ToolName: "Agent"})
+	apply(HookCallbackInput{HookEventName: "SubagentStart", AgentID: "aedea8be6b64ae994", AgentType: "general-purpose"})
+	apply(HookCallbackInput{HookEventName: "PostToolUse", ToolName: "Agent",
+		ToolResponse: json.RawMessage(`{"isAsync":true,"status":"async_launched","agentId":"aedea8be6b64ae994"}`)})
+	apply(HookCallbackInput{HookEventName: "PreToolUse", ToolName: "Bash", AgentID: "aedea8be6b64ae994", AgentType: "general-purpose"})
+	apply(HookCallbackInput{HookEventName: "Stop"})
+	require.Equal(t, StatusMainAgentIdle, loadState(t, "killed-sess").Status)
+
+	apply(HookCallbackInput{HookEventName: "UserPromptSubmit"})
+	apply(HookCallbackInput{HookEventName: "PreToolUse", ToolName: "TaskStop",
+		ToolInput: json.RawMessage(`{"task_id":"aedea8be6b64ae994"}`)})
+	apply(HookCallbackInput{HookEventName: "PostToolUse", ToolName: "TaskStop",
+		ToolInput:    json.RawMessage(`{"task_id":"aedea8be6b64ae994"}`),
+		ToolResponse: json.RawMessage(`{"message":"Successfully stopped task: aedea8be6b64ae994 (Cold review)","task_id":"aedea8be6b64ae994","task_type":"local_agent","command":"Cold review"}`)})
+	assert.Equal(t, 0, loadState(t, "killed-sess").SubagentCount, "TaskStop ends the sub-agent it names")
+
+	apply(HookCallbackInput{HookEventName: "Stop"})
+	got := loadState(t, "killed-sess")
+	assert.Equal(t, StatusIdle, got.Status, "nothing is left running, so the turn settles to idle")
+	assert.Equal(t, 0, got.SubagentCount)
+	assert.Empty(t, got.Subagents)
+}
+
+// A TaskStop naming an id the sub-agent ledger does not know (a background
+// shell, or a sub-agent stopped by name) leaves live sub-agents counted.
+func TestSubagentLedger_TaskStopOfOtherTaskKeepsEntry(t *testing.T) {
+	apply := ledgerWorld(t, "kill-other-sess", "conv-kill-other", nil)
+
+	apply(HookCallbackInput{HookEventName: "SubagentStart", AgentID: "ag-live", AgentType: "Explore"})
+	apply(HookCallbackInput{HookEventName: "PostToolUse", ToolName: "TaskStop",
+		ToolInput: json.RawMessage(`{"task_id":"bash-123"}`)})
+	apply(HookCallbackInput{HookEventName: "Stop"})
+	got := loadState(t, "kill-other-sess")
+	assert.Equal(t, 1, got.SubagentCount)
+	assert.Equal(t, StatusMainAgentIdle, got.Status)
+}
+
 // A background sub-agent handing back while the main thread waits on a
 // permission prompt must leave the parent awaiting the human, as a
 // SubagentStop does — not settle it to idle and fire the stop side effects.

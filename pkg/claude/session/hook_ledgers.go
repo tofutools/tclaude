@@ -49,6 +49,16 @@ func updateSubagentLedger(state *SessionState, input HookCallbackInput) (tracked
 	trackedSubagentStop = (input.HookEventName == "SubagentStop" &&
 		(input.AgentID == "" || state.Subagents.Has(input.AgentID))) ||
 		(isSubagentHandback(input) && state.Subagents.Has(input.AgentID))
+	// A background sub-agent killed with TaskStop gets no SubagentStop, no
+	// SessionEnd and no handback: the TaskStop's PostToolUse is the last hook
+	// that names it. TaskStop's task_id for a sub-agent is its agent id (Claude
+	// Code reports task_type "local_agent" and fires a task-notification with
+	// status killed), so a TaskStop naming an id the ledger knows retires it.
+	// Unknown ids are background shells or monitors (updateBackgroundLedgers).
+	// The caller is whoever ran TaskStop, so the switch below still sights it.
+	if stopID, isStop := bgShellStop(input); isStop && stopID != "" && state.Subagents.Has(stopID) {
+		state.Subagents.Remove(stopID)
+	}
 	switch {
 	case input.HookEventName == "SubagentStart":
 		state.Subagents = state.Subagents.Add(input.AgentID, input.AgentType, state.LastHook)
