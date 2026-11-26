@@ -45,7 +45,7 @@ jobs:
       fail-fast: false
       matrix:
         # Same split as release.yml, via the shared test-suite action: Linux
-        # takes every shard; macOS runs in the single `macos` job below.
+        # takes every shard; macOS runs in the `macos-agentd` and `macos-rest` jobs below.
         os: [ubuntu-latest, ubuntu-24.04-arm]
         shard: [agentd, jstest, process, sandbox, rest]
     steps:
@@ -150,12 +150,11 @@ jobs:
           name: dist-${{ matrix.goos }}-${{ matrix.goarch }}
           path: dist/*
 
-  # Every macOS check in one job, as in release.yml (see its `macos` job for
-  # why): the darwin build, the agentd and rest-all shards, and the Sandbox v2
-  # Seatbelt smoke, in sequence. Restoring per-shard macOS jobs: see
-  # "macOS CI" in CONTRIBUTING.md.
+  # The macOS checks in three parallel jobs, as in release.yml (see its
+  # `macos` job for why): the darwin build then the Sandbox v2 Seatbelt smoke,
+  # the agentd shard, and the rest-all shard.
   macos:
-    name: macOS (build, test, Seatbelt smoke)
+    name: macOS (build, Seatbelt smoke)
     permissions:
       contents: read
     runs-on: macos-latest
@@ -200,21 +199,39 @@ jobs:
           name: dist-darwin-arm64
           path: dist/*
 
-      - name: Test suite (agentd)
+      - name: Sandbox v2 Seatbelt smoke
         if: ${{ !cancelled() }}
+        uses: ./.github/actions/seatbelt-smoke
+
+  macos-agentd:
+    name: macOS (test, agentd)
+    permissions:
+      contents: read
+    runs-on: macos-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Test suite (agentd)
         uses: ./.github/actions/test-suite
         with:
           shard: agentd
 
+  macos-rest:
+    name: macOS (test, rest-all)
+    permissions:
+      contents: read
+    runs-on: macos-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
       - name: Test suite (rest-all)
-        if: ${{ !cancelled() }}
         uses: ./.github/actions/test-suite
         with:
           shard: rest-all
-
-      - name: Sandbox v2 Seatbelt smoke
-        if: ${{ !cancelled() }}
-        uses: ./.github/actions/seatbelt-smoke
 
   # Publishing gate: only runs once tests, lint, builds, and both real sandbox
   # smokes have all succeeded. This is where the side effects happen — pushing
@@ -224,7 +241,7 @@ jobs:
     name: Release
     runs-on: ubuntu-latest
     needs:
-      [test, macos, lint, version, build, sandbox-v2-smoke,
+      [test, macos, macos-agentd, macos-rest, lint, version, build, sandbox-v2-smoke,
        filtered-proxy-smoke, proxy-posture-e2e]
     steps:
       - name: Checkout code

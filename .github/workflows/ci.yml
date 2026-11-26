@@ -165,8 +165,8 @@ jobs:
       #
       # PR CI runs on Linux only by default. Hosted macOS runners are
       # concurrency-capped, and starved macOS jobs kept PRs from merging, so
-      # darwin is measured by release.yml's single `macos` job on every merge
-      # to main (build, agentd + rest-all tests, Seatbelt smoke). A PR opts
+      # darwin is measured by release.yml's three macOS jobs on every merge
+      # to main (build + Seatbelt smoke, agentd tests, rest-all tests). A PR opts
       # into macOS agentd + rest-all here (and the Seatbelt smoke above) with
       # the ci:macos label or a `CI-macOS: true` trailer on its head commit.
       # Those entries run on the self-hosted macOS runner for a
