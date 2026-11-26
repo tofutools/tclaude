@@ -32,12 +32,16 @@ SAVERS = 3  # release.yml: Linux agentd + sandbox shards, macOS agentd
 #   newest.
 OVERLAY = re.compile(r"^(codeql-overlay-base-database-\d+-[0-9a-f]+-[a-z0-9_]+)-([0-9.]+)-[0-9a-f]{40}-\d+-\d+$")
 TRAP = re.compile(r"^codeql-trap-(\d+)-[0-9.]+-([a-z0-9_]+)-[0-9a-f]{40}$")
-HASHED = re.compile(r"^((?:codeql-dependencies-\d+-[A-Za-z]+-[a-z0-9_]+)|(?:setup-go-\S+-go-[0-9.]+))-([0-9a-f]{64})$")
+DEPENDENCIES = re.compile(r"^(codeql-dependencies-\d+-[A-Za-z]+-[a-z0-9_]+)-([0-9a-f]{64})$")
+# The Go version belongs to the line, not the family: a toolchain bump
+# supersedes the previous version's entries just as a go.sum change does.
+SETUP_GO = re.compile(r"^(setup-go-\S+)-go-([0-9.]+-[0-9a-f]{64})$")
 SUPERSEDABLE = [
     # (pattern, (family, line) of a match, entries kept of the current line)
     (OVERLAY, lambda m: (m.group(1), m.group(2)), 2),
     (TRAP, lambda m: (f"codeql-trap-{m.group(1)}-{m.group(2)}", ""), 2),
-    (HASHED, lambda m: (m.group(1), m.group(2)), 1),
+    (DEPENDENCIES, lambda m: (m.group(1), m.group(2)), 1),
+    (SETUP_GO, lambda m: (m.group(1), m.group(2)), 1),
 ]
 
 

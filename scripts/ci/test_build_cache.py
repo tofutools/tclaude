@@ -75,8 +75,11 @@ class CachePolicyTests(unittest.TestCase):
             entry("codeql-trap-1-2.27.6-javascript-5c0504c0dd19825782dcd5ce49f5b256b5e67a9d", "2026-11-26T07:30:42.228103Z", 10),
             entry("codeql-trap-1-2.27.6-javascript-d637c70122abb16c41211ce6002bafba94a713ee", "2026-11-25T23:53:07.34854Z", 11),
             entry("golangci-lint.cache-Linux-2968-1e6b1fca3eb97d76e3c207bb29fe75f90b774cfa", "2026-11-25T11:57:26Z", 12),
+            # A Go toolchain bump supersedes the previous version's entry too.
+            entry(f"setup-go-Linux-arm64-ubuntu24-arm64-go-1.27.4-{new}", "2026-11-25T11:56:46.944531Z", 13),
+            entry(f"setup-go-Linux-arm64-ubuntu24-arm64-go-1.27.5-{new}", "2026-11-27T11:56:46.944531Z", 14),
         ]
-        self.assertEqual(sorted(e["id"] for e in cache.superseded(entries)), [1, 3, 7, 11])
+        self.assertEqual(sorted(e["id"] for e in cache.superseded(entries)), [1, 3, 7, 11, 13])
 
     def test_creation_times_compare_across_fraction_lengths(self):
         times = ["2026-11-14T19:09:14.764Z", "2026-11-14T19:09:14.7640001Z", "2026-11-14T19:09:14Z",
