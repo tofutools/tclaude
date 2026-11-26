@@ -115,7 +115,8 @@ MACOS = "macos-latest"
 MACOS_SELF_HOSTED = ["self-hosted", "macOS", "ARM64"]
 LINUX_SHARDS = ("agentd", "jstest", "process", "sandbox", "rest")
 UI_SHARDS = ("agentd", "jstest", "rest")
-# An opted-in PR's macOS jobs: the same pair release.yml's macOS job runs.
+# An opted-in PR's macOS jobs: the same pair release.yml's macos-agentd and
+# macos-rest jobs run.
 # macOS folds process/sandbox/rest into one rest-all job and skips jstest (see
 # the comments on the test job in ci.yml).
 MACOS_SHARDS = ("agentd", "rest-all")

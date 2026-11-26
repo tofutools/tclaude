@@ -85,7 +85,7 @@ macOS on PRs is opt-in by design, not a gap to close. GitHub's hosted macOS
 capacity is too small for this repository to run macOS on every PR. The
 self-hosted runner described below is an experiment whose reliability is not
 yet known. Until it has a track record, darwin coverage relies on the macOS
-job that runs on every merge to main.
+jobs that run on every merge to main.
 
 Hosted macOS runners are concurrency-capped, and PR CI and Release share them.
 When none is free, a job fails with "The job was not acquired by Runner of type
@@ -97,13 +97,25 @@ anything having been tested. So:
   `copilot-lab.yml`, `group-route-feasibility.yml` and `macos-pf-probe.yml`
   run on macOS only when started by hand (`workflow_dispatch`). Lint's
   `GOOS=darwin` vet still catches darwin compile breaks on every PR.
-- **Every merge to main runs one macOS job**: `macos` in `release.yml` (and
-  in `manual-release.yml`). It runs the darwin goreleaser build, the `agentd`
-  and `rest-all` test shards, and the Sandbox v2 Seatbelt smoke
-  (`.github/actions/seatbelt-smoke`) in sequence, in about 25 minutes. macOS
-  skips the `jstest` shard, which runs browser JS under Node and LinkeDOM and
-  does not vary by OS. A darwin-only break therefore shows up as a red Release
-  after the merge, and blocks publishing until it is fixed on main.
+- **Every merge to main runs three macOS jobs in parallel**, in `release.yml`
+  (and `manual-release.yml`):
+  - `macos` runs the darwin goreleaser build, then the Sandbox v2 Seatbelt
+    smoke (`.github/actions/seatbelt-smoke`);
+  - `macos-agentd` runs the `agentd` test shard;
+  - `macos-rest` runs the `rest-all` shard.
+
+  They take about 10 minutes. macOS skips the `jstest` shard, which runs
+  browser JS under Node and LinkeDOM and does not vary by OS. A darwin-only
+  break therefore shows up as a red Release after the merge, and blocks
+  publishing until it is fixed on main.
+
+  These used to be one job run in sequence, so a merge asked the capped pool
+  for a single slot. That job took about 23 minutes and was the critical path
+  of every Release, so the operator chose three slots per merge for the
+  shorter wall clock. To go back to one job, move the two shards' test-suite
+  steps into `macos` after the build, with `if: ${{ !cancelled() }}`, and
+  drop `macos-agentd` and `macos-rest` from the `release` job's `needs` and
+  the `homebrew` job's `needs` and `if`.
 
 #### Opting a PR into macOS
 
@@ -153,9 +165,10 @@ Seatbelt smoke becomes unconditional. In the other workflows, remove
 `darwin` job, restore the `pull_request` paths in `macos-pf-probe.yml`, and
 make `copilot-lab.yml`'s `platform` list include `macos` for every event.
 
-#### Restoring the per-shard macOS split on main
+#### Restoring the full macOS test matrix on main
 
-Find the commit with
+To run every shard on macOS (`jstest` included) and the darwin build in the
+Linux `build` matrix, as an older layout did, find the commit with
 `git log --oneline -S 'os: [ubuntu-latest, macos-latest]' -- .github/workflows/release.yml`
 (the newest hit) and restore `release.yml`, `manual-release.yml` and
 `.github/workflows/reusable-sandbox-v2-seatbelt-smoke.yml` from its parent
@@ -211,7 +224,7 @@ code is still most likely real: catching those is why a PR opts in.
   state from one job into the next.
 - **Concurrency.** The pool size is how many macOS jobs run at once. With
   macOS back on PRs, each code PR asks for up to three (the agentd and rest-all
-  shards plus the Seatbelt smoke), and each merge asks for one. Jobs queue
+  shards plus the Seatbelt smoke), and each merge asks for three. Jobs queue
   rather than fail on self-hosted runners, but a small pool still makes PRs
   wait, so size it for the PRs you expect at once.
 
