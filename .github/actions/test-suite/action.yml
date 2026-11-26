@@ -62,6 +62,16 @@ runs:
         shard: ${{ inputs.shard }}
         race: ${{ inputs.race }}
 
+    # The start of this shard's use of the build cache. On a main release
+    # push, build-cache.py prepare deletes the entries the tests did not use
+    # before measuring and saving the snapshot: without that, the snapshot
+    # also carried everything setup-go restored, and the macOS agentd one
+    # (1.94 GB on disk) never fit the per-snapshot cap.
+    - name: Mark build cache use
+      if: inputs.save-build-cache == 'true' && (inputs.shard == 'agentd' || inputs.shard == 'sandbox')
+      shell: bash
+      run: echo "BUILD_CACHE_USED_SINCE=$(date +%s)" >> "$GITHUB_ENV"
+
     # The dashboard's JS is unit-tested with Node's built-in test runner.
     # Only `all`, `agentd` (process_graph_node_test.go), and `jstest` need it;
     # installing Node in the Go-only shards adds a network-dependent setup
