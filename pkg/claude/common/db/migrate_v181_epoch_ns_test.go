@@ -15,17 +15,8 @@ import (
 func v180FixtureDB(t *testing.T) *sql.DB {
 	t.Helper()
 	setupTestDB(t)
-	d, err := sql.Open("sqlite", t.TempDir()+"/v180.sqlite?_pragma=foreign_keys(1)")
-	require.NoError(t, err)
+	d := templatedFixtureDB(t, "v180", migratedTo(t, 180))
 	d.SetMaxOpenConns(1)
-	t.Cleanup(func() { _ = d.Close() })
-	require.NoError(t, createSchema(d))
-	for _, step := range migrationSteps {
-		if step.version > 180 {
-			break
-		}
-		require.NoErrorf(t, step.apply(d), "migration v%d", step.version)
-	}
 	var version int
 	require.NoError(t, d.QueryRow(`SELECT version FROM schema_version`).Scan(&version))
 	require.Equal(t, 180, version, "fixture must prove the v181 step has not run")

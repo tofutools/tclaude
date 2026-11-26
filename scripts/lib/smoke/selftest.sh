@@ -1223,6 +1223,22 @@ SCRIPT
     waited=$((waited + 1))
   done
   kill -"$signal" "$child" 2>/dev/null || true
+  # Bash runs a trap only once its foreground command returns, so the signal
+  # stays pending until `sleep 10` ends: ten seconds per case. End the sleep
+  # with SIGKILL, which is not the signal under test: the shell sees a
+  # foreground child that did not die of the signal it received, so the
+  # helper's pending trap runs at once and exits 130 (INT) or 143 (TERM).
+  # Without the helper an INT still cannot produce 130: the shell carries on
+  # and `set -e` ends it with the killed sleep's 137. The sleep may still be
+  # forking just after the ready mark; if it never shows up, the case falls
+  # back to waiting it out.
+  local sleeper="" tries=0
+  while [[ -z "$sleeper" && "$tries" -lt 50 ]]; do
+    sleeper="$(pgrep -P "$child" sleep 2>/dev/null | head -n 1 || true)"
+    [[ -n "$sleeper" ]] || sleep 0.1
+    tries=$((tries + 1))
+  done
+  [[ -z "$sleeper" ]] || kill -KILL "$sleeper" 2>/dev/null || true
   local status=0
   wait "$child" && status=0 || status=$?
   # `wait` has already reaped the child, but its foreground `sleep` is orphaned

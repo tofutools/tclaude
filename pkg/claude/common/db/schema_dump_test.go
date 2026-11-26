@@ -21,12 +21,7 @@ const schemaGoldenPath = "schema.sql"
 // preserves true creation order and is deterministic across runs.
 func freshMigratedDB(t *testing.T) *sql.DB {
 	t.Helper()
-	path := t.TempDir() + "/schema.sqlite"
-	d, err := sql.Open("sqlite", path+"?_pragma=foreign_keys(1)")
-	require.NoError(t, err, "open")
-	t.Cleanup(func() { _ = d.Close() })
-	require.NoError(t, migrate(d), "migrate")
-	return d
+	return templatedFixtureDB(t, "head", func(d *sql.DB) { require.NoError(t, migrate(d), "migrate") })
 }
 
 // TestSchemaSnapshot is the golden test: the committed schema.sql must equal
