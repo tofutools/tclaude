@@ -45,7 +45,8 @@ import { Check, Switch } from './ui-components.js';
 import { shellToast } from './shell-state.js';
 import { agentFocus, doneAgentFocus } from './agent-route.js';
 import { groupShellOffer, openGroupShell } from './phone-open-shell.js';
-import { GroupLinks } from './phone-group-links.js';
+import { GroupLinks, groupLinks } from './phone-group-links.js';
+import { PhoneLinksManager } from './phone-links-manager.js';
 
 // FOUND_MS is how long a found row glows (phone-agents.css
 // .phone-agent-found): long enough to spot it after the scroll.
@@ -340,7 +341,7 @@ function SubgroupCard({ node, onOpen }) {
 // links (phone-group-links.js), then its members as the lead/worker tree. An
 // archived group refuses changes, so its card offers only its board and
 // mail, and its links can be looked at only.
-export function GroupPage({ page, actions, list, onOpen, spawn, snapshot = null, openShell = openGroupShell }) {
+export function GroupPage({ page, actions, list, onOpen, onLinks = null, spawn, snapshot = null, openShell = openGroupShell }) {
   const offline = page.total - page.live;
   const name = page.name;
   const buttons = page.archived ? [] : [
@@ -351,6 +352,9 @@ export function GroupPage({ page, actions, list, onOpen, spawn, snapshot = null,
   const links = [
     !page.archived && { key: 'board', label: 'Board ›', onClick: () => openBoardGroup(name) },
     { key: 'mail', label: 'Mail ›', onClick: () => actions.groupAction('view-group-messages', name) },
+    // Its links in the Links manager (phone-links-manager.js), scoped to it,
+    // not only far down this page.
+    onLinks && { key: 'links', label: `Links (${groupLinks(snapshot, name).length}) ›`, attrs: { 'data-group-links': '' }, onClick: () => onLinks(name) },
   ].filter(Boolean);
   // A shell of the operator's own in the group's default directory; greyed,
   // with why, where it has none.
@@ -388,6 +392,8 @@ export function GroupPage({ page, actions, list, onOpen, spawn, snapshot = null,
 export function PhoneAgents({ state, order, actions, fetchImpl = globalThis.fetch, prefs = dashPrefs, activeTab = state.activeTab }) {
   const [, refold] = useReducer((n) => n + 1, 0);
   // The group pages open, the one on screen last: Back goes to the one before.
+  // An entry { links: name } is the Links manager, scoped to that group ('':
+  // every link, from the top bar's 🔗).
   const [opened, setOpened] = useState([]);
   const active = !activeTab || activeTab.value === 'groups';
   useEffect(() => { if (!active) setOpened([]); }, [active]);
@@ -401,13 +407,18 @@ export function PhoneAgents({ state, order, actions, fetchImpl = globalThis.fetc
   const spawn = (group) => openSpawnSheet({ state, group, fetchImpl, openFull: (g, typed) => actions.spawn(g, typed), remoteSpawn: actions.spawn });
   const changed = !atDefaults(settings);
   const openView = () => openPhoneSheet({ label: 'View', Body: ViewSheet, props: { prefs, onChange: refold } });
-  const page = snapshot && opened.length ? groupPage(snapshot, opened.at(-1), order) : null;
+  const top = opened.at(-1);
+  const manager = typeof top === 'object' && top ? top : null;
+  const page = snapshot && opened.length && !manager ? groupPage(snapshot, top, order) : null;
   const open = (name) => { globalThis.scrollTo?.(0, 0); setOpened((stack) => [...stack, name]); };
-  usePhonePage(page ? { title: page.name, onBack: () => setOpened((stack) => stack.slice(0, -1)), actions: [] } : null, active);
+  const openLinks = (name) => { globalThis.scrollTo?.(0, 0); setOpened((stack) => [...stack, { links: name }]); };
+  const back = () => setOpened((stack) => stack.slice(0, -1));
+  usePhonePage(manager ? { title: 'Links', onBack: back, actions: [] } : page ? { title: page.name, onBack: back, actions: [] } : null, active);
   usePhoneBar({ tab: 'groups', actions: snapshot ? [
     { key: 'spawn', icon: '＋', label: 'New agent', onClick: () => spawn(only?.label || '') },
     { key: 'view', icon: ViewIcon, label: changed ? 'View: changed from the defaults' : 'View', dot: changed, onClick: openView },
-  ] : [] }, !page);
+    { key: 'links', icon: '🔗', label: 'Links between groups', onClick: () => openLinks('') },
+  ] : [] }, !page && !manager);
   // A link to an agent (agent-route.js): open up what would hide it (a group
   // page over the list, the chips, its group's fold and every one above it,
   // Show offline, Show archived), then glow its row once it is drawn.
@@ -451,7 +462,8 @@ export function PhoneAgents({ state, order, actions, fetchImpl = globalThis.fetc
     else actions.rowAction('dot-toggle', row);
   };
   const list = { isSteward, tap, more, open, found, spawn };
-  if (page) return html`<${GroupPage} key=${page.name} page=${page} actions=${actions} list=${list} onOpen=${open} spawn=${spawn} snapshot=${snapshot} />`;
+  if (manager) return html`<${PhoneLinksManager} key=${`links:${manager.links}`} snapshot=${snapshot} group=${manager.links} />`;
+  if (page) return html`<${GroupPage} key=${page.name} page=${page} actions=${actions} list=${list} onOpen=${open} onLinks=${openLinks} spawn=${spawn} snapshot=${snapshot} />`;
   const none = !(snapshot.groups || []).length && !(snapshot.ungrouped || []).length;
   const empty = none ? 'No groups yet. Make one on the desktop.' : 'Nothing to show here. View (the sliders above) shows more.';
   return html`<div class="phone-agents">

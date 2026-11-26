@@ -99,7 +99,7 @@ function memPrefs(init = {}) {
   return { getItem: (k) => (map.has(k) ? map.get(k) : null), setItem: (k, v) => map.set(k, String(v)), removeItem: (k) => map.delete(k), map };
 }
 
-async function setup(t, { prefs = memPrefs() } = {}) {
+async function setup(t, { prefs = memPrefs(), snapshot = SNAPSHOT } = {}) {
   const harness = await createPreactHarness(t);
   const [{ createDashboardState }, island, sheet, page, board] = await Promise.all([
     harness.importDashboardModule('js/snapshot-store.js'),
@@ -112,7 +112,7 @@ async function setup(t, { prefs = memPrefs() } = {}) {
   t.after(() => { model.agentsFilter.value = []; });
   const state = createDashboardState();
   state.beginRequest();
-  state.commitRequest(1, SNAPSHOT);
+  state.commitRequest(1, snapshot);
   const calls = [];
   const actions = {
     openTerminal: (row) => calls.push(['openTerminal', row.name]),
@@ -294,12 +294,39 @@ test('a group\'s ⋯ opens its page: crumbs, its actions through the desktop\'s 
   assert.ok(c.querySelector('.phone-agents-chips'));
 });
 
-test('an archived group\'s page offers only its mail', async (t) => {
+test('the Links manager: the top bar\'s 🔗 opens every link; a group page\'s Links (N) › opens it scoped to the group; Back returns', async (t) => {
+  const links = [{ id: 1, from: 'webshop', to: 'research', mode: 'members->members' }, { id: 2, from: 'payments', to: 'webshop', mode: 'owners->members' },
+    { id: 3, from: 'payments', to: 'research', mode: 'members->members' }];
+  const { c, tap, more, page, harness } = await setup(t, { snapshot: { ...SNAPSHOT, links } });
+  const manager = () => c.querySelector('[data-links-manager]');
+  const listed = () => [...manager().querySelectorAll('[data-link-id]')].map((b) => b.dataset.linkId);
+  await harness.act(() => page.phoneBar.value.actions.find((act) => act.key === 'links').onClick());
+  assert.equal(page.phonePage.value.title, 'Links');
+  assert.deepEqual(listed().sort(), ['1', '2', '3'], 'every link');
+  await harness.act(() => page.phonePage.value.onBack());
+  assert.equal(manager(), null);
+
+  await tap(more('webshop'));
+  const entry = c.querySelector('.phone-group-card [data-group-links]');
+  assert.equal(entry.textContent.trim(), 'Links (2) ›');
+  await tap(entry);
+  assert.equal(page.phonePage.value.title, 'Links');
+  assert.deepEqual(listed().sort(), ['1', '2'], 'only webshop\'s');
+  await tap(manager().querySelector('.phone-links-scope'));
+  assert.deepEqual(listed().sort(), ['1', '2', '3'], 'its chip clears the scope');
+  await tap(manager().querySelector('[data-link-id="3"]'));
+  assert.ok(c.querySelector('.phone-sheet [data-link-sheet="3"]'), 'a link\'s sheet opens over the manager');
+  await harness.act(() => page.phonePage.value.onBack());
+  assert.equal(page.phonePage.value.title, 'webshop');
+  assert.ok(c.querySelector('.phone-group-page .phone-links'), 'the page keeps its Links section');
+});
+
+test('an archived group\'s page offers only its mail, and its links to look at', async (t) => {
   const prefs = memPrefs({ 'tclaude.dash.phone.agents.archived': '1' });
   const { c, tap, more, button } = await setup(t, { prefs });
   await tap(more('release'));
   const view = c.querySelector('.phone-group-page');
-  assert.deepEqual([...view.querySelectorAll('.phone-group-card button')].map((b) => b.textContent.trim()), ['Mail ›']);
+  assert.deepEqual([...view.querySelectorAll('.phone-group-card button')].map((b) => b.textContent.trim()), ['Mail ›', 'Links (0) ›']);
   assert.match(view.querySelector('.phone-agent-sheet-meta').textContent, /archived/);
   assert.equal(button('＋ Spawn'), undefined);
 });

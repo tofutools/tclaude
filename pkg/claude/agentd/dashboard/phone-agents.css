@@ -239,3 +239,28 @@
 :root[data-layout="phone"] .phone-links-row .phone-agents-chev { flex: none; }
 :root[data-layout="phone"] .phone-link-peer-note { margin: 0; }
 :root[data-layout="phone"] .phone-link-ask .phone-agents-note { margin: 0 0 8px; }
+/* The Links manager (phone-links-manager.js): actions, the filter, the
+   scope chip and count, the order chips, then one row per link. */
+:root[data-layout="phone"] .phone-links-manager { display: flex; flex-direction: column; gap: 10px; }
+:root[data-layout="phone"] .phone-links-intro { margin: 0 4px; }
+:root[data-layout="phone"] .phone-links-bar { display: flex; align-items: center; gap: 8px; min-height: 28px; margin: 0 4px; }
+:root[data-layout="phone"] .phone-links-scope {
+  min-height: 32px; padding: 0 12px; border: 1px solid var(--phone-line); border-radius: 999px;
+  background: var(--ui-pressed-bg); color: var(--ui-text-strong); font: inherit; font-size: 13px; font-weight: 600; cursor: pointer;
+}
+:root[data-layout="phone"] .phone-links-count { margin-left: auto; color: var(--ui-muted-text); font-size: 13px; }
+/* The proposal composer (ProposeSheet). */
+:root[data-layout="phone"] .phone-propose-hint { margin: -4px 0 0; }
+:root[data-layout="phone"] .phone-propose-shares { display: flex; flex-direction: column; gap: 6px; }
+:root[data-layout="phone"] .phone-propose-share { display: flex; flex-direction: column; gap: 4px; min-height: var(--phone-tap); justify-content: center; }
+:root[data-layout="phone"] .phone-propose-members { margin-left: 28px; color: var(--ui-muted-text); font-size: 13px; }
+:root[data-layout="phone"] .phone-propose-pair {
+  display: flex; flex-direction: column; gap: 6px; padding: 10px;
+  border: 1px solid var(--phone-line); border-radius: var(--phone-r); background: var(--phone-panel);
+}
+:root[data-layout="phone"] .phone-propose-pair-foot { display: flex; align-items: center; gap: 8px; }
+:root[data-layout="phone"] .phone-propose-pair-foot .phone-agents-field { flex: 1; }
+:root[data-layout="phone"] .phone-propose-remove,
+:root[data-layout="phone"] .phone-propose-add { flex: none; min-height: var(--phone-tap); font-weight: 600; }
+:root[data-layout="phone"] .phone-propose-add { align-self: flex-start; }
+:root[data-layout="phone"] .phone-propose-preview ul { margin: 0; padding-left: 20px; }

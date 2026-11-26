@@ -62,6 +62,17 @@ export function groupLinks(snapshot, name) {
   return [...rows.filter((row) => row.out), ...rows.filter((row) => !row.out)];
 }
 
+// linkEnds names a link's two ends as the desktop's Links table does: the
+// peer's side of a cross-node link as peer:group.
+export function linkEnds(link) {
+  const incoming = !!link.peer && link.direction === 'in';
+  const far = (name) => `${peerName(link)}:${name || link.remote_group || '?'}`;
+  return {
+    from: incoming ? far(link.from) : link.from || '(deleted)',
+    to: link.peer && !incoming ? far(link.to) : link.to || '(deleted)',
+  };
+}
+
 // linkState is a cross-node link's state in a word or two: this node's half
 // if it is not active, else what the peer last said of its own.
 export function linkState(link) {
@@ -152,7 +163,7 @@ function ModeField({ mode, setMode, disabled }) {
 // here), and Remove, which asks first in the desktop's words. A cross-node
 // link's mode is the two nodes' agreement, so it can only be removed (or a
 // request withdrawn) here, as on the desktop.
-export function LinkSheet({ row, group, readOnly = false, close, fetchImpl, refresh, notify, actions: given = null }) {
+export function LinkSheet({ row, group = '', readOnly = false, close, fetchImpl, refresh, notify, actions: given = null }) {
   const lock = useRef(false);
   const asking = useAsk(() => lock.current);
   const [actions] = useState(() => given || phoneLinkActions({ fetchImpl, refresh, notify, ask: asking.ask }));
@@ -188,8 +199,8 @@ export function LinkSheet({ row, group, readOnly = false, close, fetchImpl, refr
   const pending = !remote ? false : deleteFields(link).pending;
   const spec = asking.spec;
   return html`<div ref=${sheet} class="phone-agents-spawn phone-link-sheet" data-link-sheet=${link.id}>
-    <${SheetTitle} clip>${link.from || '(deleted)'} → ${remote && row.out ? row.other : link.to || '(deleted)'}<//>
-    <p class="phone-agent-sheet-meta">#${link.id} · ${row.out ? `from ${group}` : `into ${group}`}${remote ? ` · across nodes${row.state ? `: ${row.state}` : ''}` : ''}</p>
+    <${SheetTitle} clip>${linkEnds(link).from} → ${linkEnds(link).to}<//>
+    <p class="phone-agent-sheet-meta">#${link.id}${group ? ` · ${row.out ? `from ${group}` : `into ${group}`}` : ''}${remote ? ` · across nodes${row.state ? `: ${row.state}` : ''}` : ''}</p>
     ${remote || readOnly
       ? html`<p class="phone-agents-note">${modeText(link.mode)}. ${MODE_HINTS[link.mode] || ''}${remote && !readOnly ? ' A cross-node link keeps the mode both nodes agreed; remove it and link again to change it.' : ''}</p>`
       : html`<${ModeField} mode=${mode} setMode=${setMode} disabled=${!!busy} />`}
@@ -226,7 +237,7 @@ export function peerNote({ connected, reason = '', peer, group }) {
 
 // useLinkTargets loads the peers and peer groups a cross-node link may go
 // to, once: null when this daemon has none (an older one, or a peer's page).
-function useLinkTargets(actions, enabled) {
+export function useLinkTargets(actions, enabled) {
   const [targets, setTargets] = useState(enabled ? undefined : null);
   useEffect(() => {
     if (!enabled) return undefined;
@@ -240,14 +251,21 @@ function useLinkTargets(actions, enabled) {
 // LinkAddSheet adds a link from this group: to another group here or, when
 // the node is on the hub, to a group a peer shares; a mode; and whether to
 // link back too.
-export function LinkAddSheet({ from, snapshot, close, fetchImpl, refresh, notify, actions: given = null, remotePage = !!globalThis.__tclaudeRemoteNode?.id }) {
+export function LinkAddSheet({ from: fixed = '', snapshot, close, fetchImpl, refresh, notify, actions: given = null, onPropose = null,
+  remotePage = !!globalThis.__tclaudeRemoteNode?.id }) {
   const [actions] = useState(() => given || phoneLinkActions({ fetchImpl, refresh, notify }));
-  const groups = (snapshot?.groups || []).map((group) => group.name).filter((name) => name && name !== from);
+  const all = (snapshot?.groups || []).map((group) => group.name).filter(Boolean);
+  // Opened from a group, the link leaves it; from the Links manager, FROM is
+  // picked too.
+  const [picked, setFrom] = useState(fixed || all[0] || '');
+  const from = fixed || picked;
+  const groups = all.filter((name) => name !== from);
   const targets = useLinkTargets(actions, !remotePage);
   const peers = (targets?.peers || []).filter((peer) => peer?.peer);
   const connected = !!targets?.hub_connected;
   const [target, setTarget] = useState('local');
-  const [to, setTo] = useState(groups[0] || '');
+  const [chosen, setTo] = useState(groups[0] || '');
+  const to = groups.includes(chosen) ? chosen : groups[0] || '';
   const [peerID, setPeerID] = useState('');
   const [peerGroupID, setPeerGroupID] = useState('');
   const [mode, setMode] = useState('members->members');
@@ -259,7 +277,7 @@ export function LinkAddSheet({ from, snapshot, close, fetchImpl, refresh, notify
   const peerGroups = peer?.link_capable ? (peer.groups || []) : [];
   const peerGroup = peerGroups.find((g) => g.id === peerGroupID) || peerGroups[0] || null;
   const remote = target === 'peer' && connected;
-  const ready = remote ? !!peerGroup : !!to;
+  const ready = !!from && (remote ? !!peerGroup : !!to);
   useSheetGuard(() => busy);
   const submit = async (event) => {
     event?.preventDefault?.();
@@ -285,7 +303,13 @@ export function LinkAddSheet({ from, snapshot, close, fetchImpl, refresh, notify
   const far = remote ? `${peer?.label || 'peer'}:${peerGroup?.name || '…'}` : to || 'TO';
   return html`<form class="phone-agents-spawn phone-link-add" data-link-add onSubmit=${submit}>
     <${SheetTitle}>New link<//>
-    <p class="phone-agent-sheet-meta">From ${from}. Its members may message the group you pick.</p>
+    ${fixed
+      ? html`<p class="phone-agent-sheet-meta">From ${from}. Its members may message the group you pick.</p>`
+      : html`<label class="phone-agents-label">From
+          <select name="link-from" class="ui-select phone-agents-field" value=${from} disabled=${busy} onChange=${(event) => setFrom(event.currentTarget.value)}>
+            ${all.map((name) => html`<option key=${name} value=${name} selected=${name === from}>${name}</option>`)}
+          </select>
+          <small class="ui-hint">Its members may message the group you pick.</small></label>`}
     ${targets && html`<div class="phone-agents-seg" role="group" aria-label="Link to">
       ${seg('local', 'This node')}${seg('peer', 'Peer node 🌐', !connected)}
     </div>`}
@@ -307,6 +331,8 @@ export function LinkAddSheet({ from, snapshot, close, fetchImpl, refresh, notify
             </select></label>`
         : html`<${Empty}>No other group here to link to.<//>`}
     ${targets && (target === 'peer' || !connected) && html`<p class="ui-hint phone-link-peer-note" data-peer-note>🌐 ${peerNote({ connected, reason: targets.reason, peer, group: peerGroup })}</p>`}
+    ${remote && peer?.link_capable && onPropose && html`<p class="ui-hint phone-link-peer-note">Share groups or link several at once?
+      <button data-ui-exempt type="button" class="phone-link" data-link-propose disabled=${busy} onClick=${() => onPropose(peer.peer)}>Propose several items…</button></p>`}
     <${ModeField} mode=${mode} setMode=${setMode} disabled=${busy} />
     <label class="phone-agents-view-switch">
       <span class="phone-agents-view-text">${remote ? 'Also ask for the link back' : 'Also link back'}<small>${far} → ${from}, the same mode</small></span>

@@ -326,7 +326,7 @@ test('＋ in the top bar spawns from a short sheet: group, profile, prompt', asy
   const { harness, calls, c, tap, page } = await setup(t, { fetchImpl });
   const bar = page.phoneBar.value;
   assert.equal(bar.tab, 'groups');
-  assert.deepEqual(bar.actions.map((a) => a.key), ['spawn', 'view']);
+  assert.deepEqual(bar.actions.map((a) => a.key), ['spawn', 'view', 'links']);
   assert.equal(bar.actions[0].icon, '＋');
   // With one group picked the sheet starts on that group.
   await tap([...c.querySelectorAll('.phone-agents-chips button')][2]);
