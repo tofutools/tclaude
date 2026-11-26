@@ -100,6 +100,39 @@ def delete(repo, entry):
     return True
 
 
+# Go marks a build-cache entry used by bumping its mtime, but only once the
+# mtime is older than this (cmd/go/internal/cache: mtimeInterval), so an
+# entry used this run may carry an mtime up to an hour before the run.
+GO_CACHE_MTIME_INTERVAL = 3600
+# Slack for clock granularity between the marker and the cache's writes.
+TRIM_SLACK = 300
+
+
+def trim_unused(gocache, used_since):
+    """Delete the Go build-cache entries this run did not use, so the saved
+    snapshot holds the shard's working set rather than everything setup-go
+    restored before it. An entry is kept when its mtime is within
+    GO_CACHE_MTIME_INTERVAL (+ slack) of used_since: Go would have bumped
+    an older one on use. Only the hashed entry files (00/ .. ff/) are
+    candidates; the cache's own bookkeeping files stay. Returns
+    (kept_bytes, removed_bytes)."""
+    cutoff = used_since - GO_CACHE_MTIME_INTERVAL - TRIM_SLACK
+    kept = removed = 0
+    for sub in Path(gocache).iterdir():
+        if not (sub.is_dir() and len(sub.name) == 2 and all(c in "0123456789abcdef" for c in sub.name)):
+            continue
+        for entry in sub.iterdir():
+            if not entry.is_file():
+                continue
+            info = entry.stat()
+            if info.st_mtime < cutoff:
+                entry.unlink()
+                removed += info.st_size
+            else:
+                kept += info.st_size
+    return kept, removed
+
+
 def obsolete(entries, prefix, keep):
     return [e for e in entries if e["ref"] == "refs/heads/main" and e["key"].startswith(prefix) and e["key"] != keep]
 
@@ -111,6 +144,10 @@ def main():
     repo = os.environ["GITHUB_REPOSITORY"]
     entries = caches(repo)
     if operation == "prepare":
+        used_since = os.environ.get("BUILD_CACHE_USED_SINCE")
+        if used_since:
+            kept, removed = trim_unused(os.environ["GOCACHE"], int(used_since))
+            print(f"Trimmed the build cache to this run's working set: kept {kept} bytes, removed {removed} unused bytes")
         size = sum(p.stat().st_size for p in Path(os.environ["GOCACHE"]).rglob("*") if p.is_file())
         # Housekeeping, never a reason to fail the release: an entry that
         # could not be deleted simply still counts against the budget.

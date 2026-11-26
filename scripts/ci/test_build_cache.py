@@ -81,6 +81,27 @@ class CachePolicyTests(unittest.TestCase):
         ]
         self.assertEqual(sorted(e["id"] for e in cache.superseded(entries)), [1, 3, 7, 11, 13])
 
+    def test_trim_keeps_this_runs_working_set_and_bookkeeping(self):
+        import os, tempfile
+        with tempfile.TemporaryDirectory() as root:
+            since = 1_800_000_000
+            def put(rel, age, size=10):
+                path = Path(root, rel)
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(b"x" * size)
+                os.utime(path, (since - age, since - age))
+                return path
+            used_now = put("0a/aa-d", -60)          # written or bumped during the run
+            used_recent = put("0b/bb-a", 3000)      # under an hour old: Go does not bump it on use
+            stale = put("0c/cc-d", 3 * 3600, 7)     # restored, never used this run
+            trim = put("trim.txt", 30 * 86400)      # bookkeeping, whatever its age
+            other = put("fuzz/x", 30 * 86400)       # not a hashed entry directory
+            kept, removed = cache.trim_unused(root, since)
+            self.assertTrue(used_now.exists() and used_recent.exists())
+            self.assertFalse(stale.exists())
+            self.assertTrue(trim.exists() and other.exists())
+            self.assertEqual((kept, removed), (20, 7))
+
     def test_creation_times_compare_across_fraction_lengths(self):
         times = ["2026-11-14T19:09:14.764Z", "2026-11-14T19:09:14.7640001Z", "2026-11-14T19:09:14Z",
                  "2026-11-14T19:09:14.76Z"]
