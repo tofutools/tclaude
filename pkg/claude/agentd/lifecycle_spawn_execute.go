@@ -848,7 +848,11 @@ func pollSpawnedSession(w spawnPoll) spawnPollResult {
 	var lastDiscoveryScan time.Time
 	remoteArmed := false
 	pendingLaunchMarked := false
-	for time.Now().Before(deadline) {
+	// At least one observation, however long the launch itself took: the
+	// budget runs from launchedAt, which precedes the launch call, so a slow
+	// launch could consume all of it and the spawn would answer pending with
+	// no tmux session for a pane that is already up.
+	for first := true; first || time.Now().Before(deadline); first = false {
 		// A wrapper that died after the fork reports here (the proofless path
 		// is fire-and-forget, so its failure never comes back as a return
 		// value). React exactly like a synchronous launch failure instead of

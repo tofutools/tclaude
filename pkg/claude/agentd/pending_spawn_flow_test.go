@@ -63,8 +63,12 @@ func TestCodexAgent_PendingSpawnBackfillEnrollment(t *testing.T) {
 	}))
 
 	// Drive the pending path without a real multi-second wait: a genuinely
-	// gated Codex blows the production grace; the test shrinks it.
-	t.Cleanup(agentd.SetAsyncSpawnInlineGraceForTest(50 * time.Millisecond))
+	// gated Codex blows the production grace; the test shrinks it to one that
+	// has always expired by the time the launch returns, so the spawn gets
+	// exactly the poll's one guaranteed observation. (50ms raced the gated
+	// launch itself on a loaded macOS runner: the budget ran out before the
+	// first poll and the pending response had no tmux session.)
+	t.Cleanup(agentd.SetAsyncSpawnInlineGraceForTest(time.Nanosecond))
 
 	// Swap in the gated spawner. Non-codex spawns + all resumes delegate to
 	// the default simulator-backed spawner; only the codex SpawnNew is gated.
