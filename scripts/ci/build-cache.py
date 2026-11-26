@@ -12,15 +12,33 @@ HEADROOM = 512 * 1024**2
 MAX_SNAPSHOT = 1024**3
 SAVERS = 3  # release.yml: Linux agentd + sandbox shards, macOS agentd
 
-# CodeQL (repository default setup) saves an overlay base database per
-# language on every push to main, ~680 MB a commit in all, and never prunes
-# them: the cache sat at its 10 GB limit with a dozen generations, so no
-# build snapshot could ever be saved and every agentd/sandbox run compiled
-# cold. CodeQL restores the newest base by key prefix, so only the newest
-# generation per prefix is used. Keep two in case one is being written or
-# was just superseded; anything older is reclaimable.
-CODEQL_OVERLAY = re.compile(r"^(codeql-overlay-base-database-\d+-[0-9a-f]+-[a-z0-9_]+-[0-9.]+)-[0-9a-f]{40}-\d+-\d+$")
-CODEQL_KEEP = 2
+# Caches other workflows save on main and never prune. Left alone they
+# filled the 10 GB limit, so no build snapshot could be saved and every
+# agentd/sandbox run compiled cold. Each rule maps a key to its family and its
+# generation line within that family; only the newest entries of the current
+# line are ever restored, so everything else is reclaimable.
+#
+# - CodeQL (repository default setup) saves an overlay base database per
+#   language on every push to main, ~680 MB a commit in all. It restores the
+#   newest base of its own CodeQL version, so once a newer version has saved,
+#   every older version's bases are dead weight too: the version is the line.
+#   Keep two of the current version in case one is being written or was just
+#   superseded.
+# - CodeQL's TRAP cache is saved per commit: keep the newest two per language,
+#   whatever their version.
+# - CodeQL's dependency cache and setup-go's module/build cache are keyed by a
+#   hash of the dependency files, so a go.mod/go.sum change leaves the
+#   previous generation behind. Nothing restores one by prefix: keep only the
+#   newest.
+OVERLAY = re.compile(r"^(codeql-overlay-base-database-\d+-[0-9a-f]+-[a-z0-9_]+)-([0-9.]+)-[0-9a-f]{40}-\d+-\d+$")
+TRAP = re.compile(r"^codeql-trap-(\d+)-[0-9.]+-([a-z0-9_]+)-[0-9a-f]{40}$")
+HASHED = re.compile(r"^((?:codeql-dependencies-\d+-[A-Za-z]+-[a-z0-9_]+)|(?:setup-go-\S+-go-[0-9.]+))-([0-9a-f]{64})$")
+SUPERSEDABLE = [
+    # (pattern, (family, line) of a match, entries kept of the current line)
+    (OVERLAY, lambda m: (m.group(1), m.group(2)), 2),
+    (TRAP, lambda m: (f"codeql-trap-{m.group(1)}-{m.group(2)}", ""), 2),
+    (HASHED, lambda m: (m.group(1), m.group(2)), 1),
+]
 
 
 def api(path, *args):
@@ -37,19 +55,25 @@ def can_save(entries, size):
     return size <= MAX_SNAPSHOT and sum(e["size_in_bytes"] for e in entries) + SAVERS * MAX_SNAPSHOT <= LIMIT - HEADROOM
 
 
-def superseded_codeql(entries):
-    """CodeQL overlay base databases on main older than the newest
-    CODEQL_KEEP of their language/configuration. Nothing else qualifies."""
-    groups = {}
-    for entry in entries:
-        match = CODEQL_OVERLAY.match(entry["key"])
-        if entry["ref"] == "refs/heads/main" and match:
-            groups.setdefault(match.group(1), []).append(entry)
+def superseded(entries):
+    """Main-branch caches of a SUPERSEDABLE family that nothing restores any
+    more. A family's current generation line is that of its newest entry;
+    entries of any other line are superseded, and so is any entry of the
+    current line past the family's keep count. Nothing else qualifies."""
     stale = []
-    for group in groups.values():
-        # Parsed, not compared as text: the API's fractional seconds vary in length.
-        group.sort(key=lambda e: (created(e), e["id"]), reverse=True)
-        stale += group[CODEQL_KEEP:]
+    for pattern, classify, keep in SUPERSEDABLE:
+        families = {}
+        for entry in entries:
+            match = pattern.match(entry["key"])
+            if entry["ref"] == "refs/heads/main" and match:
+                family, line = classify(match)
+                families.setdefault(family, []).append((line, entry))
+        for family in families.values():
+            # Parsed, not compared as text: the API's fractional seconds vary in length.
+            family.sort(key=lambda g: (created(g[1]), g[1]["id"]), reverse=True)
+            current = family[0][0]
+            kept = [e for line, e in family if line == current]
+            stale += [e for line, e in family if line != current] + kept[keep:]
     return stale
 
 
@@ -87,13 +111,13 @@ def main():
         # Housekeeping, never a reason to fail the release: an entry that
         # could not be deleted simply still counts against the budget.
         gone = set()
-        for entry in superseded_codeql(entries):
+        for entry in superseded(entries):
             try:
                 if delete(repo, entry):
-                    print(f"Deleted superseded CodeQL overlay base {entry['key']} ({entry['size_in_bytes']} bytes)")
+                    print(f"Deleted superseded cache {entry['key']} ({entry['size_in_bytes']} bytes)")
                 gone.add(entry["id"])
             except (subprocess.CalledProcessError, OSError, ValueError) as error:
-                print(f"::warning title=CodeQL cache not pruned::{entry['key']}: {error}")
+                print(f"::warning title=cache not pruned::{entry['key']}: {error}")
         entries = [e for e in entries if e["id"] not in gone]
         allowed = can_save(entries, size)
         print(f"Build cache: {size} bytes on disk; repository caches: {sum(e['size_in_bytes'] for e in entries)} bytes; save={allowed}")
