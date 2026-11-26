@@ -1,8 +1,9 @@
 # The macOS Sandbox v2 Seatbelt smoke: probes Seatbelt, then runs the
 # hardware-backed Seatbelt assumptions, the sandbox v2 smoke driver and the
 # OpenCode Seatbelt executor smoke. A composite action rather than a job, so
-# release.yml and manual-release.yml can run it inside their one macOS job
-# (hosted macOS runners are concurrency-capped; see release.yml).
+# release.yml and manual-release.yml can run it after the darwin build in
+# their `macos` job, without asking the capped hosted macOS pool for another
+# slot (see release.yml).
 #
 # Callers must check out the repo first and run on a macOS runner.
 name: Sandbox v2 Seatbelt smoke
