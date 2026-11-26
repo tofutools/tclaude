@@ -9,6 +9,15 @@
 name: Sandbox v2 Seatbelt smoke
 description: Run the macOS Sandbox v2 Seatbelt smoke on the current runner.
 
+inputs:
+  go-cache:
+    description: >-
+      Restore (and save) setup-go's module and build cache. A job that already
+      ran setup-go with its cache (the release workflows' `macos` job, which
+      builds first) passes 'false': restoring the same ~1 GB again costs ~25s
+      and fails on files the first restore already extracted.
+    default: 'true'
+
 runs:
   using: composite
   steps:
@@ -19,7 +28,7 @@ runs:
         # A self-hosted runner keeps ~/go/pkg/mod and GOCACHE between jobs,
         # and restoring setup-go's cache over the read-only module files
         # fails there; the local caches do that job. Hosted runners cache.
-        cache: ${{ runner.environment != 'self-hosted' }}
+        cache: ${{ runner.environment != 'self-hosted' && inputs.go-cache == 'true' }}
 
     - name: Set up Node for OpenCode smoke
       uses: actions/setup-node@v7

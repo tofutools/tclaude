@@ -183,10 +183,11 @@ jobs:
     runs-on: macos-latest
     timeout-minutes: 60
     steps:
+      # Shallow: the version is computed by the version job, and goreleaser
+      # --snapshot stamps it from TCLAUDE_RELEASE_VERSION, so this job needs
+      # no history. A full fetch of every branch cost ~15s.
       - name: Checkout code
         uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
 
       - name: Set up Go
         uses: actions/setup-go@v7
@@ -235,6 +236,9 @@ jobs:
       - name: Sandbox v2 Seatbelt smoke
         if: ${{ !cancelled() }}
         uses: ./.github/actions/seatbelt-smoke
+        with:
+          # The job's own setup-go above restored the Go cache already.
+          go-cache: 'false'
 
   macos-agentd:
     name: macOS (test, agentd)
