@@ -112,7 +112,8 @@ test('on a 360px phone the chips scroll inside their row: Problems scrolls into 
     { message: 'the picked chip is on screen' }).toBeLessThanOrEqual(360);
   const { scroll, width } = await page.evaluate(() => ({ scroll: document.documentElement.scrollWidth, width: document.documentElement.clientWidth }));
   expect(scroll).toBeLessThanOrEqual(width);
-  // Problems lists the fixture's failing PR (payments-fix's #1469) and its error.
+  // Problems lists the fixture's error. Its failing PR (#1469) is not one:
+  // its agent was heard from 45s ago, so it is still iterating.
   await expect(page.getByRole('group', { name: 'Problems' }).locator('.phone-now-group')).not.toHaveCount(0);
 });
 

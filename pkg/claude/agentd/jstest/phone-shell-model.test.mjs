@@ -176,7 +176,7 @@ test('Problems: each online agent once under its worst problem', async (t) => {
   const m = (n, title, status, extra = {}) => member(id(n), title, status, { ...extra, state: { status, ...(extra.state || {}) } });
   const snapshot = { groups: [{ name: 'g', members: [
     m(1, 'broken', 'error', { state: { context_pct: 95 } }),
-    m(2, 'red', 'idle', pr(10, 'open', { failed: 2 })),
+    m(2, 'red', 'idle', { ...pr(10, 'open', { failed: 2 }), state: { last_hook: ago(30) } }),
     m(3, 'merged-red', 'idle', pr(11, 'merged', { failed: 1 })),
     m(4, 'full', 'working', { state: { context_pct: CONTEXT_HIGH_PCT, last_hook: ago(1) } }),
     m(5, 'almost', 'working', { state: { context_pct: CONTEXT_HIGH_PCT - 1, last_hook: ago(1) } }),
@@ -187,6 +187,30 @@ test('Problems: each online agent once under its worst problem', async (t) => {
   assert.deepEqual(problemRows(view, now).map((r) => [r.kind, r.agent.name]),
     [['error', 'broken'], ['ci', 'red'], ['quiet', 'quiet']],
     'broken once; a merged PR\'s red checks are not a problem; a full context is not one either (the harness compacts); offline is not');
+});
+
+test('Problems: failing CI is a problem only once nobody is iterating on it', async (t) => {
+  const { nowView, problemRows, CI_LEFT_AFTER_MS, STUCK_AFTER_MS } = await load(t);
+  assert.equal(CI_LEFT_AFTER_MS, STUCK_AFTER_MS, 'one "has it stopped?" timer for quiet and for CI');
+  const now = Date.parse('2026-11-15T12:00:00Z');
+  const ago = (ms) => new Date(now - ms).toISOString();
+  const id = (n) => `agt_${String(n).padStart(32, '0')}`;
+  const red = (n) => ({ branch_pr_number: n, branch_pr_url: `https://x/pull/${n}`, branch_pr_state: 'open', branch_checks: { failed: 1 } });
+  const m = (n, title, status, hook, extra = {}) => member(id(n), title, status, { ...red(n), ...extra, state: { status, ...(hook === null ? {} : { last_hook: ago(hook) }) } });
+  const snapshot = { groups: [{ name: 'g', members: [
+    m(1, 'fixing', 'working', 60_000),
+    m(2, 'between-turns', 'idle', CI_LEFT_AFTER_MS - 60_000),
+    m(3, 'asking', 'awaiting_input', CI_LEFT_AFTER_MS * 4),
+    m(4, 'left-it', 'idle', CI_LEFT_AFTER_MS + 60_000),
+    m(5, 'never-heard', 'idle', null),
+    m(6, 'stopped', 'idle', 60_000, { online: false }),
+    m(7, 'stopped-merged', 'idle', 60_000, { online: false, branch_pr_state: 'merged' }),
+    member(id(8), 'stopped-green', 'idle', { online: false, branch_pr_number: 8, branch_pr_url: 'https://x/pull/8', branch_pr_state: 'open', branch_checks: { passed: 3 }, state: { status: 'idle' } }),
+  ] }] };
+  const rows = problemRows(nowView(snapshot), now);
+  assert.deepEqual(rows.map((r) => [r.kind, r.agent.name, r.state]),
+    [['ci', 'left-it', 'idle'], ['ci', 'never-heard', 'idle'], ['ci', 'stopped', 'offline']],
+    'at work, asking, or idle under the threshold is iterating; idle past it, never heard from, or offline is not');
 
 });
 
