@@ -117,4 +117,12 @@ test('ordinary text is never glued onto a link', () => {
     ['https://github.com/gigurra/tclaude/pul'], 'deeper than an indent');
   assert.deepEqual(at([['│ See https://github.com/gigurra/tclaude/p │'], ['│ ull/4541/files for it'.padEnd(COLS - 1) + '│']]),
     ['https://github.com/gigurra/tclaude/pull/4541/files'], 'a box\'s border and padding are allowed for, and stay out');
+  // A long URL that fits its row can end flush at the edge too.
+  const flush = 'See https://example.com/a/long/path/12345678';
+  assert.equal(flush.length, COLS);
+  assert.deepEqual(at([[flush], ['  and more text here']]), ['https://example.com/a/long/path/12345678'], 'the next word');
+  assert.deepEqual(at([[flush.slice(0, -1) + '.'], ['  Then do the next thing']]), ['https://example.com/a/long/path/1234567'], 'the next sentence');
+  assert.deepEqual(at([[flush], ['  /usr/local/bin is next']]), ['https://example.com/a/long/path/12345678'],
+    'a path starting the next line');
+  assert.deepEqual(at([[flush], ['  9/x for it']]), ['https://example.com/a/long/path/123456789/x'], 'but URL text carries on');
 });

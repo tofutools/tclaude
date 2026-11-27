@@ -501,7 +501,12 @@ function oscRuns(line) {
 // hyperlinks of its own, and after at most WRAP_LEAD_RE's indent goes on in
 // URL characters that do not start a URL of their own; and the URL so far
 // plus that piece is longer than a row, as a word wrapper would otherwise
-// have moved it whole onto the next row rather than broken it.
+// have moved it whole onto the next row rather than broken it. A URL that
+// fits can still end flush at the edge, so a last piece (one not filling its
+// row) must read as URL text too: a digit or one of / ? # = & % _ ~ - in it,
+// and not a path starting its line; and a capital after the URL's sentence
+// punctuation is the next sentence. Where in doubt it stays unjoined: a piece
+// that opens only its own part, as before, rather than the wrong address.
 export function screenLinks(lines) {
   const cols = Math.max(0, ...lines.flatMap((l) => l.rows.map((r) => r.cells.length)));
   const out = lines.map((line) => {
@@ -521,9 +526,16 @@ export function screenLinks(lines) {
       const rest = next.text.slice(lead.length);
       const piece = /^https?:\/\//i.test(rest) ? '' : rest.match(URL_CHARS_RE)?.[0];
       if (!piece || joined.length + piece.length <= cols - lead.length) break;
+      // A sentence going on after a URL, not the URL going on.
+      if (/[.,;:!?)]$/.test(joined) && /^[A-Z]/.test(piece)) break;
+      const full = endsAtEdge(next, lead.length + piece.length, cols);
+      // A URL that fits ends flush at the edge as often as a broken one does,
+      // so a last piece (one that does not fill its row) must read as URL
+      // text: not a word ("and"), and not a path starting a line of its own.
+      if (!full && (!/[0-9/?#=&%_~-]/.test(piece) || piece.startsWith('/'))) break;
       segments.push({ line: j + 1, start: lead.length, end: lead.length + piece.length });
       joined += piece;
-      if (!endsAtEdge(next, lead.length + piece.length, cols)) break;
+      if (!full) break;
     }
     if (segments.length < 2) continue;
     const text = trimPathPunctuation(joined);
