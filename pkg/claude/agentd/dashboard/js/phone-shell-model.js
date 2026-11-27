@@ -165,6 +165,9 @@ export function nowView(snapshot, { byGroup = false } = {}) {
     working,
     resting,
     online: agents.filter((agent) => agent.online),
+    // Offline members: Problems lists one whose open PR's checks fail, as
+    // nobody is iterating on it.
+    offline: agents.filter((agent) => !agent.online).sort(byRecency),
     needs: approvals.length + elsewhere + decisions.length + asking.length,
   };
 }
@@ -274,6 +277,26 @@ export function stuckRows(view, now = Date.now()) {
   return { rows, quiet: rows.filter((row) => row.quiet).length };
 }
 
+// CI_LEFT_AFTER_MS is how long an agent may sit idle, its open PR's checks
+// failing, before Problems lists the PR: iterating on red CI is normal while
+// the agent is at it. It is the quiet-while-busy threshold, so one timer
+// answers "has this agent stopped?" for both.
+export const CI_LEFT_AFTER_MS = STUCK_AFTER_MS;
+
+// openPRFailing reports whether an agent's open PR has failing checks.
+const openPRFailing = (agent) => agent.pr?.ci === 'failing' && agent.pr.state !== 'merged' && agent.pr.state !== 'closed';
+
+// ciLeft reports whether an agent with a failing open PR has left it: it is
+// offline, or idle (not at work, not asking the operator) and silent past
+// CI_LEFT_AFTER_MS, or idle and never heard from. An agent at work, asking
+// (Needs you shows it) or idle only briefly is still iterating.
+export function ciLeft(agent, now = Date.now()) {
+  if (!agent.online) return true;
+  if (WORKING.has(agent.status) || NEEDS.has(agent.status)) return false;
+  const at = hookAt(agent);
+  return at === null || now - at > CI_LEFT_AFTER_MS;
+}
+
 // PROBLEMS are the kinds Problems lists, worst first.
 export const PROBLEMS = Object.freeze([
   { kind: 'error', title: 'Errors' },
@@ -281,10 +304,12 @@ export const PROBLEMS = Object.freeze([
   { kind: 'quiet', title: 'Quiet while busy' },
 ]);
 
-// problemRows is the Problems chip: one go-look list of online agents, each
-// once, under the worst of its problems: in error, its open PR's checks
-// failing, or at work but quiet past
-// STUCK_AFTER_MS (quiet the longest first). [{ kind, agent, state }]
+// problemRows is the Problems chip: one go-look list of agents, each once,
+// under the worst of its problems: in error, its open PR's checks failing
+// with nobody iterating on them (ciLeft: offline, or idle past
+// CI_LEFT_AFTER_MS), or at work but quiet past STUCK_AFTER_MS (quiet the
+// longest first). Only the CI kind lists offline agents. [{ kind, agent,
+// state }]
 export function problemRows(view, now = Date.now()) {
   const taken = new Set();
   const rows = [];
@@ -292,12 +317,12 @@ export function problemRows(view, now = Date.now()) {
     for (const agent of list) {
       if (taken.has(agent.agentId)) continue;
       taken.add(agent.agentId);
-      rows.push({ kind, agent, state: rowState(agent) });
+      rows.push({ kind, agent, state: agent.online ? rowState(agent) : 'offline' });
     }
   };
   const online = view.online;
   take('error', view.errors);
-  take('ci', online.filter((agent) => agent.pr?.ci === 'failing' && agent.pr.state !== 'merged' && agent.pr.state !== 'closed'));
+  take('ci', [...online, ...(view.offline || [])].filter((agent) => openPRFailing(agent) && ciLeft(agent, now)));
   take('quiet', stuckRows(view, now).rows.filter((row) => row.quiet).map((row) => row.agent));
   return rows;
 }

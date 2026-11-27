@@ -129,7 +129,10 @@ const PROBLEM_TONE = Object.freeze({ error: 'bad', ci: 'bad', quiet: 'quiet' });
 // problemLine says why a row is in Problems.
 function problemLine({ kind, agent }) {
   if (kind === 'error') return agent.detail || 'in error';
-  if (kind === 'ci') return `PR #${agent.pr.number} checks failing`;
+  if (kind === 'ci') {
+    const left = !agent.online ? 'agent offline' : since(agent) ? `idle ${since(agent)}` : 'idle';
+    return `PR #${agent.pr.number} checks failing · ${left}`;
+  }
   return since(agent) ? `last update ${since(agent)} ago` : 'no update time';
 }
 
@@ -250,7 +253,7 @@ export function NowView({ state, actions, fetchImpl = globalThis.fetch, processS
       head: i === 0 || problems[i - 1].kind !== row.kind
         ? `${PROBLEMS.find((p) => p.kind === row.kind).title} · ${problems.filter((p) => p.kind === row.kind).length}` : '',
     }));
-    body = html`<${Section} title="Problems" count=${rows.length}>${rowsOr(rows, 'Nothing to look at: no errors, failing checks or quiet agents.')}<//>`;
+    body = html`<${Section} title="Problems" count=${rows.length}>${rowsOr(rows, 'Nothing to look at: no errors, failing checks left unattended or quiet agents.')}<//>`;
   } else {
     body = html`
     <${UsageStrip} snapshot=${snapshot} onOpen=${() => actions.navigate('/usage')} />
