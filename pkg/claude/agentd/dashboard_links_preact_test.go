@@ -119,7 +119,7 @@ func TestDashboardLinksPreactOwnership(t *testing.T) {
 			t.Errorf("legacy Links ownership remains: %q", forbidden)
 		}
 	}
-	for _, needle := range []string{"openLinkCreate({ from }, node)", "openLinksManager()", "openLinkEdit({ id, from, to, mode, node })", "await deleteLink({ id, from, to, scope, node })"} {
+	for _, needle := range []string{"openLinkCreate({ from }, node)", "openLinksManager()", "openLinkEdit({ id, from, to, mode, node })", "await deleteLink({ id, from, to, scope, node, ...peerFields })"} {
 		if !strings.Contains(rowActions, needle) {
 			t.Errorf("delegated group launcher does not use Links controller: %q", needle)
 		}
