@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/notify"
 )
 
 // Questions for the operator (tk_aa049a67, tk_8b2c86f7, docs/taskboard.md):
@@ -146,6 +147,7 @@ func handleTaskboardAskOperator(w http.ResponseWriter, r *http.Request, t *db.Gr
 		detail += fmt.Sprintf(" with %d file(s)", n)
 	}
 	setAuditDetail(r, detail)
+	pushOperatorQuestion(r, g.Name, asked.Title)
 	views, err := taskboardViews(g.Name, []*db.GroupTask{out})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "db", err.Error())
@@ -353,4 +355,24 @@ func handleTaskboardAnswerGet(w http.ResponseWriter, r *http.Request, t *db.Grou
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"task": cur.ID, "n": q.N, "status": cur.Status, "state": q.State,
 		"answered": q.Answer != nil, "question": q})
+}
+
+// operatorQuestionNotify pushes an ask-operator question; flow tests swap it.
+var operatorQuestionNotify = notify.SendOperatorQuestion
+
+// pushOperatorQuestion sends a new ask-operator question to the operator's
+// devices (when operator_questions is on for push), off the request
+// goroutine. An agent's mutes apply, as they do to its messages.
+func pushOperatorQuestion(r *http.Request, group, title string) {
+	who := taskboardPeerAuthor(r)
+	conv := confirmedAgentConv(r)
+	if conv != "" {
+		who = notifyHumanCallerTitle(conv)
+	}
+	goBackground(func() {
+		if conv != "" && !notify.AllowedForConv(conv) {
+			return
+		}
+		operatorQuestionNotify(who, group, title)
+	})
 }

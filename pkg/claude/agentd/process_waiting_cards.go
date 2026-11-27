@@ -134,7 +134,7 @@ func postProcessWaitingCard(view processRunView, d processRunDecisionView) {
 		return
 	}
 	if inserted {
-		dispatchHumanMessageNotification("", m.FromTitle, m.GroupName, m.Subject, m.Body)
+		dispatchHumanQuestionNotification("", m.FromTitle, m.GroupName, m.Subject, m.Body)
 		slog.Debug("process waiting cards: put up", "run", view.ID, "node", d.NodeID, "message", id)
 	}
 }

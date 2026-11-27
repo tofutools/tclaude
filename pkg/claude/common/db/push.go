@@ -220,8 +220,8 @@ func DeletePushSubscription(id int64) error {
 }
 
 // EnqueuePush queues one push for every subscribed device, or for only
-// the device onlyID when it is non-zero. It returns how many were queued:
-// none when no device is subscribed.
+// the device onlyID when it is non-zero, due at once. It returns how many
+// were queued: none when no device is subscribed.
 func EnqueuePush(tag string, payload []byte, urgency string, onlyID int64, now time.Time) (int64, error) {
 	d, err := Open()
 	if err != nil {
@@ -229,8 +229,8 @@ func EnqueuePush(tag string, payload []byte, urgency string, onlyID int64, now t
 	}
 	res, err := d.Exec(`
 		INSERT INTO push_outbox (subscription_id, tag, payload, urgency, created_at, next_at)
-		SELECT id, ?, ?, ?, ?, ? FROM push_subscriptions WHERE ? = 0 OR id = ?`,
-		tag, string(payload), urgency, pushMS(now), pushMS(now), onlyID, onlyID)
+		SELECT id, ?, ?, ?, ?, 0 FROM push_subscriptions WHERE ? = 0 OR id = ?`,
+		tag, string(payload), urgency, pushMS(now), onlyID, onlyID)
 	if err != nil {
 		return 0, err
 	}

@@ -39,6 +39,10 @@ import (
 // blocks the request.
 var humanMsgNotify = notify.SendHumanMessage
 
+// humanQuestionNotify is humanMsgNotify for a message that waits on the
+// operator's answer (notify.SendHumanQuestion).
+var humanQuestionNotify = notify.SendHumanQuestion
+
 // notifyHumanRequest is the POST /v1/notify-human body.
 type notifyHumanRequest struct {
 	Body    string `json:"body"`
@@ -231,7 +235,7 @@ func handleNotifyHuman(w http.ResponseWriter, r *http.Request) {
 			"failed to record message: "+err.Error())
 		return
 	}
-	dispatchHumanMessageNotification(callerConv, fromTitle, groupName, body.Subject, body.Body)
+	dispatchHumanFor(m.Options)(callerConv, fromTitle, groupName, body.Subject, body.Body)
 	mirrorHumanMessage(id)
 	writeJSON(w, http.StatusOK, map[string]any{"id": id, "delivered": true})
 }
@@ -377,7 +381,7 @@ func handleNotifyHumanAttachment(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "io", "record attachment: "+err.Error())
 		return
 	}
-	dispatchHumanMessageNotification(callerConv, fromTitle, groupName, meta.Subject, meta.Body)
+	dispatchHumanFor(message.Options)(callerConv, fromTitle, groupName, meta.Subject, meta.Body)
 	mirrorHumanMessage(id)
 	names := make([]string, 0, len(attachments))
 	for _, a := range attachments {
@@ -728,6 +732,26 @@ func newHumanMessageRow(fromConv, subject, body, runID, nodeID, commandID string
 }
 
 func dispatchHumanMessageNotification(fromConv, fromTitle, groupName, subject, body string) {
+	dispatchHumanNote(humanMsgNotify, fromConv, fromTitle, groupName, subject, body)
+}
+
+// dispatchHumanQuestionNotification is dispatchHumanMessageNotification for
+// a message that waits on the operator's answer: a decision card, or a
+// process step waiting on a person.
+func dispatchHumanQuestionNotification(fromConv, fromTitle, groupName, subject, body string) {
+	dispatchHumanNote(humanQuestionNotify, fromConv, fromTitle, groupName, subject, body)
+}
+
+// dispatchHumanFor picks the dispatch for a message: a question when it
+// offers the operator options to choose from.
+func dispatchHumanFor(options []string) func(fromConv, fromTitle, groupName, subject, body string) {
+	if len(options) > 0 {
+		return dispatchHumanQuestionNotification
+	}
+	return dispatchHumanMessageNotification
+}
+
+func dispatchHumanNote(send func(string, string, string, string, string), fromConv, fromTitle, groupName, subject, body string) {
 	if fromConv != "" {
 		forwardAwayHumanMessage(fromConv, fromTitle, subject, body)
 	}
@@ -742,7 +766,7 @@ func dispatchHumanMessageNotification(fromConv, fromTitle, groupName, subject, b
 		if fromConv != "" && !notify.AllowedForConv(fromConv) {
 			return
 		}
-		humanMsgNotify(senderSession, fromTitle, groupName, subject, body)
+		send(senderSession, fromTitle, groupName, subject, body)
 	})
 }
 

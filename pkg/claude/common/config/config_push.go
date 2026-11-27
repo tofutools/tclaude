@@ -29,17 +29,22 @@ const (
 	PushAccessRequests = "access_requests"
 	PushHumanMessages  = "human_messages"
 	PushPresentPR      = "present_pr"
+	// PushOperatorQuestions: a question waiting for the operator's answer
+	// (a taskboard ask-operator question, a notify-human decision card, a
+	// process step waiting on a person).
+	PushOperatorQuestions = "operator_questions"
 )
 
 // PushCategories is every category a push can be about, in display order:
-// the --ask-human access requests, notify-human messages, presented PRs,
-// then an agent's state changes (NotifyTypes).
-var PushCategories = append([]string{PushAccessRequests, PushHumanMessages, PushPresentPR}, NotifyTypes...)
+// the --ask-human access requests, questions for the operator, notify-human
+// messages, presented PRs, then an agent's state changes (NotifyTypes).
+var PushCategories = append([]string{PushAccessRequests, PushOperatorQuestions, PushHumanMessages, PushPresentPR}, NotifyTypes...)
 
-// pushDefaultOn is what a newly subscribed device gets: what needs the
-// operator. An idle or exited agent, an error and a presented PR are off:
-// on a phone they are noise until asked for.
-var pushDefaultOn = []string{PushAccessRequests, PushHumanMessages, "awaiting_permission", "awaiting_input"}
+// pushDefaultOn is what a newly subscribed device gets: an agent stuck
+// waiting on the operator, for a permission or an answer. Everything else
+// is off until asked for: an idle or exited agent, an error, a presented
+// PR, and a plain notify-human message, which is often a status update.
+var pushDefaultOn = []string{PushAccessRequests, PushOperatorQuestions, "awaiting_permission", "awaiting_input"}
 
 // IsPushCategory reports whether s is one of PushCategories.
 func IsPushCategory(s string) bool { return slices.Contains(PushCategories, s) }

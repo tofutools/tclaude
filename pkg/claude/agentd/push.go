@@ -178,7 +178,9 @@ func sendPushJob(ctx context.Context, vapid *webpush.VAPID, job db.PushJob, now 
 		_, _ = db.PushFailed(job, err.Error(), nil)
 		return
 	}
-	ttl := db.PushOutboxTTL - now.Sub(job.CreatedAt)
+	// What is left of the push's time, so a retried push does not outlive
+	// the outbox's bound at the push service either.
+	ttl := min(db.PushOutboxTTL-now.Sub(job.CreatedAt), db.PushOutboxTTL)
 	if ttl < time.Second {
 		ttl = time.Second
 	}

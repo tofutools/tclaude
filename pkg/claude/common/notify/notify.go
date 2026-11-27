@@ -322,12 +322,42 @@ func dispatch(sessionID, title, body string) {
 // dashboard's per-message Focus button. Pass "" when the sender has no
 // live session; the notification still fires, just non-clickable.
 func SendHumanMessage(senderSessionID, fromTitle, group, subject, body string) {
+	sendHumanMessage(config.PushHumanMessages, senderSessionID, fromTitle, group, subject, body)
+}
+
+// SendHumanQuestion is SendHumanMessage for a message that waits on the
+// operator's answer: a decision card, or a process step waiting on a
+// person. The desktop treats it as any message; a push files it under
+// operator_questions, which is on by default.
+func SendHumanQuestion(senderSessionID, fromTitle, group, subject, body string) {
+	sendHumanMessage(config.PushOperatorQuestions, senderSessionID, fromTitle, group, subject, body)
+}
+
+// SendOperatorQuestion pushes a taskboard ask-operator question: who asks,
+// in which group, and the question's title. It has no desktop banner (the
+// Task board and its Needs-you count are the desktop's surface); it no-ops
+// unless operator_questions is on for push.
+func SendOperatorQuestion(fromTitle, group, question string) {
+	cfg, err := config.Load()
+	if err != nil {
+		return
+	}
+	note := humanMessagePushNote(config.PushOperatorQuestions, fromTitle, group, question)
+	note.urgency = "high"
+	queuePush(cfg.Notifications, note)
+}
+
+func sendHumanMessage(category, senderSessionID, fromTitle, group, subject, body string) {
 	cfg, err := config.Load()
 	if err != nil {
 		return
 	}
 	// A push carries who and the subject, never the message itself.
-	queuePush(cfg.Notifications, humanMessagePushNote(fromTitle, group, subject))
+	note := humanMessagePushNote(category, fromTitle, group, subject)
+	if category == config.PushOperatorQuestions {
+		note.urgency = "high"
+	}
+	queuePush(cfg.Notifications, note)
 	if !cfg.Notifications.NotifyHumanMessages() {
 		return
 	}
@@ -339,7 +369,7 @@ func SendHumanMessage(senderSessionID, fromTitle, group, subject, body string) {
 
 // humanMessagePushNote is a notify-human message as a push: the subject (or
 // "<who> messaged you") and who sent it.
-func humanMessagePushNote(fromTitle, group, subject string) pushNote {
+func humanMessagePushNote(category, fromTitle, group, subject string) pushNote {
 	who := strings.TrimSpace(fromTitle)
 	if who == "" {
 		who = "An agent"
@@ -351,7 +381,7 @@ func humanMessagePushNote(fromTitle, group, subject string) pushNote {
 	if s := strings.TrimSpace(subject); s != "" {
 		title = "tclaude: " + s
 	}
-	return pushNote{category: config.PushHumanMessages, title: title, body: who, url: "/messages", urgency: "normal"}
+	return pushNote{category: category, title: title, body: who, url: "/messages", urgency: "normal"}
 }
 
 // SendAccessRequest raises an optional OS notification for an agent
