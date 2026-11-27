@@ -35,19 +35,33 @@ func EnqueueBrowserNotification(sessionID, title, body string) error {
 	return enqueueBrowserNotificationAt(sessionID, title, body, time.Now())
 }
 
+// EnqueueBrowserNotificationID is EnqueueBrowserNotification returning the
+// queued row's id, which a push of the same notification carries so the
+// device shows one banner, not two.
+func EnqueueBrowserNotificationID(sessionID, title, body string) (int64, error) {
+	return enqueueBrowserNotificationIDAt(sessionID, title, body, time.Now())
+}
+
 func enqueueBrowserNotificationAt(sessionID, title, body string, now time.Time) error {
+	_, err := enqueueBrowserNotificationIDAt(sessionID, title, body, now)
+	return err
+}
+
+func enqueueBrowserNotificationIDAt(sessionID, title, body string, now time.Time) (int64, error) {
 	d, err := Open()
 	if err != nil {
-		return err
+		return 0, err
 	}
-	if _, err := d.Exec(
+	res, err := d.Exec(
 		`INSERT INTO browser_notifications (session_id, title, body, created_at) VALUES (?, ?, ?, ?)`,
 		sessionID, title, body, stamp(now),
-	); err != nil {
-		return err
+	)
+	if err != nil {
+		return 0, err
 	}
+	id, _ := res.LastInsertId()
 	pruneBrowserNotifications(d, now)
-	return nil
+	return id, nil
 }
 
 // stamp renders a queue timestamp. Deliberately UTC: created_at is compared

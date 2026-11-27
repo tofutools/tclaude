@@ -1,10 +1,9 @@
 // phone-more.js -- the phone shell's More sheet: the node on screen (and the
 // node picker), every tab the bottom nav has no slot for with its scope
-// badge, the power actions, whether notifications are on and the switch to
-// the desktop site, and Update tclaude (phone-update.js).
+// badge, the power actions, whether notifications are on, Phone push, and the
+// switch to the desktop site, and Update tclaude (phone-update.js).
 
 import { h } from 'preact';
-import { useEffect, useState } from 'preact/hooks';
 import htm from 'htm';
 import { footerMetaView } from './shell-model.js';
 import { MORE_TABS } from './phone-shell-model.js';
@@ -14,9 +13,8 @@ import { featureState } from './feature-state-registry.js';
 import { openSettingsSection } from './phone-config-island.js';
 import { openPhoneSheet } from './phone-sheet.js';
 import { UpdateSheet, canUpdateHere } from './phone-update.js';
-import { accessAlertsChange, accessAlertsOn, accessAlertsToast } from './phone-access-alerts.js';
 import { remoteNodeID } from './fleet-model.js';
-import { requestBrowserNotifyPermission } from './browser-notify.js';
+import { PushSettings } from './push-settings.js';
 import { shellToast } from './shell-state.js';
 
 const html = htm.bind(h);
@@ -46,53 +44,13 @@ function Entry({ icon, label, after = null, end = null, danger = false, disabled
   </button></li>`;
 }
 
-// AccessAlertsEntry is "Alert me on access requests": one tap sets the
-// three notification settings an access-request banner needs on a phone
-// (phone-access-alerts.js), and asks this browser for permission from that
-// tap. It reads the settings when More opens, and shows nothing until then.
-export function AccessAlertsEntry({ notify = () => {}, fetchImpl = globalThis.fetch, win = globalThis, remote = !!remoteNodeID() }) {
-  const [settings, setSettings] = useState(null);
-  const [busy, setBusy] = useState(false);
-  useEffect(() => {
-    let live = true;
-    if (remote || typeof fetchImpl !== 'function') return undefined;
-    Promise.resolve().then(() => fetchImpl('/api/notifications', { credentials: 'same-origin' }))
-      .then((response) => (response.ok ? response.json() : null))
-      .then((body) => { if (live && body) setSettings(body); })
-      .catch(() => {});
-    return () => { live = false; };
-  }, []);
-  // On a peer's page the settings are that node's, and its banners never
-  // reach this phone: the row belongs to this node only.
-  if (remote || !settings) return null;
-  const on = accessAlertsOn(settings);
-  const flip = async () => {
-    setBusy(true);
-    // The browser's permission is asked first, straight from the tap: iOS
-    // Safari and Firefox drop a prompt that comes after network round trips.
-    const permission = on ? null : requestBrowserNotifyPermission(win);
-    try {
-      const response = await fetchImpl('/api/notifications', {
-        method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(accessAlertsChange(settings, !on)),
-      });
-      if (!response.ok) throw new Error((await response.text()) || `HTTP ${response.status}`);
-      setSettings(await response.json());
-      if (!on) {
-        const granted = await permission;
-        notify(accessAlertsToast(granted, win), granted !== 'granted');
-      } else {
-        notify('Access-request alerts off.');
-      }
-    } catch (error) {
-      notify(`Could not change access-request alerts: ${error?.message || error}`, true);
-    } finally {
-      setBusy(false);
-    }
-  };
-  return html`<${Entry} icon="🔑" label="Alert me on access requests" disabled=${busy} onClick=${flip}
-    title="Raise a notification on this phone when an agent asks for access (while the app is open)"
-    end=${html`<span class="phone-menu-end phone-menu-note">${busy ? '…' : on ? 'on' : 'off'}</span>`} />`;
+// PushEntry is "Phone push": the Web Push controls (push-settings.js) in a
+// sheet. A peer's page shows none: pushes come from the node a device
+// subscribed on, so this phone subscribes on each node's own dashboard.
+export function PushEntry({ remote = !!remoteNodeID(), open = openPhoneSheet }) {
+  if (remote) return null;
+  return html`<${Entry} icon="📲" label="Phone push" title="Alerts on this phone with the app closed: what is pushed, and which devices get it"
+    onClick=${() => open({ label: 'Phone push', Body: PushSettings, props: { notify: shellToast } })} />`;
 }
 
 // MoreMenu is the More sheet: the node chip, every other tab with what a
@@ -121,7 +79,7 @@ export function MoreMenu({ state, actions, close, fleet = null, doctor = feature
       <${Entry} icon="🛑" label="Shut down all…" danger onClick=${() => run(actions.shutdownAll)} />
       <${Entry} icon="🔔" label="Notifications" onClick=${() => openNotifications(go)}
         end=${snap && html`<span class="phone-menu-end phone-menu-note">${notifying ? 'on' : 'off'}</span>`} />
-      <${AccessAlertsEntry} notify=${shellToast} />
+      <${PushEntry} />
       <${Entry} icon="⬆" label="Update tclaude" disabled=${!updatable} title=${updatable ? undefined : 'This node does not let you update it (needs node.update)'}
         onClick=${() => openPhoneSheet({ label: 'Update tclaude', Body: UpdateSheet, props: { navigate: actions.navigate } })}
         end=${!updatable && html`<span class="phone-menu-end phone-menu-note">needs node.update</span>`} />

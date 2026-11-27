@@ -19882,3 +19882,21 @@ body.wizard .gm-wait-field input { background: #1a1430; border-color: rgba(122, 
 .gm-wait-summary { margin: 0; padding-left: 78px; }
 .gm-wait-more { align-self: flex-start; margin-left: 78px; }
 @media (max-width: 600px) { .gm-wait-row, .gm-wait-summary { padding-left: 0; } .gm-wait-more { margin-left: 0; } }
+
+/* Web Push settings (js/push-settings.js): the bell popover's "Phone push…"
+   dialog and the phone's More › Phone push sheet. */
+.push-settings { display: flex; flex-direction: column; gap: 8px; max-width: 34rem; }
+.push-settings-intro { margin: 0; }
+.push-settings-warn { display: flex; align-items: center; gap: 8px; justify-content: space-between;
+  border-left: 3px solid var(--warning-text, #d99a2b); padding: 6px 8px; color: var(--warning-text, #d99a2b); }
+.push-settings-device { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.push-settings-switch { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+.push-settings-why { margin: 0; }
+.push-settings-head { margin: 8px 0 0; font-size: 0.95em; }
+.push-settings-cats { display: flex; flex-direction: column; gap: 4px; }
+.push-settings-devices { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.push-settings-dev { display: flex; align-items: center; gap: 6px; border: 1px solid var(--border, #30363d); border-radius: 6px; padding: 6px 8px; }
+.push-settings-dev-text { display: flex; flex-direction: column; flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.push-settings-error { color: var(--danger-text, #f85149); margin: 0; }
+:root[data-layout="phone"] .push-settings { padding: 0 16px 16px; max-width: none; }
+:root[data-layout="phone"] .push-settings .ui-check { min-height: 36px; align-items: center; }

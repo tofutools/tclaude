@@ -450,6 +450,8 @@ var peerViewOwnNodeRoutes = []string{
 	"GET /manifest.webmanifest",
 	"GET /pwa/{file}",
 	"GET /pwa/{version}/{file}",
+	// The service worker shows this node's own pushes.
+	"GET /sw.js",
 	"/terminals",
 	"/terminals/",
 }

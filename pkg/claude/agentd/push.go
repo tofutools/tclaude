@@ -410,6 +410,11 @@ type pushSubscribeBody struct {
 	// given, it must be this node's current key: a subscription made for an
 	// old one (before a reset-keys) can never be pushed to.
 	ApplicationServerKey string `json:"application_server_key"`
+	// Refresh updates a device agentd already knows and never adds one:
+	// the app re-posts its subscription on every open, and a device the
+	// operator removed (from another device, or the CLI) must stay removed.
+	// An unknown endpoint is a 404, on which the app drops its subscription.
+	Refresh bool `json:"refresh"`
 }
 
 // POST …/push/devices → {device, new, …state}: subscribe (or refresh) a
@@ -438,6 +443,15 @@ func handlePushSubscribe(w http.ResponseWriter, r *http.Request) {
 	if k := strings.TrimRight(body.ApplicationServerKey, "="); k != "" {
 		if v, err := webpush.ParseVAPID(raw); err != nil || v.PublicKey() != k {
 			http.Error(w, "the subscription was made with another push key: unsubscribe and subscribe again with the current one", http.StatusConflict)
+			return
+		}
+	}
+	if body.Refresh {
+		if _, err := db.PushSubscriptionByEndpoint(sub.Endpoint); errors.Is(err, db.ErrPushSubscriptionNotFound) {
+			http.Error(w, "this device is not subscribed", http.StatusNotFound)
+			return
+		} else if err != nil {
+			http.Error(w, "read push subscription: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
 	}

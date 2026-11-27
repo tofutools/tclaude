@@ -1,10 +1,14 @@
 import { h, render } from 'preact';
-import { useEffect, useRef } from 'preact/hooks';
+import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { NOTIFY_TYPES, NOTIFY_DELIVERIES } from './notify-state.js';
 import { browserNotifyPermission, notificationsUnsupportedNote } from './browser-notify.js';
 import { useDismissablePopover } from './hover-popover.js';
 import { Button, Select } from './ui-components.js';
+import { Dialog } from './ui-dialog.js';
+import { PushSettings } from './push-settings.js';
+import { remoteNodeID } from './fleet-model.js';
+import { shellToast } from './shell-state.js';
 
 const html = htm.bind(h);
 
@@ -40,8 +44,10 @@ function browserPermissionNote(delivery, permission) {
   }
 }
 
-export function NotifyApp({ state, actions, documentRef = document }) {
+export function NotifyApp({ state, actions, documentRef = document, remote = !!remoteNodeID() }) {
   const rootRef = useRef(null);
+  // Phone push opens its own dialog: the bell popover closes behind it.
+  const [pushOpen, setPushOpen] = useState(false);
   const current = state.view.value;
   const { settings } = current;
 
@@ -97,10 +103,17 @@ export function NotifyApp({ state, actions, documentRef = document }) {
       </label>
       ${deliveryNote && html`<div class="notify-pop-hint ui-hint" id="notify-pop-delivery-note">${deliveryNote}</div>`}
       <div class="notify-pop-sep"></div>
+      ${!remote && html`<${Button} size="sm" class="notify-pop-push" id="notify-pop-push"
+        title="Web Push: alerts on your phone (or this browser) with the app closed — what is pushed, and which devices get it."
+        onClick=${() => { actions.close(); setPushOpen(true); }}>Phone push…<//>`}
       <${Button} size="sm" class="notify-pop-config" id="notify-pop-config"
         title="Open the Config tab for the full notifications settings (cooldown, custom command, advanced rules)."
         onClick=${actions.openConfig}>Config tab ↗<//>
     </div>
+    ${pushOpen && html`<${Dialog} id="push-settings-modal" title="Phone push" onClose=${() => setPushOpen(false)}
+      dirty=${false} blocked=${false} cancel="Close">
+      <${PushSettings} notify=${shellToast} />
+    <//>`}
   </span>`;
 }
 

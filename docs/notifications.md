@@ -169,7 +169,11 @@ tclaude notifications push rm <device>
 tclaude notifications push reset-keys --yes   # new key; every device re-subscribes
 ```
 
-A device subscribes from the dashboard (see [Dashboard](dashboard.md)).
+A device subscribes from the dashboard: **More › Phone push** on a phone, or
+**🔔 › Phone push…** on the desktop (see
+[Dashboard](dashboard.md#phone-push)). Questions from one asker within a
+minute collapse into a single notification that counts them: the first one
+alerts, and the rest update it in place.
 Push needs HTTPS (the [remote](remote.md) listener with its CA trusted, or a
 tunnel). On iPhone it works only for the app added to the Home Screen.
 

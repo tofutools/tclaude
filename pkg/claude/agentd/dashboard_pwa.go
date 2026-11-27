@@ -132,6 +132,24 @@ func registerDashboardPWARoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /manifest.webmanifest", handleDashboardManifest)
 	mux.HandleFunc("GET /pwa/{file}", handleDashboardPWAIcon)
 	mux.HandleFunc("GET /pwa/{version}/{file}", handleDashboardPWAIcon)
+	mux.HandleFunc("GET /sw.js", handleDashboardServiceWorker)
+}
+
+// handleDashboardServiceWorker serves the service worker (dashboard/pwa/sw.js),
+// which shows Web Push notifications (push.go). Like the manifest it is
+// served without the session: it is static code and holds nothing about
+// this node, and the browser fetches it (and re-fetches it to update) on its
+// own. At /sw.js its scope is the whole app. no-cache, so a deploy reaches
+// an installed app on the browser's next update check.
+func handleDashboardServiceWorker(w http.ResponseWriter, _ *http.Request) {
+	data, err := fs.ReadFile(dashboardAssetsFS, "pwa/sw.js")
+	if err != nil {
+		http.Error(w, "service worker missing", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-cache")
+	_, _ = w.Write(data)
 }
 
 func handleDashboardManifest(w http.ResponseWriter, _ *http.Request) {

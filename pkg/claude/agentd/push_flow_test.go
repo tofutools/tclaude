@@ -182,6 +182,7 @@ func newPushFixtureOn(t *testing.T, f *testharness.Flow) *pushFixture {
 		return p.now
 	}
 	t.Cleanup(agentd.SetPushClockForTest(clock))
+	t.Cleanup(notify.SetPushClockForTest(clock))
 	cfg, err := config.Load()
 	require.NoError(t, err)
 	cfg.Notifications.Enabled = true
@@ -477,13 +478,14 @@ func TestPush_QuestionsForTheOperatorArePushedMessagesAreNot(t *testing.T) {
 	assert.NotContains(t, got[0].Payload.Body, "secret context", "the question's context stays off the push")
 	assert.Equal(t, "high", got[0].Header.Get("Urgency"))
 
-	// A task made for a question asks it too.
+	// A task made for a question asks it too, in a new window.
+	p.advance(2 * time.Minute)
 	rec = h.call(h.worker, http.MethodPost, "/v1/groups/crew/taskboard/tasks", map[string]any{
 		"title": "Ship on Friday?", "question": map[string]any{"options": []map[string]any{{"label": "Yes"}, {"label": "No"}}},
 	})
 	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
 	got = drainPushes(t, p.svc, 1)
-	assert.Equal(t, "tclaude: Ship on Friday?", got[0].Payload.Title)
+	assert.Equal(t, "tclaude: Ship on Friday?", got[0].Payload.Title, "a new window: the question itself")
 
 	notifyHuman := func(body map[string]any) {
 		rec := testharness.Serve(h.f.Mux, agentd.AsAgentPeer(testharness.JSONRequest(t, http.MethodPost, "/v1/notify-human", body), h.worker))
@@ -494,6 +496,7 @@ func TestPush_QuestionsForTheOperatorArePushedMessagesAreNot(t *testing.T) {
 	agentd.DrainPushForTest()
 	assert.Empty(t, p.svc.pushes(), "a plain message is off for push by default")
 
+	p.advance(2 * time.Minute)
 	notifyHuman(map[string]any{"subject": "Layout?", "body": "Pick one.", "options": []string{"Tabs", "Sidebar"}})
 	got = drainPushes(t, p.svc, 1)
 	assert.Equal(t, "tclaude: Layout?", got[0].Payload.Title, "a decision card waits on the operator")
@@ -529,4 +532,61 @@ func TestPush_StaleKeyRefusedAndRejectingDevicePruned(t *testing.T) {
 	}
 	_, err = db.GetPushSubscription(id)
 	assert.ErrorIs(t, err, db.ErrPushSubscriptionNotFound, "five refusals in a row remove the device")
+}
+
+// Scenario: an agent asks three questions in a row. The first alerts; the
+// next two, within the minute, replace it in place (same tag and topic, so
+// the phone does not buzz again) with how many wait. After a quiet minute
+// the next question alerts afresh.
+func TestPush_QuestionsCollapsePerAsker(t *testing.T) {
+	h := newTaskboardAssignFlow(t)
+	p := newPushFixtureOn(t, h.f)
+	p.svc.subscribe(t, p.dashboard, "phone")
+	rec := h.call(h.worker, http.MethodPost, "/v1/groups/crew/taskboard/tasks", map[string]any{"title": "Lane tint"})
+	task := h.task(rec, http.StatusCreated)
+	ask := func(title string) fakePush {
+		code, body := h.askOn(h.worker, task.ID, map[string]any{"title": title, "options": []map[string]any{{"label": "Yes"}, {"label": "No"}}})
+		require.Equal(t, http.StatusCreated, code, body)
+		return drainPushes(t, p.svc, 1)[0]
+	}
+	first := ask("Amber?")
+	assert.Equal(t, "tclaude: Amber?", first.Payload.Title)
+	p.advance(20 * time.Second)
+	second := ask("Teal?")
+	assert.Equal(t, first.Payload.Tag, second.Payload.Tag, "a repeat replaces the first notification")
+	assert.Equal(t, first.Header.Get("Topic"), second.Header.Get("Topic"))
+	assert.Equal(t, "tclaude: 2 questions from tb-worker-2222 · crew", second.Payload.Title)
+	assert.Equal(t, "Latest: Teal?", second.Payload.Body)
+	p.advance(50 * time.Second)
+	third := ask("Mauve?")
+	assert.Equal(t, first.Payload.Tag, third.Payload.Tag, "the window runs on from the latest question")
+	assert.Contains(t, third.Payload.Title, "3 questions")
+
+	p.advance(61 * time.Second)
+	fresh := ask("Grey?")
+	assert.NotEqual(t, first.Payload.Tag, fresh.Payload.Tag, "after a quiet minute a question alerts afresh")
+	assert.Equal(t, "tclaude: Grey?", fresh.Payload.Title)
+}
+
+// Scenario: with browser delivery on, a notification goes to the open-tab
+// queue and is pushed; the push carries the queue's id, so a device that
+// gets both (a backgrounded tab still polling) shows one banner.
+func TestPush_CarriesTheBrowserQueueID(t *testing.T) {
+	p := newPushFixture(t)
+	cfg, err := config.Load()
+	require.NoError(t, err)
+	cfg.Notifications.Delivery = config.NotifyDeliveryBrowser
+	require.NoError(t, config.Save(cfg))
+	p.svc.subscribe(t, p.dashboard, "phone")
+	const conv = "push-bn-aaaa-bbbb-4444"
+	p.f.HaveConvWithTitle(conv, "worker")
+
+	notify.OnStateTransition("sess-bn-1", conv, "working", "awaiting_permission", p.f.TestCwd("proj"), "worker", "claude")
+	agentd.DrainPushForTest()
+	got := p.svc.pushes()
+	require.Len(t, got, 1)
+	banners, _, err := db.ListBrowserNotificationsSince(0)
+	require.NoError(t, err)
+	require.Len(t, banners, 1)
+	assert.Equal(t, banners[0].ID, got[0].Payload.BN, "the push names the open tab's banner")
 }
