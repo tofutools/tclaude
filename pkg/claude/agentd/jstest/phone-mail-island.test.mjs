@@ -415,11 +415,12 @@ test('a sudo plan\'s reader reads its body as facts: what, for how long, why', a
   };
   const reader = await setup(t, { selected: 'access-requests', selectedMsgId: 'ar_2' }, access);
   const facts = reader.$$('.phone-mail-facts > div').map((d) => [d.querySelector('dt').textContent, d.querySelector('dd').textContent]);
-  assert.deepEqual(facts, [['Permissions', 'agent.spawn'], ['For', '30 min'], ['Reason', 'spawn a test runner']], 'no raw body');
-  const card = reader.$('.phone-box-key');
-  assert.match(card.textContent, /Plan for 30 min: agent\.spawn/);
-  assert.match(card.querySelector('.phone-plan-reason').textContent, /“spawn a test runner”/);
-  assert.match(card.getAttribute('aria-label'), /because: spawn a test runner$/);
+  assert.deepEqual(facts, [['Permission', 'agent.spawn'], ['For', '30 min, from when you approve'], ['Reason', 'spawn a test runner']], 'no raw body, no endpoint');
+  assert.equal(reader.$('.phone-mail-title').textContent, 'cold-reviewer asks for agent.spawn', 'a title in words, not the raw perm');
+  assert.equal(reader.$('.phone-box-key'), null, 'the reader does not repeat the card');
+  assert.match(reader.$('.phone-mail-access-meta').textContent, /^asked /);
+  const bar = reader.$('.phone-mail-access-bar');
+  assert.deepEqual([...bar.querySelectorAll('.ui-btn')].map((b) => b.textContent.trim()), ['Deny', '+5 min', 'Approve'], 'its buttons are pinned at the bottom');
 });
 
 test('a plain access request\'s reader stacks what it asks for, with Always allow', async (t) => {
@@ -430,7 +431,7 @@ test('a plain access request\'s reader stacks what it asks for, with Always allo
   };
   const reader = await setup(t, { selected: 'access-requests', selectedMsgId: 'ar_1' }, access);
   assert.equal(reader.$('.mail-headers'), null, 'not the desktop table');
-  assert.deepEqual(reader.$$('.phone-mail-facts dt').map((dt) => dt.textContent), ['Permission', 'Endpoint', 'Body']);
+  assert.deepEqual(reader.$$('.phone-mail-facts dt').map((dt) => dt.textContent), ['Permission', 'Body'], 'the endpoint is not shown');
   assert.match(reader.$('.phone-mail-always').textContent, /Always allow/);
 });
 

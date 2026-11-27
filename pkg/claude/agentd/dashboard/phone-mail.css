@@ -179,3 +179,24 @@
 :root[data-layout="phone"] .phone-mail-decision { margin-top: 18px; }
 /* Decide opens its box: no space above it. */
 :root[data-layout="phone"] .phone-mail-decision .phone-sheet-subhead { margin-top: 0; }
+
+/* An access request's reader: when it was asked, and each permission with
+   what it means. */
+:root[data-layout="phone"] .phone-mail-access-meta { margin: -4px 0 10px; color: var(--ui-muted-text); font-size: 13px; }
+:root[data-layout="phone"] .phone-mail-perm { margin: 2px 0 6px; white-space: normal; }
+:root[data-layout="phone"] .phone-mail-perm code { display: block; font: 14px ui-monospace, SFMono-Regular, Menlo, monospace; }
+:root[data-layout="phone"] .phone-mail-perm span { display: block; color: var(--ui-muted-text); font-size: 13px; }
+/* Its answer stays in reach: Deny / +5 min / Approve pinned to the bottom of
+   the screen (the reader hides the nav), over the facts as they scroll. */
+:root[data-layout="phone"] .phone-mail-access-bar {
+  position: sticky; bottom: 0; z-index: 2; margin: 16px -16px 0; padding: 10px 16px calc(12px + env(safe-area-inset-bottom, 0px));
+  background: var(--ui-bg); border-top: var(--phone-row-sep-soft);
+}
+:root[data-layout="phone"] .phone-mail-access-bar .phone-btns { margin-top: 0; }
+/* The reader fills the screen so the bar sits at its bottom even when the
+   facts are short; when they are long, sticky keeps it in view. */
+:root[data-layout="phone"] .phone-mail-access-read {
+  display: flex; flex-direction: column; box-sizing: border-box;
+  min-height: calc(100dvh - var(--phone-bar-h) - var(--phone-safe-top));
+}
+:root[data-layout="phone"] .phone-mail-access-read .phone-mail-access-bar { margin-top: auto; }
