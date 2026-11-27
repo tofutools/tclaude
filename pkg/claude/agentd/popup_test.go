@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
 
 func TestSnapshotRequestBodyAttachmentLeavesBinaryStreamUntouched(t *testing.T) {
@@ -87,23 +88,23 @@ func TestEscapeForCmdExe(t *testing.T) {
 func TestRequestHumanApproval_DefaultDoesNotOpenBrowserOrNotify(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	ResetApprovalsForTest()
+	// Browser delivery, so a banner would land in the dashboard's queue
+	// rather than on this machine's desktop.
 	requireConfigSave(t, &config.Config{
-		Notifications: &config.NotificationConfig{Enabled: true},
+		Notifications: &config.NotificationConfig{Enabled: true, Delivery: config.NotifyDeliveryBrowser},
 	})
 
-	var opened, notified atomic.Int32
+	var opened atomic.Int32
 	prevOpen := approvalBrowserOpener
 	approvalBrowserOpener = func(string) error {
 		opened.Add(1)
 		return nil
 	}
 	t.Cleanup(func() { approvalBrowserOpener = prevOpen })
-	prevNotify := accessRequestNotify
-	accessRequestNotify = func(_, _, _, _, _ string) {
-		notified.Add(1)
-	}
-	t.Cleanup(func() { accessRequestNotify = prevNotify })
 
+	// The real notifier runs: it gates the desktop banner on
+	// access_request_system_notification itself (and a push on the push
+	// categories, with no device subscribed here).
 	req := testApprovalRequest()
 	done := make(chan bool, 1)
 	go func() { done <- realRequestHumanApproval(req, "http://127.0.0.1:1234") }()
@@ -117,8 +118,12 @@ func TestRequestHumanApproval_DefaultDoesNotOpenBrowserOrNotify(t *testing.T) {
 	if got := opened.Load(); got != 0 {
 		t.Fatalf("default config opened browser %d time(s), want 0", got)
 	}
-	if got := notified.Load(); got != 0 {
-		t.Fatalf("default config sent access-request notification %d time(s), want 0", got)
+	banners, _, err := db.ListBrowserNotificationsSince(0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(banners) != 0 {
+		t.Fatalf("default config sent access-request notification %d time(s), want 0: %+v", len(banners), banners)
 	}
 }
 

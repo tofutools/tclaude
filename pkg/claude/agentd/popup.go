@@ -483,7 +483,9 @@ func waitHumanApproval(req *approvalRequest, popupBaseURL string) bool {
 	if cfgErr != nil {
 		slog.Warn("popup: failed to load config for access-request alerting", "err", cfgErr)
 	}
-	if cfgErr == nil && cfg.AccessRequestSystemNotification() {
+	// Each channel gates itself: the desktop banner on
+	// access_request_system_notification, a push on the push categories.
+	if cfgErr == nil {
 		accessRequestNotify(notifyHumanSenderSessionID(req.convID), req.convTitle, req.targetGroup, req.perm, req.path)
 	}
 	if cfgErr == nil && cfg.AccessRequestAutoOpenBrowser() {

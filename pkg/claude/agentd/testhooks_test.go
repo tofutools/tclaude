@@ -1026,10 +1026,13 @@ func SetFocusAgentWindowForTest(fn func(*db.SessionRow)) func() {
 // through goBackground, so drain with WaitForBackgroundForTest before
 // asserting. Returns a restore function for t.Cleanup. Mirrors the
 // reaperNotify recorder pattern.
+//
+// A message that waits on the operator's answer (a decision card) goes
+// through the question seam beside it; fn takes both.
 func SetHumanMessageNotifierForTest(fn func(senderSessionID, fromTitle, group, subject, body string)) func() {
-	prev := humanMsgNotify
-	humanMsgNotify = fn
-	return func() { humanMsgNotify = prev }
+	prev, prevQ := humanMsgNotify, humanQuestionNotify
+	humanMsgNotify, humanQuestionNotify = fn, fn
+	return func() { humanMsgNotify, humanQuestionNotify = prev, prevQ }
 }
 
 // RunHumanMessageAttachmentCleanupForTest runs the filesystem/DB reconciler
@@ -2978,3 +2981,25 @@ func SetApprovalClockForTest(now func() time.Time) func() {
 	approvalNow = now
 	return func() { approvalNow = prev }
 }
+
+// SetPushTransportForTest makes the push sender post with client and take
+// subscriptions on hosts (a fake push service's) besides the real push
+// services.
+func SetPushTransportForTest(client *http.Client, hosts ...string) func() {
+	prevClient, prevHosts := pushHTTPClient, pushServiceHosts
+	copied := *client
+	pushHTTPClient = noRedirects(&copied)
+	pushServiceHosts = append(slices.Clone(pushServiceHosts), hosts...)
+	return func() { pushHTTPClient, pushServiceHosts = prevClient, prevHosts }
+}
+
+// SetPushClockForTest replaces the push sender's clock.
+func SetPushClockForTest(now func() time.Time) func() {
+	prev := pushClock
+	pushClock = now
+	return func() { pushClock = prev }
+}
+
+// DrainPushForTest runs one pass of the push sender and returns how many
+// queued pushes it handled.
+func DrainPushForTest() int { return thePushSender.drain(context.Background()) }

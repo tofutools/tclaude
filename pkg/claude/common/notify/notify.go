@@ -74,7 +74,12 @@ func onStateTransition(sessionID, convID, from, matchTo, displayStatus, cwd, con
 		return
 	}
 
-	if !cfg.Notifications.MatchesTransition(from, matchTo) {
+	// The desktop (the transition rules) and push (its own per-category
+	// toggles) each decide for themselves; the master switch above, the
+	// mute filters and the cooldown below are shared.
+	desktop := cfg.Notifications.MatchesTransition(from, matchTo)
+	push := cfg.Notifications.PushWanted(matchTo) && pushDevicesSubscribed()
+	if !desktop && !push {
 		return
 	}
 
@@ -82,18 +87,21 @@ func onStateTransition(sessionID, convID, from, matchTo, displayStatus, cwd, con
 		return
 	}
 
-	// Check cooldown via database
+	// The cooldown, checked via the database, is per channel: a push does
+	// not swallow a desktop banner that follows it, nor the reverse.
 	cooldown := time.Duration(cfg.Notifications.CooldownSeconds) * time.Second
-	if lastNotify, found, err := db.GetNotifyTime(sessionID); err == nil && found {
-		if time.Since(lastNotify) < cooldown {
-			return
-		}
+	cooling := func(key string) bool {
+		last, found, err := db.GetNotifyTime(key)
+		return err == nil && found && time.Since(last) < cooldown
 	}
-
-	sendWithHarness(sessionID, formatStatus(displayStatus), cwd, convTitle, harness)
-
-	// Record notification time
-	_ = db.SetNotifyTime(sessionID)
+	if desktop && !cooling(sessionID) {
+		sendWithHarness(sessionID, formatStatus(displayStatus), cwd, convTitle, harness)
+		_ = db.SetNotifyTime(sessionID)
+	}
+	if push && !cooling(pushCooldownKey(sessionID)) {
+		queuePush(cfg.Notifications, statePushNote(matchTo, harness, displayStatus, convTitle, cwd))
+		_ = db.SetNotifyTime(pushCooldownKey(sessionID))
+	}
 }
 
 // AllowedForConv evaluates the per-agent / per-group notification
@@ -231,10 +239,7 @@ func sendWithHarness(sessionID, status, cwd, convTitle, harness string) {
 	)
 
 	// Build notification content
-	projectName := filepath.Base(cwd)
-	if projectName == "" || projectName == "." {
-		projectName = "unknown"
-	}
+	projectName := projectName(cwd)
 
 	title := notificationTitle(harness, status)
 
@@ -248,6 +253,15 @@ func sendWithHarness(sessionID, status, cwd, convTitle, harness string) {
 	body = truncate(body, notifyBodyMaxLen)
 
 	dispatch(sessionID, title, body)
+}
+
+// projectName is the banner's name for a session's directory.
+func projectName(cwd string) string {
+	name := filepath.Base(cwd)
+	if name == "" || name == "." {
+		return "unknown"
+	}
+	return name
 }
 
 // dispatch delivers an already-formatted notification through the
@@ -306,8 +320,43 @@ func dispatch(sessionID, title, body string) {
 // dashboard's per-message Focus button. Pass "" when the sender has no
 // live session; the notification still fires, just non-clickable.
 func SendHumanMessage(senderSessionID, fromTitle, group, subject, body string) {
+	sendHumanMessage(config.PushHumanMessages, senderSessionID, fromTitle, group, subject, body)
+}
+
+// SendHumanQuestion is SendHumanMessage for a message that waits on the
+// operator's answer: a decision card, or a process step waiting on a
+// person. The desktop treats it as any message; a push files it under
+// operator_questions, which is on by default.
+func SendHumanQuestion(senderSessionID, fromTitle, group, subject, body string) {
+	sendHumanMessage(config.PushOperatorQuestions, senderSessionID, fromTitle, group, subject, body)
+}
+
+// SendOperatorQuestion pushes a taskboard ask-operator question: who asks,
+// in which group, and the question's title. It has no desktop banner (the
+// Task board and its Needs-you count are the desktop's surface); it no-ops
+// unless operator_questions is on for push.
+func SendOperatorQuestion(fromTitle, group, question string) {
 	cfg, err := config.Load()
-	if err != nil || !cfg.Notifications.NotifyHumanMessages() {
+	if err != nil {
+		return
+	}
+	note := humanMessagePushNote(config.PushOperatorQuestions, fromTitle, group, question)
+	note.urgency = "high"
+	queuePush(cfg.Notifications, note)
+}
+
+func sendHumanMessage(category, senderSessionID, fromTitle, group, subject, body string) {
+	cfg, err := config.Load()
+	if err != nil {
+		return
+	}
+	// A push carries who and the subject, never the message itself.
+	note := humanMessagePushNote(category, fromTitle, group, subject)
+	if category == config.PushOperatorQuestions {
+		note.urgency = "high"
+	}
+	queuePush(cfg.Notifications, note)
+	if !cfg.Notifications.NotifyHumanMessages() {
 		return
 	}
 	title, notifBody := formatHumanMessage(fromTitle, group, subject, body)
@@ -316,18 +365,47 @@ func SendHumanMessage(senderSessionID, fromTitle, group, subject, body string) {
 	dispatch(senderSessionID, title, notifBody)
 }
 
+// humanMessagePushNote is a notify-human message as a push: the subject (or
+// "<who> messaged you") and who sent it.
+func humanMessagePushNote(category, fromTitle, group, subject string) pushNote {
+	who := strings.TrimSpace(fromTitle)
+	if who == "" {
+		who = "An agent"
+	}
+	if g := strings.TrimSpace(group); g != "" {
+		who += " · " + g
+	}
+	title := "tclaude: " + who + " messaged you"
+	if s := strings.TrimSpace(subject); s != "" {
+		title = "tclaude: " + s
+	}
+	return pushNote{category: category, title: title, body: who, url: "/messages", urgency: "normal"}
+}
+
 // SendAccessRequest raises an optional OS notification for an agent
 // --ask-human approval request. It no-ops unless notifications.enabled and
 // agent.access_request_system_notification are both true; the dashboard's
 // Messages tab remains the primary surface either way.
 func SendAccessRequest(senderSessionID, fromTitle, group, perm, path string) {
 	cfg, err := config.Load()
-	if err != nil || cfg.Notifications == nil || !cfg.Notifications.Enabled || !cfg.AccessRequestSystemNotification() {
+	if err != nil || cfg.Notifications == nil || !cfg.Notifications.Enabled {
 		return
 	}
 	who := strings.TrimSpace(fromTitle)
 	if who == "" {
 		who = "An agent"
+	}
+	// A push names who asks and for what, never the request's path or body.
+	pushBody := who + " is requesting access"
+	if p := strings.TrimSpace(perm); p != "" {
+		pushBody = who + " asks for " + p
+	}
+	if g := strings.TrimSpace(group); g != "" {
+		pushBody += " · " + g
+	}
+	queuePush(cfg.Notifications, pushNote{category: config.PushAccessRequests, title: "tclaude: access request", body: pushBody, url: "/messages", urgency: "high"})
+	if !cfg.AccessRequestSystemNotification() {
+		return
 	}
 	title := truncate("tclaude: access request", notifyTitleMaxLen)
 	var b strings.Builder
@@ -362,7 +440,15 @@ func SendAccessRequest(senderSessionID, fromTitle, group, perm, path string) {
 // agent's behalf, is the target rather than the caller.
 func SendPresentedPR(agentSessionID, agentTitle, group, prURL, summary string) {
 	cfg, err := config.Load()
-	if err != nil || cfg.Notifications == nil || !cfg.Notifications.Enabled || !cfg.PresentPRNotification() {
+	if err != nil || cfg.Notifications == nil || !cfg.Notifications.Enabled {
+		return
+	}
+	who := strings.TrimSpace(agentTitle)
+	if who == "" {
+		who = "An agent"
+	}
+	queuePush(cfg.Notifications, pushNote{category: config.PushPresentPR, title: "tclaude: pull request", body: who + " presented a pull request", url: "/", urgency: "normal"})
+	if !cfg.PresentPRNotification() {
 		return
 	}
 	title, notifBody := formatPresentedPR(agentTitle, group, prURL, summary)

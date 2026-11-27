@@ -147,7 +147,7 @@ func postProcessConcernCard(c db.ProcessRunConcern, why string) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
-	dispatchHumanMessageNotification("", m.FromTitle, group, m.Subject, m.Body)
+	dispatchHumanFor(m.Options)("", m.FromTitle, group, m.Subject, m.Body)
 	mirrorHumanMessage(id)
 	return id, nil
 }

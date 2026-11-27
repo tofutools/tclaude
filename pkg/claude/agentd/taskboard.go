@@ -1330,6 +1330,15 @@ func handleTaskboardCreate(w http.ResponseWriter, r *http.Request, g *db.AgentGr
 	}
 	t, note := queueTaskboardLimit(r, g, hit, t)
 	setAuditDetail(r, "created "+t.ID+" in "+g.Name)
+	if body.Question != nil {
+		// A task made for a question (`ask-operator <group>`) asks its
+		// first one; without a title of its own, the task's is the question.
+		q := strings.TrimSpace(body.Question.Title)
+		if q == "" {
+			q = title
+		}
+		pushOperatorQuestion(r, g.Name, q)
+	}
 	var started *taskProcessStart
 	if process != "" {
 		if err := db.SetGroupTaskProcess(t.ID, process); err != nil {

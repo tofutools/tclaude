@@ -107,6 +107,72 @@ pinged while a subagent is still running.
     The task runner and rate-limit warnings always say `Claude: …`, whichever
     harness is involved.
 
+## Push to your phone (Web Push)
+
+Push sends notifications to the devices you subscribe, through each
+browser's push service. A locked phone, or a home-screen app in the
+background, still gets them. Nothing is sent until a device subscribes.
+
+Push has its own on/off for each category. Two things are shared with the
+desktop: the `enabled` master switch, and the per-agent and per-group
+mutes. Desktop banners and push therefore never force each other on.
+
+| Category | Default | Pushed when |
+|---|---|---|
+| `access_requests` | on | an agent's `--ask-human` / sudo request waits for approval |
+| `operator_questions` | on | a question waits for your answer: a taskboard `ask-operator` question, a `notify-human` decision card (with options), a process step waiting on a person |
+| `awaiting_permission` | on | an agent waits for a tool permission |
+| `awaiting_input` | on | an agent asked you something in its harness (Claude Code's question dialog, Codex's user-input request), not an ordinary end of turn |
+| `human_messages` | off | any other `notify-human` message (often a status update) |
+| `present_pr` | off | an agent presents a PR |
+| `idle`, `error`, `exited` | off | an agent changes to that state |
+
+```json
+{
+  "notifications": {
+    "enabled": true,
+    "push": {
+      "categories": {"idle": true, "awaiting_input": false},
+      "content_free": false
+    }
+  }
+}
+```
+
+Only the categories you change are stored. The block is this node's own: no
+federation peer changes it, and no agent can.
+
+- **Privacy.** A push is encrypted end to end (RFC 8291). The push service
+  (Apple, Google, Mozilla, Microsoft) relays it but can't read it. Even so,
+  the text is kept to what a lock screen would show:
+  - An access request names who asks and for which permission, never the
+    request's path, body or reason.
+  - A message or question gives its subject and sender, never its body or
+    context.
+  - With `content_free` on, a push carries no text at all. The device shows
+    "tclaude needs you", and the app shows what it is once opened.
+- **Delivery.** A push not delivered within 10 minutes is dropped. A device
+  whose subscription the browser dropped (the push service answers 404 or
+  410) is removed. A busy push service is retried, honouring its
+  Retry-After.
+- **Federation.** Each node pushes only its own notifications, to the
+  devices subscribed on it. To get a peer's, subscribe on that peer's own
+  dashboard.
+- **CLI.** Every control has a CLI twin, refused to agents:
+
+```bash
+tclaude notifications push status          # categories, content-free, devices
+tclaude notifications push devices
+tclaude notifications push set idle on     # any category, or content-free
+tclaude notifications push test [<device>]
+tclaude notifications push rm <device>
+tclaude notifications push reset-keys --yes   # new key; every device re-subscribes
+```
+
+A device subscribes from the dashboard (see [Dashboard](dashboard.md)).
+Push needs HTTPS (the [remote](remote.md) listener with its CA trusted, or a
+tunnel). On iPhone it works only for the app added to the Home Screen.
+
 ## Click-to-focus per platform
 
 | Platform | Notifier | Clickable | Focus method |

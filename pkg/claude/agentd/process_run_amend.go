@@ -381,7 +381,7 @@ func postProcessAmendmentCard(runID string, id int64) error {
 	if err := db.SetProcessRunAmendmentMessage(id, msgID); err != nil {
 		return err
 	}
-	dispatchHumanMessageNotification("", m.FromTitle, view.Scope.Group, m.Subject, m.Body)
+	dispatchHumanFor(m.Options)("", m.FromTitle, view.Scope.Group, m.Subject, m.Body)
 	mirrorHumanMessage(msgID)
 	return nil
 }

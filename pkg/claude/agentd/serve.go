@@ -906,6 +906,10 @@ func runServe(p *serveParams) error {
 	// .jsonl on every access. Shares the daemon-wide stop channel.
 	startConvMonitor(cronStop)
 
+	// Web Push: send the pushes notifications queue for the operator's
+	// subscribed devices (push.go).
+	startPushSender(cronStop)
+
 	// Codex writes app-tool "Always allow" choices into the active -p config
 	// profile. For tclaude's launch-unique managed profiles that file is
 	// temporary, so watch verified profile additions and promote only those
@@ -1609,6 +1613,7 @@ func buildMux() http.Handler {
 	mux.HandleFunc("/v1/sudo", handleSudo)
 	mux.HandleFunc("/v1/sudo/", handleSudoByID)
 	mux.HandleFunc("/v1/notify-human", handleNotifyHuman)
+	registerPushSocketRoutes(mux)
 	mux.HandleFunc("/v1/notify-human/attachment", handleNotifyHumanAttachment)
 	mux.HandleFunc("/v1/notify-human/dismiss", handleNotifyHumanDismiss)
 	mux.HandleFunc("/v1/clipboard", handleClipboard)
