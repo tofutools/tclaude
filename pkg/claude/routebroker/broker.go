@@ -91,6 +91,9 @@ const (
 	defaultWriteTimeout           = 5 * time.Second
 	defaultAuthorityCheckInterval = 250 * time.Millisecond
 	tombstoneTTL                  = 30 * time.Second
+	// maxSlowAuthorityChecks is how many authority checks in a row may run
+	// out of time (AuthorityCheckInterval) before a channel fails closed.
+	maxSlowAuthorityChecks = 3
 )
 
 var (
@@ -545,6 +548,7 @@ func (b *Broker) serveSession(s *session, callerCtx context.Context) error {
 func (s *session) watchAuthority() {
 	ticks, stop := s.broker.authorityTicker()
 	defer stop()
+	slowChecks := 0
 	for {
 		select {
 		case <-s.ctx.Done():
@@ -557,12 +561,29 @@ func (s *session) watchAuthority() {
 			} else {
 				err = s.broker.authorizer.AuthorizeConsumer(checkCtx, s.consumerAuth)
 			}
+			// Only the deadline itself is inconclusive: a definite refusal
+			// that happened to arrive late is still a refusal.
+			timedOut := errors.Is(err, context.DeadlineExceeded) && errors.Is(checkCtx.Err(), context.DeadlineExceeded)
 			cancel()
-			if err != nil {
-				s.broker.emit(Event{Kind: "authority-revoked", Role: s.role.string(), RouteID: s.routeID(), AgentID: s.agentID(), LeaseID: s.leaseID(), Error: "authority no longer valid"})
-				s.close()
-				return
+			if err == nil {
+				slowChecks = 0
+				continue
 			}
+			// A check that ran out of time said nothing about the
+			// authority: a slow store on a loaded daemon must not detach a
+			// healthy channel. It is retried on the next tick, and only a
+			// run of maxSlowAuthorityChecks fails closed, so a hung
+			// authority still cannot keep a channel alive.
+			if timedOut && s.ctx.Err() == nil {
+				slowChecks++
+				if slowChecks < maxSlowAuthorityChecks {
+					s.broker.logger.Debug("route broker authority check timed out; retrying", "role", s.role.string(), "route", s.routeID(), "consecutive", slowChecks)
+					continue
+				}
+			}
+			s.broker.emit(Event{Kind: "authority-revoked", Role: s.role.string(), RouteID: s.routeID(), AgentID: s.agentID(), LeaseID: s.leaseID(), Error: "authority no longer valid"})
+			s.close()
+			return
 		}
 	}
 }

@@ -699,3 +699,104 @@ func TestBrokerCloseRacesChannelAdmission(t *testing.T) {
 		require.Zero(t, b.Metrics().ConsumerChannels)
 	}
 }
+
+// slowAuthorizer answers a consumer check only when its deadline has passed,
+// for as many checks as slow says, and reports each check on checked.
+type slowAuthorizer struct {
+	mu      sync.Mutex
+	slow    int
+	checked chan struct{}
+}
+
+func (a *slowAuthorizer) AuthorizePublisher(context.Context, routebroker.PublisherAuth) error {
+	return nil
+}
+
+func (a *slowAuthorizer) AuthorizeConsumer(ctx context.Context, _ routebroker.ConsumerAuth) error {
+	a.mu.Lock()
+	slow := a.slow > 0
+	if slow {
+		a.slow--
+	}
+	a.mu.Unlock()
+	if slow {
+		<-ctx.Done()
+	}
+	a.checked <- struct{}{}
+	if slow {
+		return ctx.Err()
+	}
+	return nil
+}
+
+func (a *slowAuthorizer) setSlow(n int) {
+	a.mu.Lock()
+	a.slow = n
+	a.mu.Unlock()
+}
+
+func TestBrokerAuthorityCheckThatRunsOutOfTimeIsRetriedNotRevoked(t *testing.T) {
+	auth := &slowAuthorizer{checked: make(chan struct{}, 16)}
+	var mu sync.Mutex
+	var tickers []chan time.Time
+	b, err := routebroker.New(routebroker.Config{
+		Authorizer:             auth,
+		AuthorityCheckInterval: 5 * time.Millisecond, // each check's deadline
+		WriteTimeout:           time.Second,
+		AuthorityTicker: func() (<-chan time.Time, func()) {
+			c := make(chan time.Time, 1)
+			mu.Lock()
+			tickers = append(tickers, c)
+			mu.Unlock()
+			return c, func() {}
+		},
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, b.Close()) })
+	publisher, consumer := auths()
+	pair := attachPair(t, b, publisher, consumer)
+	require.Eventually(t, func() bool { mu.Lock(); defer mu.Unlock(); return len(tickers) == 2 }, time.Second, time.Millisecond)
+	// Admission checked the consumer once, before its watcher started.
+	<-auth.checked
+	// check ticks every channel once and waits for the consumer's check.
+	check := func() {
+		t.Helper()
+		mu.Lock()
+		for _, c := range tickers {
+			select {
+			case c <- time.Now():
+			default:
+			}
+		}
+		mu.Unlock()
+		select {
+		case <-auth.checked:
+		case <-time.After(5 * time.Second):
+			t.Fatal("the consumer's authority was not checked")
+		}
+	}
+
+	// Two checks in a row out of time, then an answer: the channel stays.
+	// The healthy check after each run proves the run was decided first.
+	auth.setSlow(2)
+	check()
+	check()
+	check()
+	auth.setSlow(2)
+	check()
+	check()
+	check()
+	writeFrame(t, pair.conPeer, routebroker.Frame{Kind: routebroker.KindPing})
+	require.Equal(t, routebroker.KindPong, readFrame(t, pair.conPeer).Kind, "a slow authority does not detach a healthy channel")
+
+	// A run of three is a hung authority: the channel fails closed.
+	auth.setSlow(3)
+	check()
+	check()
+	check()
+	select {
+	case <-pair.conDone:
+	case <-time.After(5 * time.Second):
+		t.Fatal("a consumer whose authority never answers in time stayed attached")
+	}
+}
