@@ -691,7 +691,6 @@ func TestDashboardAssets_QuickChipKeyboardOperability(t *testing.T) {
 		`class="gdc-pick" tabindex="0" role="button" data-act="pick-group-dir"`,
 		`action="set-group-max-members"`,
 		`data-act=${sandbox ? 'set-group-sandbox-profile' : 'set-group-profile'}`,
-		`class="group-link-chips" tabindex="0" role="button"`,
 		// row-actions.js — delegated Enter/Space activation for the chip
 		// spans, funneled through the click dispatcher.
 		`liveActionSource(event, 'span[data-act][role="button"]')`,

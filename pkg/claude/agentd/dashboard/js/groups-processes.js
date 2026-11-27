@@ -670,7 +670,10 @@ function GroupRuns({ group, roster, context, filter, wizard, api, runApi = runDe
     source=${source} notify=${notify} add=${add} inline=${inline} />`;
   // Beside the body, not in it: Both's section unmounts its body when folded,
   // which would lose an open review and replay a dropped file on unfolding.
-  const importer = html`<span ref=${importerRef}><${WorkflowImportButton} group=${group.name} id="" className="dock-process-import-hidden"
+  // It draws nothing (its button is hidden; its dialog is an overlay), so it
+  // takes no line either (gp-pwf-importer: display: contents), or it would
+  // open a gap between the sections around it.
+  const importer = html`<span class="gp-pwf-importer" ref=${importerRef}><${WorkflowImportButton} group=${group.name} id="" className="dock-process-import-hidden"
     dropped=${droppedPwf} onImported=${() => void source.refresh()} /></span>`;
   const body = html`${savedProcesses.length > 0 && html`<${SavedProcesses} group=${group} processes=${savedProcesses} api=${api} source=${source}
       wizard=${wizard} notify=${notify || defaultNotify}

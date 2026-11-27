@@ -23,6 +23,7 @@ function snapshot() {
       { id: 1, name: 'alpha', members: [] },
       { id: 2, name: 'beta', members: [] },
       { id: 3, name: 'gamma', members: [] },
+      { id: 4, name: 'delta', members: [] },
     ],
     pending: [], ungrouped: [], retired: [], conversations: [], replaced: [], paging: {},
     activity_bots: { regular: 'emoji', slop: 'off', wizard: 'off' },
@@ -30,6 +31,10 @@ function snapshot() {
       link(1, 'alpha', 'beta'),
       link(2, 'beta', 'alpha', 'cc'),
       link(3, 'beta', 'x1'), link(4, 'beta', 'x2'), link(5, 'x3', 'beta'),
+      { id: 8, peer: 'peer-abcdef0123456', peer_label: 'laptop', direction: 'out', from: 'delta', to: 'shared', mode: 'members->members',
+        local_state: 'active', remote_state: 'pending' },
+      { id: 9, peer: 'peer-abcdef0123456', peer_label: 'laptop', direction: 'in', from: 'theirs', to: 'delta', mode: 'members->members',
+        local_state: 'active', remote_state: 'active' },
     ],
   };
 }
@@ -63,13 +68,13 @@ async function mount(t) {
 const isOpen = (section) => section.classList.contains('open');
 
 test('Links is a regular group section: open for a few links, folded for more, the head always in reach', async (t) => {
-  const { harness, section } = await mount(t);
+  const { harness, host, section } = await mount(t);
   const alpha = section('alpha');
   assert.equal(alpha.dataset.fusedSection, 'links', 'it is a FusedSection like Agents and the Task board');
   assert.ok(isOpen(alpha), 'two links start open');
   assert.match(alpha.querySelector('.gf-section-head').textContent, /Links\s*2\s*→ 1 · ← 1/);
   assert.equal(alpha.querySelectorAll('tbody tr').length, 2);
-  assert.deepEqual([...alpha.querySelectorAll('thead th')].map((th) => th.textContent.replace(/[▾▴]/g, '').trim()).slice(1), ['Other group', 'Direction', 'Age', 'Mode']);
+  assert.deepEqual([...alpha.querySelectorAll('thead th')].map((th) => th.textContent.replace(/[▾▴]/g, '').trim()).slice(1), ['Other group', 'Direction', 'State', 'Age', 'Mode']);
   const row = alpha.querySelector('tbody tr');
   assert.equal(row.querySelector('[data-act="link-edit"]').dataset.mode, 'direct', 'mode edit stays a row action');
   assert.equal(row.querySelector('[data-act="link-delete"]').dataset.group, 'alpha');
@@ -82,11 +87,19 @@ test('Links is a regular group section: open for a few links, folded for more, t
   assert.equal(add.dataset.from, 'beta');
   assert.ok(add.classList.contains('spawn-btn'), 'the same add button the other sections use');
 
+  // The group header no longer repeats the links (as chips or a 🔗): the
+  // section lists them, and the toolbar's 🔗 links… opens the manager.
+  const header = host.querySelector('.group-box[data-group-key="beta"] > .group-summary');
+  assert.ok(header);
+  assert.equal(header.querySelector('[data-act="links-manage"]'), null);
+  assert.doesNotMatch(header.textContent, /🔗|→ alpha/);
+
   const gamma = section('gamma');
   assert.ok(isOpen(gamma));
   assert.match(gamma.textContent, /No links involving this group\./, 'the empty state keeps its wording');
-  assert.ok(gamma.querySelector('.gf-title-row [data-act="link-new"]'), 'open, the ＋ heads the section, as in Subgroups');
-  assert.equal(gamma.querySelector('.gf-section-head [data-act="link-new"]'), null);
+  assert.ok(gamma.querySelector('.gf-section-head [data-act="link-new"]'), 'open, the ＋ stays on the section line, as on the Task board');
+  assert.equal(alpha.querySelectorAll('[data-act="link-new"]').length, 1, 'no extra row just for the ＋');
+  assert.equal(alpha.querySelector('.gf-title-row'), null);
   void harness;
 });
 
@@ -130,6 +143,29 @@ test('a Links row dragged onto the trash bin is removed behind the usual confirm
   assert.equal(fire('dragover', bin).defaultPrevented, true);
   fire('drop', bin);
   await harness.act(() => new Promise((resolve) => setTimeout(resolve, 0)));
-  assert.deepEqual(deleted, [{ id: 2, from: 'beta', to: 'alpha', scope: 'alpha' }], 'the 🗑 path: deleteLink confirms, then deletes');
+  assert.equal(deleted.length, 1, 'the 🗑 path: deleteLink confirms, then deletes');
+  assert.deepEqual({ id: deleted[0].id, from: deleted[0].from, to: deleted[0].to, scope: deleted[0].scope }, { id: 2, from: 'beta', to: 'alpha', scope: 'beta' },
+    'a local link is removed on its FROM, as the Links… manager does');
   assert.equal(bin.classList.contains('show'), false);
+});
+
+test('cross-node links show their peer and state, and remove as the Links… manager does', async (t) => {
+  const { section } = await mount(t);
+  const delta = section('delta');
+  const row = (id) => delta.querySelector(`tr[data-group-link="${id}"]`);
+  assert.match(row(8).querySelector('.rowname').textContent, /🌐 laptop:shared/);
+  assert.equal(row(8).querySelector('[data-link-state]').textContent, 'pending', 'the state the peer reported');
+  assert.equal(row(9).querySelector('[data-link-state]').textContent, 'active');
+  assert.match(row(9).querySelector('.rowname').textContent, /🌐 laptop:theirs/);
+  const edit = row(8).querySelector('.gl-edit');
+  assert.ok(edit.disabled, 'a cross-node link keeps the mode both nodes agreed');
+  assert.equal(edit.hasAttribute('data-act'), false);
+  const withdraw = row(8).querySelector('[data-act="link-delete"]');
+  assert.equal(withdraw.dataset.peerLabel, 'laptop');
+  assert.equal(withdraw.dataset.pending, '1', 'an unanswered request is withdrawn');
+  assert.equal(withdraw.getAttribute('title'), 'Withdraw this link request');
+  const remove = row(9).querySelector('[data-act="link-delete"]');
+  assert.equal(remove.dataset.group, 'delta', 'an incoming cross-node link is removed on its TO');
+  assert.equal(remove.hasAttribute('data-pending'), false);
+  assert.equal(section('alpha').querySelector('tr [data-link-state]'), null, 'a local link has no cross-node state');
 });

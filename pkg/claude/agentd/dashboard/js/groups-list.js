@@ -411,21 +411,6 @@ function ProcessChip({ group }) {
     ${next ? html`<${Button} size="sm" class="group-process-advance" data-act="advance-phase" data-group=${group.name} data-label=${group.name} title=${`Advance to the next phase (${next})`}>▸ advance<//>` : null}`;
 }
 
-function GroupLinkChips({ group, snapshot }) {
-  const links = snapshot?.links || [];
-  const outgoing = links.filter((link) => link.from === group.name);
-  const incoming = links.filter((link) => link.to === group.name);
-  if (!outgoing.length && !incoming.length) return null;
-  const chip = (link, direction) => {
-    const other = direction === 'out' ? link.to : link.from;
-    const title = direction === 'out'
-      ? `Members of this group can message "${other}" (${link.mode}) — click to manage links`
-      : `Members of "${other}" can message this group (${link.mode}) — click to manage links`;
-    return html`<span key=${`${direction}-${link.id}`} class=${`group-link-chip ${direction}`} data-act="links-manage" title=${title}>${direction === 'out' ? '→' : '←'} ${other || '(deleted)'}</span>`;
-  };
-  return html`<span class="group-link-chips" tabindex="0" role="button" data-act="links-manage" title="Inter-group links — click to manage">🔗<span class="qo-text">${outgoing.map((link) => chip(link, 'out'))}${incoming.map((link) => chip(link, 'in'))}</span></span>`;
-}
-
 // GroupUsageProfileChip is the row's 💰 picker, joined to the row's
 // inline-editor state like the 🧠/🛡 chips and addressed by the group's own
 // name (a merged view shows it as name@node).
@@ -537,7 +522,6 @@ function RealGroupBox({ node, group, activity, membersView, snapshot, actions, c
     <${GroupProfileChip} group=${group} actions=${actions} kind="profile" />
     <${GroupProfileChip} group=${group} actions=${actions} kind="sandbox" />
     ${!group.fleet_node || group.fleet_node.local ? html`<${GroupUsageProfileChip} group=${group} />` : null}
-    <${GroupLinkChips} group=${group} snapshot=${snapshot} />
     <${GroupFederationMarker} group=${group} />
     ${snapshot?.group_attachments_mode === 'fixed'
       ? html`<${GroupAttachment} group=${group} actions=${actions} placement="fixed" />`

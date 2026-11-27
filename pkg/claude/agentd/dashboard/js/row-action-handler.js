@@ -1096,7 +1096,10 @@ export async function handleRowAction(action) {
         // available, otherwise fall back to the explicit data-group
         // attribute.
         const scope = data.group || from || to;
-        await deleteLink({ id, from, to, scope, node });
+        // A cross-node row (a group's Links section) names its peer, so the
+        // removal asks the cross-node question, or withdraws a request.
+        const peerFields = data.peerLabel ? { peerLabel: data.peerLabel, pending: data.pending === '1' } : {};
+        await deleteLink({ id, from, to, scope, node, ...peerFields });
         return;
       }
       case 'msg-focus': {

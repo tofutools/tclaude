@@ -3328,26 +3328,6 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
 .group-subgroups { margin: 6px 0 10px 0; }
 .group-subgroups > .group-box { margin: 4px 0; }
 .group-subgroups > .group-box > .group-summary { border-left: 2px solid #3d4a5c; padding-left: 6px; margin-left: -6px; }
-/* Per-group link chips in the <summary> header — an at-a-glance, always-
-   visible (even when the group is collapsed) view of who this group can
-   message (→) and who can message it (←). Clicking any chip opens the
-   Links… management overlay. Outbound chips lean blue, inbound green. */
-.group-link-chips {
-  margin-left: 8px; font-size: 11px; color: #6e7681;
-  display: inline-flex; align-items: center; gap: 4px; flex-wrap: wrap;
-}
-.group-link-chip {
-  cursor: pointer; padding: 1px 6px; border-radius: 4px;
-  border: 1px solid #2a3340; white-space: nowrap; line-height: 1.5;
-}
-.group-link-chip.out { color: #79c0ff; }
-.group-link-chip.in { color: #7ee787; }
-.group-link-chip:hover { border-color: #58a6ff; filter: brightness(1.15); }
-/* The chips share a single .qo-text wrapper (so the quick-options auto-fold can
-   collapse them as one), which means the parent flex gap no longer falls
-   between individual chips. Space adjacent chips directly so they don't butt
-   together — applies in every mode, fold or not. */
-.group-link-chip + .group-link-chip { margin-left: 4px; }
 /* Federation marker: a group linked to peer nodes (peer grants scoped to it,
    directly or via a node pool, or a route mirror). Green dot = at least one
    linked node is live; grey = all offline. The popover lists each link. */
@@ -4606,7 +4586,6 @@ body.show-agent-hide-btn .row-actions .icon-btn[data-act="hide"] { display: inli
   body.group-quick-fold .group-box:not(.quick-pinned):not(.open) > .group-summary .group-default-cwd,
   body.group-quick-fold .group-box:not(.quick-pinned):not(.open) > .group-summary .group-max-members,
   body.group-quick-fold .group-box:not(.quick-pinned):not(.open) > .group-summary .group-sandbox-profile,
-  body.group-quick-fold .group-box:not(.quick-pinned):not(.open) > .group-summary .group-link-chips,
   body.group-quick-fold .group-box:not(.quick-pinned):not(.open) > .group-summary .group-header-cog {
     opacity: 0.4;
   }
@@ -4614,13 +4593,11 @@ body.show-agent-hide-btn .row-actions .icon-btn[data-act="hide"] { display: inli
   body.group-quick-fold .group-box:not(.quick-pinned):not(.open) > .group-summary:hover .group-default-cwd,
   body.group-quick-fold .group-box:not(.quick-pinned):not(.open) > .group-summary:hover .group-max-members,
   body.group-quick-fold .group-box:not(.quick-pinned):not(.open) > .group-summary:hover .group-sandbox-profile,
-  body.group-quick-fold .group-box:not(.quick-pinned):not(.open) > .group-summary:hover .group-link-chips,
   body.group-quick-fold .group-box:not(.quick-pinned):not(.open) > .group-summary:hover .group-header-cog,
   body.group-quick-fold .group-box:not(.quick-pinned):not(.open).quick-hover > .group-summary .group-descr,
   body.group-quick-fold .group-box:not(.quick-pinned):not(.open).quick-hover > .group-summary .group-default-cwd,
   body.group-quick-fold .group-box:not(.quick-pinned):not(.open).quick-hover > .group-summary .group-max-members,
   body.group-quick-fold .group-box:not(.quick-pinned):not(.open).quick-hover > .group-summary .group-sandbox-profile,
-  body.group-quick-fold .group-box:not(.quick-pinned):not(.open).quick-hover > .group-summary .group-link-chips,
   body.group-quick-fold .group-box:not(.quick-pinned):not(.open).quick-hover > .group-summary .group-header-cog,
   /* Cog-menu-open brighten: must out-specify the 0.4 dim rule above, so it
      carries the SAME collapsed/unpinned fold prefix as the hover branches
@@ -5022,14 +4999,12 @@ body.wizard .force-fold-label-wizard { display: inline; }
   body.group-quick-fold .group-box:not(.quick-pinned):not(.open) > .group-summary .group-default-model,
   body.group-quick-fold .group-box:not(.quick-pinned):not(.open) > .group-summary .group-sandbox-profile,
   body.group-quick-fold .group-box:not(.quick-pinned):not(.open) > .group-summary .group-usage-profile,
-  body.group-quick-fold .group-box:not(.quick-pinned):not(.open) > .group-summary .group-link-chips,
   body.group-quick-fold .group-box:not(.quick-pinned):not(.open) > .group-summary .group-attachment-fixed {
     margin-left: 1px;
   }
   /* Halve the icon chips' own inner horizontal padding too — the base 6px
      dominates the inter-chip space once the labels are folded away. Scoped
-     to the bordered-transparent icon chips; the .group-link-chips flex
-     container has no padding of its own (its inner pills keep their look). */
+     to the bordered-transparent icon chips. */
   body.group-quick-fold .group-box:not(.quick-pinned):not(.open) > .group-summary .group-descr,
   body.group-quick-fold .group-box:not(.quick-pinned):not(.open) > .group-summary .group-default-cwd,
   body.group-quick-fold .group-box:not(.quick-pinned):not(.open) > .group-summary .group-max-members,
@@ -5059,7 +5034,6 @@ body.wizard .force-fold-label-wizard { display: inline; }
 .group-box.open > .group-summary .group-default-model,
 .group-box.open > .group-summary .group-sandbox-profile,
 .group-box.open > .group-summary .group-usage-profile,
-.group-box.open > .group-summary .group-link-chips,
 .group-box.open > .group-summary .group-attachment-fixed {
   margin-left: 1px;
 }
@@ -5220,7 +5194,7 @@ body.wizard .force-fold-label-wizard { display: inline; }
    ring-free. */
 .group-descr:focus-visible, .group-default-cwd:focus-visible, .gdc-pick:focus-visible,
 .group-max-members:focus-visible, .group-default-model:focus-visible,
-.group-sandbox-profile:focus-visible, .group-link-chips:focus-visible,
+.group-sandbox-profile:focus-visible,
 .user-default-model:focus-visible, .global-sandbox-profile:focus-visible {
   outline: 2px solid #58a6ff; outline-offset: 1px;
 }
@@ -14125,7 +14099,7 @@ body.wizard #activity-performance .debug-table td {
 
 /* Per-group triggers are a deliberately small projection: collapsed by
    default, read-only, capped to five rows, and linked back to Automations. */
-.group-triggers-section { margin: 7px 0 10px; border: 1px solid #30363d; border-radius: 6px; background: #0d141b; }
+.group-triggers-section { margin: 6px 0; border: 1px solid #30363d; border-radius: 6px; background: #0d141b; }
 .group-triggers-head { display: flex; align-items: center; gap: 8px; padding: 6px 9px; cursor: pointer; font-size: 11px; }
 .group-triggers-toggle { display: inline-flex; align-items: center; gap: 8px; font-size: inherit; }
 .group-triggers-head > a { margin-left: auto; color: #58a6ff; }
@@ -15206,6 +15180,7 @@ body:not(.dock-open) .dock-toggle-chevron { transform: rotate(180deg); }
    menu's Import… drives it, so its own button stays hidden. */
 /* Hidden programmatic trigger; outranks .ui-btn's display. */
 .pwf-import-entry .dock-process-import-hidden { display: none; }
+.gp-pwf-importer, .gp-pwf-importer > .pwf-import-entry { display: contents; }
 .dock-section.is-drop-over { outline: 1.5px dashed #58a6ff; outline-offset: 2px; border-radius: 6px; }
 .dock-chip.dock-chip-default { color: #56d364; border-color: #2ea04366; }
 .dock-card-pin { font-size: 10px; margin-right: 3px; }

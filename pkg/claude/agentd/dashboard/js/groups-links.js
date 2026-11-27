@@ -4,9 +4,8 @@
 // open for a few links and folded for more (linksSectionAuto), so a busy
 // group's links do not push its other sections off the screen.
 //
-// It also shares their mechanics: the blue ＋ (on the section line while
-// folded, heading the section while open, as every section's buttons) adds a
-// link (the new-link editor, FROM preset to this group); each row's 🗑
+// It also shares their mechanics: the blue ＋ on the section line, folded
+// or open as on the Task board's, adds a link (the new-link editor, FROM preset to this group); each row's 🗑
 // removes one behind the usual confirmation, and so does dragging the row
 // onto the shared trash bin (resource-dnd.js); ✎ changes the mode. The
 // table is ResourceTable's look and sort, with its own columns.
@@ -23,6 +22,7 @@ import { deleteLink } from './links-controller.js';
 import { applySortState, tableSortState, timestampSortValue } from './sort.js';
 import { relTime } from './helpers.js';
 import { isWizardActive } from './slop.js';
+import { deleteFields, groupLinks } from './group-links-model.js';
 
 const html = htm.bind(h);
 
@@ -37,6 +37,7 @@ export const LINK_COLS = Object.freeze([
   { key: 'ctl', label: '' },
   { key: 'name', label: 'Other group', wizardLabel: 'Other party', col: 'other' },
   { key: 'dir', label: 'Direction', col: 'dir' },
+  { key: 'state', label: 'State', col: 'state' },
   { key: 'age', label: 'Age', col: 'age' },
   { key: 'mode', label: 'Mode', col: 'mode' },
 ]);
@@ -44,17 +45,18 @@ export const LINK_COLS = Object.freeze([
 export const LINK_SORT = 'grouplinks';
 
 const LINK_ACCESSORS = Object.freeze({
-  other: (r) => r.other, dir: (r) => r.direction, mode: (r) => r.link.mode, age: (r) => timestampSortValue(r.link.created_at),
+  other: (r) => r.other, dir: (r) => r.direction, state: (r) => r.state || null, mode: (r) => r.link.mode, age: (r) => timestampSortValue(r.link.created_at),
 });
 
-// groupLinkRows are the links touching group: outbound first, then inbound,
-// each with the group at its other end.
-export function groupLinkRows(links, name) {
-  return [
-    ...(links || []).filter((link) => link.from === name).map((link) => ({ link, direction: 'out', other: link.to })),
-    ...(links || []).filter((link) => link.to === name).map((link) => ({ link, direction: 'in', other: link.from })),
-  ];
+// groupLinkRows are the links touching group (group-links-model.js, the
+// phone's rows too): outbound first, then inbound, a cross-node one named
+// peer:group with its state.
+export function groupLinkRows(snapshot, name) {
+  return groupLinks(snapshot, name).map((row) => ({ ...row, direction: row.out ? 'out' : 'in' }));
 }
+
+// STATE_PILL maps a row's tone to the Links… manager's state pill classes.
+const STATE_PILL = Object.freeze({ work: 'ok', err: 'bad', ask: 'wait', off: 'stale' });
 
 // linksSummary is the section line's digest: "→ 2 · ← 1".
 export function linksSummary(rows) {
@@ -64,27 +66,37 @@ export function linksSummary(rows) {
 }
 
 function LinkRow({ row, group, draggable }) {
-  const { link, direction, other } = row;
+  const { link, direction, other, remote } = row;
   const wizard = isWizardActive();
-  const fields = { 'data-id': link.id, 'data-group': group, 'data-from': link.from, 'data-to': link.to };
-  const removeTitle = wizard ? 'Sever this arcane channel' : 'Remove this link';
+  // What deleteLink takes: the group whose route removes it and, across
+  // nodes, the peer and whether it is still a request (the cross-node
+  // confirmation and "cancel request").
+  const remove = deleteFields(link);
+  const fields = { 'data-id': link.id, 'data-group': remove.scope, 'data-from': link.from, 'data-to': link.to };
+  const peerFields = remote ? { 'data-peer-label': remove.peerLabel, 'data-pending': remove.pending ? '1' : undefined } : {};
+  const removeTitle = remove.pending ? 'Withdraw this link request' : wizard ? 'Sever this arcane channel' : 'Remove this link';
   // A drop on the trash bin is the 🗑: the same confirmation, then the delete.
   // A link is drawn at both its ends, so each end's row has its own key: one
   // end folding (unregistering) leaves the other's drag working.
   const dragKey = `${link.id}@${group}`;
   useEffect(() => (draggable
-    ? registerResourceRemover(`link:${dragKey}`, () => deleteLink({ id: link.id, from: link.from, to: link.to, scope: group }))
-    : undefined), [draggable, dragKey, link.from, link.to, group]);
+    ? registerResourceRemover(`link:${dragKey}`, () => deleteLink(deleteFields(link)))
+    : undefined), [draggable, dragKey, link]);
   const dragAttrs = draggable ? { draggable: 'true', 'data-dnd-resource': JSON.stringify({ kind: 'link', id: dragKey, label: `${link.from} → ${link.to}`, group }) } : {};
+  // A cross-node link keeps the mode both nodes agreed (no ✎, as in the
+  // Links… manager); its slot stays so the 🗑 lines up.
+  const editTitle = remote ? 'A cross-node link keeps the mode both nodes agreed; remove it and link again to change it'
+    : wizard ? 'Rebind this arcane channel' : "Change this link's mode";
   return html`<tr class="gr-trow" data-group-link=${link.id} ...${dragAttrs}>
     <td class="gr-ctl"><span class="agent-ctl gr-acts"><span class="row-actions">
-      <${Button} size="sm" icon=${true} class="icon-btn gl-edit" data-act="link-edit" ...${fields} data-mode=${link.mode}
-        title=${wizard ? 'Rebind this arcane channel' : "Change this link's mode"} aria-label=${wizard ? 'Rebind this arcane channel' : "Change this link's mode"}><${PencilIcon} /><//>
-      <${Button} size="sm" icon=${true} class="icon-btn warn gr-remove" data-act="link-delete" ...${fields}
+      <${Button} size="sm" icon=${true} class="icon-btn gl-edit" data-act=${remote ? undefined : 'link-edit'} disabled=${remote} ...${fields} data-mode=${link.mode}
+        title=${editTitle} aria-label=${editTitle}><${PencilIcon} /><//>
+      <${Button} size="sm" icon=${true} class="icon-btn warn gr-remove" data-act="link-delete" ...${fields} ...${peerFields}
         title=${removeTitle} aria-label=${removeTitle}><${TrashIcon} /><//>
     </span></span></td>
-    <td class="name-cell gr-namecell"><span class="rowname">${other || '(deleted)'}</span></td>
+    <td class="name-cell gr-namecell"><span class="rowname">${remote ? '🌐 ' : ''}${other}</span></td>
     <td class="gq-dim" title=${direction === 'out' ? `${group} may message ${other}` : `${other} may message ${group}`}>${direction === 'out' ? '→ out' : '← in'}</td>
+    <td>${row.state ? html`<span class=${`ui-tag link-state ${STATE_PILL[row.tone] || 'wait'}`} data-link-state=${row.state}>${row.state}</span>` : html`<span class="gq-dim">local</span>`}</td>
     <td class="gr-timecell"><span class="last-hook" title=${link.created_at || ''}>${relTime(link.created_at)}</span></td>
     <td><span class="id">${link.mode}</span></td>
   </tr>`;
@@ -94,7 +106,7 @@ function LinkRow({ row, group, draggable }) {
 export function GroupLinksSection({ group, snapshot }) {
   const wizard = isWizardActive();
   const cols = wizard ? LINK_COLS.map((c) => (c.wizardLabel ? { ...c, label: c.wizardLabel } : c)) : LINK_COLS;
-  const rows = applySortState(groupLinkRows(snapshot?.links, group.name), LINK_ACCESSORS, tableSortState(LINK_SORT, LINK_COLS));
+  const rows = applySortState(groupLinkRows(snapshot, group.name), LINK_ACCESSORS, tableSortState(LINK_SORT, LINK_COLS));
   const summary = linksSummary(rows);
   const addTitle = wizard ? 'Weave an outbound arcane channel from this party' : `Add an outbound link from ${group.name}`;
   const add = html`<${Button} size="sm" variant="primary" class="spawn-btn gr-add-btn gl-add-btn" data-act="link-new" data-group=${group.name}
@@ -103,9 +115,8 @@ export function GroupLinksSection({ group, snapshot }) {
   // fused fleet view does not have (as Resources' rows).
   const draggable = !group.fleet_node;
   return html`<${FusedSection} group=${group.name} section="links" label=${wizard ? 'Arcane channels' : 'Links'}
-      auto=${linksSectionAuto(rows.length)} closedActions=${add} attrs=${{ 'data-group-links': group.name }}
+      auto=${linksSectionAuto(rows.length)} actions=${add} attrs=${{ 'data-group-links': group.name }}
       summary=${html`<span class=${`gf-count${rows.length ? '' : ' zero'}`}>${rows.length}</span>${summary && html`<span class="gf-count gl-summary">${summary}</span>`}`}>
-    <div class="group-header-actions gf-title-row">${add}</div>
     ${rows.length
       ? html`<${ResourceTable} cols=${cols} sort=${LINK_SORT} restCol="mode" attrs=${{ class: 'gl-table' }}>${rows.map((row) => html`<${LinkRow} key=${`${row.direction}-${row.link.id}`} row=${row} group=${group.name} draggable=${draggable} />`)}<//>`
       : html`<div class="gf-empty ui-empty">${wizard ? 'No arcane channels are woven to or from this party.' : 'No links involving this group.'}</div>`}
