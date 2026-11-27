@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { createPreactHarness } from './preact-harness.mjs';
 
 // A group's Links are one of its regular sections (FusedSection): the same
-// fold, remembered per group, the blue ＋ on the section line, a 🗑 per row
+// fold, remembered per group, the blue ＋ placed as Agents' buttons, a 🗑 per row
 // and the trash-bin drop.
 
 function memoryPrefs(initial = {}) {
@@ -97,9 +97,14 @@ test('Links is a regular group section: open for a few links, folded for more, t
   const gamma = section('gamma');
   assert.ok(isOpen(gamma));
   assert.match(gamma.textContent, /No links involving this group\./, 'the empty state keeps its wording');
-  assert.ok(gamma.querySelector('.gf-section-head [data-act="link-new"]'), 'open, the ＋ stays on the section line, as on the Task board');
-  assert.equal(alpha.querySelectorAll('[data-act="link-new"]').length, 1, 'no extra row just for the ＋');
-  assert.equal(alpha.querySelector('.gf-title-row'), null);
+  assert.ok(gamma.querySelector('.gf-section-head [data-act="link-new"]'), 'with no links to list, the ＋ stays on the section line');
+  // Open with links, the ＋ heads the table's untitled first column, as the
+  // Agents section's buttons head the member table; the line has none.
+  assert.equal(alpha.querySelectorAll('[data-act="link-new"]').length, 1);
+  assert.equal(alpha.querySelector('.gf-section-head [data-act="link-new"]'), null);
+  const lead = alpha.querySelector('thead.gf-lead-head th:first-child .gf-table-actions [data-act="link-new"]');
+  assert.ok(lead, 'the ＋ sits in the header row above the ✎/🗑 column');
+  assert.equal(alpha.querySelector('.gf-title-row'), null, 'no extra row just for the ＋');
   void harness;
 });
 

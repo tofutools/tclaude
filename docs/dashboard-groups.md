@@ -125,7 +125,7 @@ what you create shows up.
 
 **Links** lists the links into and out of the group, with a → out / ← in
 count on its line. It starts open with up to three links and folded with more.
-Its **＋**, on the section line whether folded or open, adds a link from this group; ✎ on a row changes the link's mode, and
+Its **＋** adds a link from this group; ✎ on a row changes the link's mode, and
 🗑, or dragging the row onto the trash bin, removes it after a confirmation.
 
 ### The group ⚙ menu
