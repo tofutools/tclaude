@@ -192,7 +192,9 @@ function terminalHarness(ownerDocument) {
   host.title = '';
   let osc52 = null;
   let keyHandler = null;
-  let linkProvider = null;
+  // Every terminal registers the hard-wrapped URL provider first; the
+  // visible-path provider, where there is one, comes after it.
+  const linkProviders = [];
   const inputs = [];
   const term = {
     options: {},
@@ -207,7 +209,7 @@ function terminalHarness(ownerDocument) {
     },
     onSelectionChange() { return { dispose() {} }; },
     registerLinkProvider(provider) {
-      linkProvider = provider;
+      linkProviders.push(provider);
       return { dispose() {} };
     },
     attachCustomKeyEventHandler(handler) { keyHandler = handler; },
@@ -220,7 +222,8 @@ function terminalHarness(ownerDocument) {
     host, term,
     key: (event) => keyHandler(event),
     inputs,
-    linkProvider: () => linkProvider,
+    linkProvider: () => linkProviders[1] || null,
+    linkProviders,
     osc52: (payload) => osc52(payload),
   };
 }

@@ -67,6 +67,12 @@ type Config struct {
 	MaxQueuedFramesPerStream int
 	WriteTimeout             time.Duration
 	AuthorityCheckInterval   time.Duration
+	// AuthorityTicker, when set, paces each channel's authority checks
+	// instead of a ticker every AuthorityCheckInterval (which still bounds
+	// each check). It is called once per attached channel; the returned stop
+	// is called when the channel's watcher ends. Tests use it to run checks
+	// at chosen points rather than on the wall clock.
+	AuthorityTicker func() (<-chan time.Time, func())
 
 	Logger  *slog.Logger
 	OnEvent func(Event)
@@ -85,6 +91,9 @@ const (
 	defaultWriteTimeout           = 5 * time.Second
 	defaultAuthorityCheckInterval = 250 * time.Millisecond
 	tombstoneTTL                  = 30 * time.Second
+	// maxSlowAuthorityChecks is how many authority checks in a row may run
+	// out of time (AuthorityCheckInterval) before a channel fails closed.
+	maxSlowAuthorityChecks = 3
 )
 
 var (
@@ -138,6 +147,7 @@ type Broker struct {
 	maxQueuedFramesPerStream int
 	writeTimeout             time.Duration
 	authorityCheckInterval   time.Duration
+	authorityTicker          func() (<-chan time.Time, func())
 	logger                   *slog.Logger
 	onEvent                  func(Event)
 
@@ -279,6 +289,13 @@ func New(cfg Config) (*Broker, error) {
 	if cfg.AuthorityCheckInterval <= 0 {
 		cfg.AuthorityCheckInterval = defaultAuthorityCheckInterval
 	}
+	if cfg.AuthorityTicker == nil {
+		interval := cfg.AuthorityCheckInterval
+		cfg.AuthorityTicker = func() (<-chan time.Time, func()) {
+			ticker := time.NewTicker(interval)
+			return ticker.C, ticker.Stop
+		}
+	}
 	logger := cfg.Logger
 	if logger == nil {
 		logger = slog.Default()
@@ -292,6 +309,7 @@ func New(cfg Config) (*Broker, error) {
 		maxQueuedFramesPerStream: cfg.MaxQueuedFramesPerStream,
 		writeTimeout:             cfg.WriteTimeout,
 		authorityCheckInterval:   cfg.AuthorityCheckInterval,
+		authorityTicker:          cfg.AuthorityTicker,
 		logger:                   logger,
 		onEvent:                  cfg.OnEvent,
 		routes:                   make(map[string]*routeState),
@@ -528,13 +546,14 @@ func (b *Broker) serveSession(s *session, callerCtx context.Context) error {
 }
 
 func (s *session) watchAuthority() {
-	ticker := time.NewTicker(s.broker.authorityCheckInterval)
-	defer ticker.Stop()
+	ticks, stop := s.broker.authorityTicker()
+	defer stop()
+	slowChecks := 0
 	for {
 		select {
 		case <-s.ctx.Done():
 			return
-		case <-ticker.C:
+		case <-ticks:
 			checkCtx, cancel := context.WithTimeout(s.ctx, s.broker.authorityCheckInterval)
 			var err error
 			if s.role == rolePublisher {
@@ -542,12 +561,29 @@ func (s *session) watchAuthority() {
 			} else {
 				err = s.broker.authorizer.AuthorizeConsumer(checkCtx, s.consumerAuth)
 			}
+			// Only the deadline itself is inconclusive: a definite refusal
+			// that happened to arrive late is still a refusal.
+			timedOut := errors.Is(err, context.DeadlineExceeded) && errors.Is(checkCtx.Err(), context.DeadlineExceeded)
 			cancel()
-			if err != nil {
-				s.broker.emit(Event{Kind: "authority-revoked", Role: s.role.string(), RouteID: s.routeID(), AgentID: s.agentID(), LeaseID: s.leaseID(), Error: "authority no longer valid"})
-				s.close()
-				return
+			if err == nil {
+				slowChecks = 0
+				continue
 			}
+			// A check that ran out of time said nothing about the
+			// authority: a slow store on a loaded daemon must not detach a
+			// healthy channel. It is retried on the next tick, and only a
+			// run of maxSlowAuthorityChecks fails closed, so a hung
+			// authority still cannot keep a channel alive.
+			if timedOut && s.ctx.Err() == nil {
+				slowChecks++
+				if slowChecks < maxSlowAuthorityChecks {
+					s.broker.logger.Debug("route broker authority check timed out; retrying", "role", s.role.string(), "route", s.routeID(), "consecutive", slowChecks)
+					continue
+				}
+			}
+			s.broker.emit(Event{Kind: "authority-revoked", Role: s.role.string(), RouteID: s.routeID(), AgentID: s.agentID(), LeaseID: s.leaseID(), Error: "authority no longer valid"})
+			s.close()
+			return
 		}
 	}
 }
