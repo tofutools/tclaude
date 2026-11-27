@@ -108,7 +108,9 @@ export function sortResourceRows(rows) {
 // head shows the header row (only on the first of the two); its headers sort.
 // Another section in the same look (a group's Links, groups-links.js) passes
 // its own cols, sort table and rest column (the one taking the spare width).
-export function ResourceTable({ head = true, attrs = {}, cols = RESOURCE_COLS, sort = RESOURCE_SORT, restCol = 'detail', children }) {
+// `lead` fills the header's untitled controls cell, as the agents table's
+// does (a section's own buttons while it is open).
+export function ResourceTable({ head = true, attrs = {}, cols = RESOURCE_COLS, sort = RESOURCE_SORT, restCol = 'detail', lead = null, children }) {
   const active = tableSortState(sort, cols);
   // A caller's class adds to the table's own: without ui-table-auto its
   // tracks would not apply, and the two tables would not line up.
@@ -116,7 +118,8 @@ export function ResourceTable({ head = true, attrs = {}, cols = RESOURCE_COLS, s
   const cls = ['gr-rtable', 'ui-table-auto', ...String(extra).split(/\s+/).filter((c) => c && c !== 'gr-rtable')].join(' ');
   return html`<table class=${cls} ...${rest}>
     <${ColGroup} cols=${cols} colClass=${(c) => `${c.key === restCol ? 'ui-col-rest' : 'ui-col-track'} gr-col-${c.key}`} />
-    ${head && html`<${TableHead} cols=${cols} activeCol=${active?.col} dir=${active?.dir} sortTable=${sort} />`}
+    ${head && html`<${TableHead} cols=${cols} activeCol=${active?.col} dir=${active?.dir} sortTable=${sort}
+      lead=${lead} theadClass=${lead ? 'gf-lead-head' : undefined} />`}
     <tbody>${children}</tbody>
   </table>`;
 }

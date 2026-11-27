@@ -4,8 +4,10 @@
 // open for a few links and folded for more (linksSectionAuto), so a busy
 // group's links do not push its other sections off the screen.
 //
-// It also shares their mechanics: the blue ＋ on the section line, folded
-// or open as on the Task board's, adds a link (the new-link editor, FROM preset to this group); each row's 🗑
+// It also shares their mechanics: the blue ＋ adds a link (the new-link
+// editor, FROM preset to this group), placed as the Agents section places
+// its buttons: in the table header's untitled first cell while open, on the
+// section line while folded or with no links to list; each row's 🗑
 // removes one behind the usual confirmation, and so does dragging the row
 // onto the shared trash bin (resource-dnd.js); ✎ changes the mode. The
 // table is ResourceTable's look and sort, with its own columns.
@@ -115,10 +117,11 @@ export function GroupLinksSection({ group, snapshot }) {
   // fused fleet view does not have (as Resources' rows).
   const draggable = !group.fleet_node;
   return html`<${FusedSection} group=${group.name} section="links" label=${wizard ? 'Arcane channels' : 'Links'}
-      auto=${linksSectionAuto(rows.length)} actions=${add} attrs=${{ 'data-group-links': group.name }}
+      auto=${linksSectionAuto(rows.length)} actions=${rows.length ? null : add} closedActions=${rows.length ? add : null} attrs=${{ 'data-group-links': group.name }}
       summary=${html`<span class=${`gf-count${rows.length ? '' : ' zero'}`}>${rows.length}</span>${summary && html`<span class="gf-count gl-summary">${summary}</span>`}`}>
     ${rows.length
-      ? html`<${ResourceTable} cols=${cols} sort=${LINK_SORT} restCol="mode" attrs=${{ class: 'gl-table' }}>${rows.map((row) => html`<${LinkRow} key=${`${row.direction}-${row.link.id}`} row=${row} group=${group.name} draggable=${draggable} />`)}<//>`
+      ? html`<${ResourceTable} cols=${cols} sort=${LINK_SORT} restCol="mode" attrs=${{ class: 'gl-table' }}
+          lead=${html`<span class="group-header-actions gf-table-actions">${add}</span>`}>${rows.map((row) => html`<${LinkRow} key=${`${row.direction}-${row.link.id}`} row=${row} group=${group.name} draggable=${draggable} />`)}<//>`
       : html`<div class="gf-empty ui-empty">${wizard ? 'No arcane channels are woven to or from this party.' : 'No links involving this group.'}</div>`}
   <//>`;
 }
