@@ -19897,6 +19897,3 @@ body.wizard .gm-wait-field input { background: #1a1430; border-color: rgba(122, 
 .push-settings-devices { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
 .push-settings-dev { display: flex; align-items: center; gap: 6px; border: 1px solid var(--border, #30363d); border-radius: 6px; padding: 6px 8px; }
 .push-settings-dev-text { display: flex; flex-direction: column; flex: 1; min-width: 0; overflow-wrap: anywhere; }
-.push-settings-error { color: var(--danger-text, #f85149); margin: 0; }
-:root[data-layout="phone"] .push-settings { padding: 0 16px 16px; max-width: none; }
-:root[data-layout="phone"] .push-settings .ui-check { min-height: 36px; align-items: center; }

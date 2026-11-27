@@ -342,15 +342,18 @@ func SendHumanQuestion(senderSessionID, fromTitle, group, subject, body string) 
 }
 
 // SendOperatorQuestion pushes a taskboard ask-operator question: who asks,
-// in which group, and the question's title. It has no desktop banner (the
-// Task board and its Needs-you count are the desktop's surface); it no-ops
+// in which group, and the question's title. askerID names the asker for the
+// per-asker collapse (its conversation, or a federation peer's author); with
+// none, the question is not collapsed. It has no desktop banner (the Task
+// board and its Needs-you count are the desktop's surface); it no-ops
 // unless operator_questions is on for push.
-func SendOperatorQuestion(fromTitle, group, question string) {
+func SendOperatorQuestion(askerID, fromTitle, group, question string) {
 	cfg, err := config.Load()
 	if err != nil {
 		return
 	}
 	note := humanMessagePushNote(config.PushOperatorQuestions, fromTitle, group, question)
+	note.asker = askerKey(askerID, group)
 	note.urgency = "high"
 	queuePush(cfg.Notifications, note)
 }
@@ -362,6 +365,7 @@ func sendHumanMessage(category, senderSessionID, fromTitle, group, subject, body
 	}
 	// A push carries who and the subject, never the message itself.
 	note := humanMessagePushNote(category, fromTitle, group, subject)
+	note.asker = askerKey(senderSessionID, group)
 	if category == config.PushOperatorQuestions {
 		note.urgency = "high"
 	}
@@ -389,7 +393,17 @@ func humanMessagePushNote(category, fromTitle, group, subject string) pushNote {
 		title = "tclaude: " + s
 	}
 	return pushNote{category: category, title: title, body: who, url: "/messages", urgency: "normal",
-		asker: strings.TrimSpace(fromTitle) + "\x00" + strings.TrimSpace(group), question: strings.TrimSpace(subject)}
+		who: who, question: strings.TrimSpace(subject)}
+}
+
+// askerKey is the per-asker collapse's key: a stable id of the asker (a
+// session, a conversation, a peer's author) with the group, or "" when
+// there is no id, so askers without one are never lumped together.
+func askerKey(id, group string) string {
+	if strings.TrimSpace(id) == "" {
+		return ""
+	}
+	return strings.TrimSpace(id) + "\x00" + strings.TrimSpace(group)
 }
 
 // SendAccessRequest raises an optional OS notification for an agent

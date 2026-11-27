@@ -62,3 +62,7 @@
 :root[data-layout="phone"] .phone-update-log-head h3 { flex: 1; margin: 0 4px; }
 :root[data-layout="phone"] .phone-update-copy { flex: none; min-height: 32px; padding: 4px 12px; }
 :root[data-layout="phone"] .phone-update-log { max-height: 45vh; overflow: auto; overscroll-behavior: contain; }
+
+/* More › Phone push (js/push-settings.js) in its sheet. */
+:root[data-layout="phone"] .push-settings { padding: 0 16px 16px; max-width: none; }
+:root[data-layout="phone"] .push-settings .ui-check { min-height: 36px; align-items: center; }

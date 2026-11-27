@@ -177,6 +177,26 @@ func pushSubscriptionWhere(d *sql.DB, where string, args ...any) (PushSubscripti
 	return s, err
 }
 
+// ReplacePushEndpoint moves a device to a new subscription (the browser
+// rotated it), keeping its id and label and clearing its failures. Pushes
+// queued for the old subscription go to the new one.
+func ReplacePushEndpoint(oldEndpoint, endpoint, p256dh, auth string, now time.Time) (PushSubscription, error) {
+	d, err := Open()
+	if err != nil {
+		return PushSubscription{}, err
+	}
+	res, err := d.Exec(`UPDATE push_subscriptions
+		SET endpoint = ?, p256dh = ?, auth = ?, seen_at = ?, last_error = '', failures = 0
+		WHERE endpoint = ?`, endpoint, p256dh, auth, pushMS(now), oldEndpoint)
+	if err != nil {
+		return PushSubscription{}, err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return PushSubscription{}, ErrPushSubscriptionNotFound
+	}
+	return pushSubscriptionWhere(d, `endpoint = ?`, endpoint)
+}
+
 // GetPushSubscription returns one device.
 func GetPushSubscription(id int64) (PushSubscription, error) {
 	d, err := Open()

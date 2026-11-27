@@ -12,9 +12,26 @@
 
 const CONTENT_FREE_TITLE = 'tclaude needs you';
 
-// iOS shows every push: WebKit revokes a subscription whose pushes show
-// nothing. Elsewhere a push is handed to a focused window instead.
-const ALWAYS_SHOW = /iPhone|iPad|iPod/.test(self.navigator.userAgent);
+// Only Chromium and Firefox let a push show nothing while a window of the
+// app is focused. WebKit (Safari on macOS, every iOS and iPadOS browser,
+// home-screen apps, which on iPad report a Mac) revokes a subscription
+// whose pushes show nothing, so there every push is shown. The iOS
+// browsers (CriOS, FxiOS) are WebKit and name no Chrome/ or Firefox/.
+const MAY_HAND_OVER = /(Chrome|Chromium|Edg)\/|Firefox\//.test(self.navigator.userAgent);
+
+// localDashboard reports a window showing this node's own dashboard, the
+// one page that turns a handed-over push into a toast (dashboard.js
+// startPushClient): not a peer's view (?node=…), a terminal window or the
+// login page.
+function localDashboard(client) {
+  try {
+    const url = new URL(client.url);
+    if (url.origin !== self.location.origin || url.searchParams.has('node')) return false;
+    return !/^\/(terminals|dashboard\/login)(\/|$)/.test(url.pathname);
+  } catch {
+    return false;
+  }
+}
 
 self.addEventListener('install', () => { self.skipWaiting(); });
 self.addEventListener('activate', (event) => { event.waitUntil(self.clients.claim()); });
@@ -37,8 +54,8 @@ self.addEventListener('push', (event) => {
   const payload = readPayload(event);
   event.waitUntil((async () => {
     const windows = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
-    const focused = windows.filter((client) => client.focused && client.visibilityState === 'visible');
-    if (focused.length > 0 && !ALWAYS_SHOW) {
+    const focused = windows.filter((client) => client.focused && client.visibilityState === 'visible' && localDashboard(client));
+    if (focused.length > 0 && MAY_HAND_OVER) {
       // The operator is looking at the app: it shows the alert in place
       // (a toast) instead of a second, system one.
       for (const client of focused) client.postMessage({ type: 'tclaude-push', payload });
@@ -71,18 +88,22 @@ self.addEventListener('notificationclick', (event) => {
   })());
 });
 
-// The browser renewed (or dropped) the subscription: subscribe again with
-// the node's key and hand agentd the new one, so pushes keep arriving
-// without the operator opening the app.
+// The browser renewed (or dropped) the subscription: hand agentd the new
+// one as a replacement of the old, so pushes keep arriving without the
+// operator opening the app. It is a refresh: a device agentd no longer
+// knows (the operator removed it) is not added back.
 self.addEventListener('pushsubscriptionchange', (event) => {
   event.waitUntil((async () => {
     try {
       const keyResponse = await fetch('/api/push/key', { method: 'POST', credentials: 'same-origin' });
       if (!keyResponse.ok) return;
       const { public_key: key } = await keyResponse.json();
-      const sub = await self.registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: key });
+      const sub = event.newSubscription ||
+        await self.registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: key });
       const body = sub.toJSON();
       body.application_server_key = key;
+      body.refresh = true;
+      if (event.oldSubscription?.endpoint) body.old_endpoint = event.oldSubscription.endpoint;
       await fetch('/api/push/devices', {
         method: 'POST', credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),

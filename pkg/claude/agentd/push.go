@@ -415,6 +415,11 @@ type pushSubscribeBody struct {
 	// operator removed (from another device, or the CLI) must stay removed.
 	// An unknown endpoint is a 404, on which the app drops its subscription.
 	Refresh bool `json:"refresh"`
+	// OldEndpoint, with Refresh, is the subscription this one replaces: the
+	// browser rotated it (pushsubscriptionchange) or the app re-subscribed
+	// for a new key. A known old endpoint is swapped for the new one in
+	// place, keeping the device's id and label.
+	OldEndpoint string `json:"old_endpoint"`
 }
 
 // POST …/push/devices → {device, new, …state}: subscribe (or refresh) a
@@ -435,6 +440,26 @@ func handlePushSubscribe(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "push subscription: "+err.Error(), http.StatusBadRequest)
 		return
 	}
+	// A refresh is checked against the known devices first, before the
+	// key: a device removed (or dropped by a reset-keys) gets its 404 and
+	// stays removed, rather than a 409 that would have it subscribe anew.
+	replaces := ""
+	if body.Refresh {
+		known, err := pushEndpointKnown(sub.Endpoint)
+		if err == nil && !known && body.OldEndpoint != "" && body.OldEndpoint != sub.Endpoint {
+			if known, err = pushEndpointKnown(body.OldEndpoint); known {
+				replaces = body.OldEndpoint
+			}
+		}
+		if err != nil {
+			http.Error(w, "read push subscription: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if !known {
+			http.Error(w, "this device is not subscribed", http.StatusNotFound)
+			return
+		}
+	}
 	raw, err := db.PushVAPIDKeyIfAny()
 	if err != nil || raw == nil {
 		http.Error(w, "no push key yet: POST …/push/key first and subscribe with it", http.StatusConflict)
@@ -446,21 +471,21 @@ func handlePushSubscribe(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if body.Refresh {
-		if _, err := db.PushSubscriptionByEndpoint(sub.Endpoint); errors.Is(err, db.ErrPushSubscriptionNotFound) {
-			http.Error(w, "this device is not subscribed", http.StatusNotFound)
-			return
-		} else if err != nil {
-			http.Error(w, "read push subscription: "+err.Error(), http.StatusInternalServerError)
-			return
-		}
-	}
 	label := strings.TrimSpace(body.Label)
 	if label == "" {
 		label = deviceLabel(r.UserAgent())
 	}
 	if len(label) > 200 {
 		label = label[:200]
+	}
+	if replaces != "" {
+		dev, err := db.ReplacePushEndpoint(replaces, sub.Endpoint, sub.P256DH, sub.Auth, pushClock())
+		if err != nil {
+			http.Error(w, "store push subscription: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		writePushState(w, http.StatusOK, map[string]any{"device": dev, "new": false})
+		return
 	}
 	dev, isNew, err := db.UpsertPushSubscription(sub.Endpoint, sub.P256DH, sub.Auth, label, pushClock())
 	if err != nil {
@@ -471,6 +496,16 @@ func handlePushSubscribe(w http.ResponseWriter, r *http.Request) {
 		slog.Info("push: device subscribed", "device", dev.ID, "label", dev.Label)
 	}
 	writePushState(w, http.StatusOK, map[string]any{"device": dev, "new": isNew})
+}
+
+// pushEndpointKnown reports whether a device with that endpoint is
+// subscribed.
+func pushEndpointKnown(endpoint string) (bool, error) {
+	_, err := db.PushSubscriptionByEndpoint(endpoint)
+	if errors.Is(err, db.ErrPushSubscriptionNotFound) {
+		return false, nil
+	}
+	return err == nil, err
 }
 
 // deviceLabel names a device from its browser's User-Agent: "iPhone ·

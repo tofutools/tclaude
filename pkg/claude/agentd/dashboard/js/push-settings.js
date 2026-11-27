@@ -127,7 +127,7 @@ export function PushSettings({ fetchImpl = globalThis.fetch, win = globalThis, n
   }, 'Notifications on.');
 
   if (!state) {
-    return html`<div class="push-settings">${error ? html`<p class="push-settings-error" role="alert">${error}</p>` : html`<p class="ui-hint">Loading…</p>`}</div>`;
+    return html`<div class="push-settings">${error ? html`<p class="ui-error-box" role="alert">${error}</p>` : html`<p class="ui-hint">Loading…</p>`}</div>`;
   }
   const devices = Array.isArray(state.devices) ? state.devices : [];
   return html`<div class="push-settings">
@@ -168,6 +168,6 @@ export function PushSettings({ fetchImpl = globalThis.fetch, win = globalThis, n
           <${Button} size="sm" disabled=${busy} onClick=${() => test(d.id)}>Test<//>
           <${Button} size="sm" variant="danger" disabled=${busy} onClick=${() => remove(d.id)}>Remove<//>
         </li>`)}</ul>`}
-    ${error && html`<p class="push-settings-error" role="alert">${error}</p>`}
+    ${error && html`<p class="ui-error-box" role="alert">${error}</p>`}
   </div>`;
 }

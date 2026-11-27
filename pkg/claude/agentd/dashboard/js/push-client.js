@@ -76,11 +76,15 @@ function postJSON(fetchImpl, path, body) {
   });
 }
 
-// registration is the service worker's registration, registering it first.
+// registration is the service worker's registration, registering it first,
+// once its worker is active: a push manager refuses to subscribe while the
+// worker is still installing (Chrome: "no active Service Worker").
 async function registration(win) {
   const sw = win.navigator.serviceWorker;
   const existing = await sw.getRegistration(SW_URL);
-  return existing || sw.register(SW_URL, { scope: '/' });
+  if (!existing) await sw.register(SW_URL, { scope: '/' });
+  if (existing?.active) return existing;
+  return sw.ready;
 }
 
 // currentSubscription is this browser's push subscription, or null.
@@ -127,7 +131,16 @@ export async function subscribeThisDevice({ fetchImpl = globalThis.fetch, win = 
 // a subscribed device. Only a known device is refreshed: one the operator
 // removed (from here or elsewhere) stays removed, and its subscription is
 // dropped here too. A subscription for an old key is replaced.
-export async function refreshThisDevice({ fetchImpl = globalThis.fetch, win = globalThis } = {}) {
+//
+// One refresh runs at a time: the boot and the settings both ask, and two
+// key-change re-subscribes at once would race each other.
+let refreshing = null;
+export function refreshThisDevice(opts = {}) {
+  if (!refreshing) refreshing = refreshOnce(opts).finally(() => { refreshing = null; });
+  return refreshing;
+}
+
+async function refreshOnce({ fetchImpl = globalThis.fetch, win = globalThis } = {}) {
   const sub = await currentSubscription(win);
   if (!sub) return 0;
   const response = await postJSON(fetchImpl, '/api/push/devices', subscriptionBody(sub, '', { refresh: true }, win));
@@ -136,13 +149,16 @@ export async function refreshThisDevice({ fetchImpl = globalThis.fetch, win = gl
     return 0;
   }
   if (response.status === 409) {
-    // The node's key changed: subscribe again with the new one, as the
-    // same device, without asking (permission is already granted).
+    // A device agentd knows, subscribed for an old key: subscribe again
+    // with the current one and move the device onto it, without asking
+    // (permission is already granted).
+    const oldEndpoint = sub.endpoint;
     const { public_key: key } = await json(await postJSON(fetchImpl, '/api/push/key'));
     await sub.unsubscribe().catch(() => {});
     const reg = await registration(win);
     const fresh = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: fromB64url(key, win) });
-    const state = await json(await postJSON(fetchImpl, '/api/push/devices', subscriptionBody(fresh, key, {}, win)));
+    const state = await json(await postJSON(fetchImpl, '/api/push/devices',
+      subscriptionBody(fresh, key, { refresh: true, old_endpoint: oldEndpoint }, win)));
     return state?.device?.id || 0;
   }
   const state = await json(response);

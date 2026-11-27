@@ -17,6 +17,8 @@ function fakeWindow({ secure = true, ua = 'Mozilla/5.0 (X11; Linux) Chrome/140',
   const pushManager = {
     getSubscription: async () => subscription,
     subscribe: async (opts) => {
+      // As Chrome and Safari: no subscribing while the worker installs.
+      if (!registration.active) throw new Error('Subscription failed - no active Service Worker');
       log.push(['subscribe', btoa(String.fromCharCode(...opts.applicationServerKey))]);
       subscription = {
         endpoint: 'https://fcm.googleapis.com/fcm/send/abc',
@@ -27,14 +29,25 @@ function fakeWindow({ secure = true, ua = 'Mozilla/5.0 (X11; Linux) Chrome/140',
       return subscription;
     },
   };
-  const registration = { pushManager };
+  // register() resolves while the worker is still installing; ready
+  // resolves once it is active, a turn later.
+  const registration = { pushManager, active: null };
+  let activate;
+  const ready = new Promise((resolve) => { activate = resolve; });
   const win = {
     isSecureContext: secure,
     navigator: {
       userAgent: ua, standalone, platform: 'Linux',
       serviceWorker: {
         getRegistration: async () => (registered ? registration : undefined),
-        register: async (url, opts) => { registered = true; log.push(['register', url, opts.scope]); return registration; },
+        register: async (url, opts) => {
+          registered = true;
+          log.push(['register', url, opts.scope]);
+          return registration;
+        },
+        // The worker activates once something waits for it: code that
+        // subscribes without waiting always hits the installing worker.
+        get ready() { registration.active = {}; activate(registration); return ready; },
         addEventListener: () => {}, removeEventListener: () => {},
       },
     },
@@ -46,7 +59,7 @@ function fakeWindow({ secure = true, ua = 'Mozilla/5.0 (X11; Linux) Chrome/140',
     matchMedia: () => ({ matches: standalone }),
     btoa: (s) => btoa(s), atob: (s) => atob(s),
   };
-  return { win, log, setSubscription: (s) => { subscription = s; } };
+  return { win, log, setSubscription: (s) => { subscription = s; registered = true; registration.active = {}; activate(registration); } };
 }
 
 function pushState(over = {}) {
@@ -59,8 +72,11 @@ function pushState(over = {}) {
 }
 
 // fakeAgentd answers the push routes and records every call.
-function fakeAgentd(log, { state = pushState(), refresh = 404 } = {}) {
+// fakeAgentd answers /api/push* as agentd does: a refresh updates only a
+// device it knows (by endpoint, or the old_endpoint it replaces), else 404.
+function fakeAgentd(log, { state = pushState(), refresh = 0 } = {}) {
   let current = state;
+  const known = new Set();
   return async (url, init = {}) => {
     const method = init.method || 'GET';
     const body = init.body ? JSON.parse(init.body) : null;
@@ -69,10 +85,15 @@ function fakeAgentd(log, { state = pushState(), refresh = 404 } = {}) {
     if (url === '/api/push' && method === 'GET') return ok(current);
     if (url === '/api/push/key') return ok({ public_key: KEY });
     if (url === '/api/push/devices' && body?.refresh) {
-      if (refresh !== 200) return { ok: false, status: refresh, json: async () => ({}), text: async () => 'no' };
+      const isKnown = known.has(body.endpoint) || known.has(body.old_endpoint);
+      const status = refresh || (isKnown ? 200 : 404);
+      if (status !== 200) return { ok: false, status, json: async () => ({}), text: async () => 'no' };
+      known.delete(body.old_endpoint);
+      known.add(body.endpoint);
       return ok({ ...current, device: { id: 7 } });
     }
     if (url === '/api/push/devices') {
+      known.add(body.endpoint);
       current = { ...current, devices: [{ id: 7, label: 'Linux · Chrome', created_at: '2026-11-27T10:00:00Z' }] };
       return ok({ ...current, device: { id: 7 }, new: true });
     }
@@ -81,6 +102,7 @@ function fakeAgentd(log, { state = pushState(), refresh = 404 } = {}) {
       return ok(current);
     }
     if (url.startsWith('/api/push/devices/') && method === 'DELETE') {
+      known.clear();
       current = { ...current, devices: [] };
       return ok(current);
     }
@@ -142,10 +164,10 @@ test('a subscription for an old key is replaced on the next app open', async (t)
   const { refreshThisDevice, subscribeThisDevice } = await harness.importDashboardModule('js/push-client.js');
   const log = [];
   const { win } = fakeWindow({ log });
-  await subscribeThisDevice({ fetchImpl: fakeAgentd(log), win });
+  const agentd = fakeAgentd(log);
+  await subscribeThisDevice({ fetchImpl: agentd, win });
   log.length = 0;
   let refreshed = false;
-  const agentd = fakeAgentd(log);
   const fetchImpl = async (url, init = {}) => {
     const body = init.body ? JSON.parse(init.body) : null;
     if (url === '/api/push/devices' && body?.refresh && !refreshed) {
@@ -157,6 +179,22 @@ test('a subscription for an old key is replaced on the next app open', async (t)
   assert.equal(await refreshThisDevice({ fetchImpl, win }), 7);
   assert.deepEqual(log.filter((e) => e[0] === 'unsubscribe' || e[0] === 'subscribe').map((e) => e[0]), ['unsubscribe', 'subscribe']);
   assert.ok(!log.some((e) => e[0] === 'permission'), 'no prompt: permission is already granted');
+  const repost = log.filter((e) => e[1] === '/api/push/devices').at(-1)[2];
+  assert.equal(repost.refresh, true, 'the re-subscribe is a refresh: it moves the known device, never adds one');
+  assert.equal(repost.old_endpoint, 'https://fcm.googleapis.com/fcm/send/abc');
+});
+
+test('the boot and the settings refreshing at once make one call', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { refreshThisDevice, subscribeThisDevice } = await harness.importDashboardModule('js/push-client.js');
+  const log = [];
+  const { win } = fakeWindow({ log });
+  const agentd = fakeAgentd(log);
+  await subscribeThisDevice({ fetchImpl: agentd, win });
+  log.length = 0;
+  const [a, b] = await Promise.all([refreshThisDevice({ fetchImpl: agentd, win }), refreshThisDevice({ fetchImpl: agentd, win })]);
+  assert.deepEqual([a, b], [7, 7]);
+  assert.equal(log.filter((e) => e[1] === '/api/push/devices').length, 1);
 });
 
 test('the settings: this device, the categories, content-free and the devices', async (t) => {

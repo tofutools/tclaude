@@ -63,6 +63,7 @@ type pushNote struct {
 	// asker and question name an operator question's asker (its sender
 	// and group) and its title, for the per-asker collapse.
 	asker    string
+	who      string
 	question string
 }
 
@@ -105,10 +106,9 @@ func collapseQuestion(note *pushNote, now time.Time) string {
 	w.count++
 	w.last = now
 	if w.count > 1 {
-		who := strings.TrimSpace(strings.ReplaceAll(note.asker, "\x00", " · "))
-		who = strings.TrimSuffix(who, " ·")
+		who := note.who
 		if who == "" {
-			who = "An agent"
+			who = "an agent"
 		}
 		note.title = fmt.Sprintf("tclaude: %d questions from %s", w.count, who)
 		note.body = "Latest: " + note.question

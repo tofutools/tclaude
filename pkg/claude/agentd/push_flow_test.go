@@ -590,3 +590,57 @@ func TestPush_CarriesTheBrowserQueueID(t *testing.T) {
 	require.Len(t, banners, 1)
 	assert.Equal(t, banners[0].ID, got[0].Payload.BN, "the push names the open tab's banner")
 }
+
+// Scenario: the browser rotates a device's subscription
+// (pushsubscriptionchange). The refresh naming the old endpoint moves the
+// device onto the new one: same device, pushes reach the new endpoint. A
+// refresh is answered by "is this device known" before any key check, so a
+// device the operator removed gets 404, even when its subscription was made
+// for an old key (it would otherwise get a 409 and subscribe anew).
+func TestPush_RefreshMovesARotatedDeviceAndNeverRevivesARemovedOne(t *testing.T) {
+	p := newPushFixture(t)
+	id := p.svc.subscribe(t, p.dashboard, "phone")
+
+	key, err := ecdh.P256().GenerateKey(rand.Reader)
+	require.NoError(t, err)
+	auth := make([]byte, 16)
+	_, _ = rand.Read(auth)
+	p.svc.mu.Lock()
+	p.svc.devices["phone-rotated"] = &fakeDevice{name: "phone-rotated", key: key, auth: auth}
+	p.svc.mu.Unlock()
+	refresh := func(endpoint, old, appKey string) *httptest.ResponseRecorder {
+		return testharness.Serve(p.dashboard, testharness.JSONRequest(t, http.MethodPost, "/api/push/devices", map[string]any{
+			"endpoint":               p.svc.srv.URL + "/push/" + endpoint,
+			"keys":                   map[string]string{"p256dh": base64.RawURLEncoding.EncodeToString(key.PublicKey().Bytes()), "auth": base64.RawURLEncoding.EncodeToString(auth)},
+			"refresh":                true,
+			"old_endpoint":           old,
+			"application_server_key": appKey,
+		}))
+	}
+
+	rec := refresh("phone-rotated", p.svc.srv.URL+"/push/phone", "")
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var out struct {
+		Device struct {
+			ID int64 `json:"id"`
+		} `json:"device"`
+		New bool `json:"new"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &out))
+	assert.Equal(t, id, out.Device.ID, "the same device, moved")
+	assert.False(t, out.New)
+	rec = testharness.Serve(p.dashboard, testharness.JSONRequest(t, http.MethodPost, "/api/push/test", nil))
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	got := drainPushes(t, p.svc, 1)
+	assert.Equal(t, "phone-rotated", got[0].Device)
+
+	rec = testharness.Serve(p.dashboard, testharness.JSONRequest(t, http.MethodDelete, "/api/push/devices/"+strconv.FormatInt(id, 10), nil))
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	other, err := webpush.NewVAPID()
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusNotFound, refresh("phone-rotated", "", "").Code, "a removed device stays removed")
+	assert.Equal(t, http.StatusNotFound, refresh("phone-rotated", "", other.PublicKey()).Code,
+		"an old-key subscription of a removed device gets 404, not the 409 that re-subscribes")
+	assert.Equal(t, http.StatusNotFound, refresh("phone-rotated", p.svc.srv.URL+"/push/phone", "").Code,
+		"naming a removed old endpoint does not revive it")
+}
