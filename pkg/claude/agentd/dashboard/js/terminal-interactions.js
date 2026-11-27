@@ -274,9 +274,36 @@ export function screenRows(term) {
   const rows = [];
   for (let y = top; y < end; y++) {
     const line = buffer.getLine(y);
-    rows.push({ row: y, cells: line ? rowCells(line, 0, term.cols) : [], wrapped: !!line?.isWrapped });
+    const row = { row: y, cells: line ? rowCells(line, 0, term.cols) : [], wrapped: !!line?.isWrapped };
+    const uris = line ? rowHyperlinks(term, line, term.cols) : null;
+    if (uris) row.uris = uris;
+    rows.push(row);
   }
   return rows;
+}
+
+// rowHyperlinks is the OSC 8 target of each of a row's cells ('' for none),
+// or null when the row has none. A harness that hard-wraps a long URL (Claude
+// Code's Ink breaks it with real line breaks, indenting each row it carries
+// on) still wraps every piece in an OSC 8 hyperlink to the whole URL, and tmux
+// passes it on (webTerminalTmuxFeatures), so this is the only place the full
+// address survives. xterm.js has no public read of a cell's hyperlink: its own
+// OSC 8 link provider reads the cell's urlId and asks its link service, and
+// so does this. Without either (another xterm build, a test's fake cells) a
+// row reads as having none, and the text rules (screenLinks) still apply.
+function rowHyperlinks(term, line, cols) {
+  const service = term?._core?._oscLinkService;
+  if (!service || typeof service.getLinkData !== 'function') return null;
+  let out = null;
+  for (let x = 0; x < cols; x++) {
+    const id = line.getCell(x)?.extended?.urlId;
+    if (!id) continue;
+    const uri = service.getLinkData(id)?.uri;
+    if (!uri) continue;
+    out ||= new Array(cols).fill('');
+    out[x] = uri;
+  }
+  return out;
 }
 
 export function shouldArmTmuxClipboard(drag, event, mouseTrackingMode) {
@@ -375,6 +402,199 @@ export function visibleLocalFileLinks(text) {
     links.push({ text: raw, start, end: start + raw.length });
   }
   return links;
+}
+
+// screenLines joins rows (screenRows) into logical lines: a soft-wrapped row
+// continues the line before it, and a line's trailing padding is dropped.
+// Each line keeps, per row, its cells and the text index each column starts
+// at, so a cell maps to a place in its line (indexAt), and per text index the
+// OSC 8 target drawn there ('' for none).
+export function screenLines(rows) {
+  const lines = [];
+  for (const r of rows || []) {
+    let line = r.wrapped ? lines[lines.length - 1] : null;
+    if (!line) { line = { text: '', rows: [], uris: [] }; lines.push(line); }
+    const offsets = [];
+    let text = '';
+    r.cells.forEach((cell, col) => {
+      offsets.push(line.text.length + text.length);
+      text += cell;
+      for (let k = 0; k < cell.length; k++) line.uris.push(r.uris?.[col] || '');
+    });
+    line.rows.push({ row: r.row, offsets, cells: r.cells });
+    line.text += text;
+  }
+  for (const line of lines) {
+    line.text = line.text.replace(/\s+$/, '');
+    line.uris.length = line.text.length;
+  }
+  return lines;
+}
+
+const URL_RE = /https?:\/\/[^\s"'<>`]+/gi;
+
+// linksIn is the links a line's text shows, in order: http(s) URLs as the
+// desktop's web links take them (credentials refused, safeTerminalLink), and
+// the file paths it recovers from plain cells (visibleLocalFileLinks). Each is
+// { start, end, text, kind }; a URL also keeps rawEnd, where it ran to before
+// its trailing punctuation came off.
+export function linksIn(text) {
+  const out = [];
+  for (const match of String(text || '').matchAll(URL_RE)) {
+    const raw = trimPathPunctuation(match[0]);
+    if (safeTerminalLink(raw)?.kind === 'http') {
+      out.push({ start: match.index, end: match.index + raw.length, rawEnd: match.index + match[0].length, text: raw, kind: 'http' });
+    }
+  }
+  for (const file of visibleLocalFileLinks(text)) {
+    if (!out.some((o) => file.start < o.end && o.start < file.end)) out.push({ ...file, kind: 'file' });
+  }
+  return out.sort((a, b) => a.start - b.start);
+}
+
+// What may follow a hard-wrapped URL's piece on its row: nothing, the padding
+// column Ink leaves inside a box, a box's right border, or both.
+const WRAP_TAIL_RE = /^ ?[│┃║]?$/;
+// What a carried-on row may start with before the URL continues: the indent
+// a harness gives a wrapped paragraph, a box's left border and its padding.
+const WRAP_LEAD_RE = /^[ │┃║▎]{0,6}/;
+// The characters a URL is written in (RFC 3986's, and the % of an escape).
+const URL_CHARS_RE = /^[A-Za-z0-9\-._~:/?#[\]@!$&'()*+,;=%]+/;
+
+// endsAtEdge is whether the text before end (an index in line.text) is drawn
+// up to its last row's right edge, but for what WRAP_TAIL_RE allows after it.
+function endsAtEdge(line, end, cols) {
+  const row = line.rows[line.rows.length - 1];
+  if (!row || row.cells.length < cols || !WRAP_TAIL_RE.test(line.text.slice(end))) return false;
+  let col = -1;
+  for (let c = 0; c < row.offsets.length; c++) if (row.cells[c] !== '' && row.offsets[c] < end) col = c;
+  if (col < 0 || row.offsets[col] + row.cells[col].length !== end) return false;
+  return WRAP_TAIL_RE.test(row.cells.slice(col + 1).join(''));
+}
+
+// oscRuns is a line's OSC 8 hyperlinks: each run of cells drawn with one
+// target, as { start, end, text: target, kind, osc }. The target, not the
+// cells, is the link: a hard-wrapped URL's every piece carries all of it.
+function oscRuns(line) {
+  const out = [];
+  for (let i = 0; i < line.uris.length;) {
+    const uri = line.uris[i];
+    let j = i + 1;
+    while (j < line.uris.length && line.uris[j] === uri) j++;
+    if (uri) out.push({ start: i, end: j, text: uri, kind: safeTerminalLink(uri)?.kind || 'http', osc: true });
+    i = j;
+  }
+  return out;
+}
+
+// screenLinks is each of lines' links (screenLines), in order:
+//
+//   OSC 8 hyperlinks first: what a harness says a run of cells links to.
+//   Then the text's own (linksIn), where no hyperlink is drawn.
+//   And a URL hard-wrapped by its harness (Ink breaks a word longer than the
+//   row with a real newline, and indents the rows it carries on) becomes one
+//   link: each piece is a link to the whole URL (segments lists them all).
+//
+// A URL is carried onto the next line only when all of these hold, so plain
+// text is never glued onto a link: the URL runs to the right edge (WRAP_TAIL_
+// RE's padding or border aside); the next line is the next row, has no
+// hyperlinks of its own, and after at most WRAP_LEAD_RE's indent goes on in
+// URL characters that do not start a URL of their own; and the URL so far
+// plus that piece is longer than a row, as a word wrapper would otherwise
+// have moved it whole onto the next row rather than broken it.
+export function screenLinks(lines) {
+  const cols = Math.max(0, ...lines.flatMap((l) => l.rows.map((r) => r.cells.length)));
+  const out = lines.map((line) => {
+    const osc = oscRuns(line);
+    return [...osc, ...linksIn(line.text).filter((l) => !osc.some((o) => l.start < o.end && o.start < l.end))]
+      .sort((a, b) => a.start - b.start);
+  });
+  for (let i = 0; i < lines.length; i++) {
+    const head = out[i][out[i].length - 1];
+    if (!head || head.kind !== 'http' || head.osc || head.segments || !endsAtEdge(lines[i], head.rawEnd, cols)) continue;
+    const segments = [{ line: i, start: head.start, end: head.rawEnd }];
+    let joined = lines[i].text.slice(head.start, head.rawEnd);
+    for (let j = i; j + 1 < lines.length; j++) {
+      const next = lines[j + 1];
+      if (next.rows[0].row !== lines[j].rows[lines[j].rows.length - 1].row + 1 || next.uris.some(Boolean)) break;
+      const lead = next.text.match(WRAP_LEAD_RE)[0];
+      const rest = next.text.slice(lead.length);
+      const piece = /^https?:\/\//i.test(rest) ? '' : rest.match(URL_CHARS_RE)?.[0];
+      if (!piece || joined.length + piece.length <= cols - lead.length) break;
+      segments.push({ line: j + 1, start: lead.length, end: lead.length + piece.length });
+      joined += piece;
+      if (!endsAtEdge(next, lead.length + piece.length, cols)) break;
+    }
+    if (segments.length < 2) continue;
+    const text = trimPathPunctuation(joined);
+    if (safeTerminalLink(text)?.kind !== 'http') continue;
+    const last = segments[segments.length - 1];
+    last.end -= joined.length - text.length;
+    if (last.end <= last.start) segments.pop();
+    for (const seg of segments) {
+      const link = { start: seg.start, end: seg.end, text, kind: 'http', segments };
+      out[seg.line] = [...out[seg.line].filter((l) => !(l.start < seg.end && seg.start < l.end)), link]
+        .sort((a, b) => a.start - b.start);
+    }
+  }
+  return out;
+}
+
+// hardWrappedLinkProvider links a URL its harness hard-wrapped over several
+// rows, by screenLinks' rules, on the desktop's xterm: hovering any piece
+// highlights the whole URL (one range from its first piece to its last) and
+// Ctrl/Cmd-click opens all of it. A hyperlinked or one-row URL is left to
+// xterm's own OSC 8 links and the web-links addon. Registered before that
+// addon, so its one-row match of the first piece does not win.
+const HARD_WRAP_ROWS = 12;
+export function hardWrappedLinkProvider(term, handlers) {
+  return {
+    provideLinks(y, callback) {
+      const buffer = term.buffer.active;
+      const at = y - 1;
+      const from = Math.max(0, at - HARD_WRAP_ROWS);
+      const to = Math.min(buffer.length ?? at + 1, at + HARD_WRAP_ROWS + 1);
+      const rows = [];
+      for (let row = from; row < to; row++) {
+        const line = buffer.getLine(row);
+        if (!line) break;
+        const r = { row, cells: rowCells(line, 0, term.cols), wrapped: row > from && !!line.isWrapped };
+        const uris = rowHyperlinks(term, line, term.cols);
+        if (uris) r.uris = uris;
+        rows.push(r);
+      }
+      const lines = screenLines(rows);
+      const cellOf = (seg, index) => {
+        const line = lines[seg.line];
+        for (const r of line.rows) {
+          const col = r.offsets.findIndex((o, c) => o === index && r.cells[c] !== '');
+          if (col >= 0) return { x: col + 1, y: r.row + 1 };
+        }
+        return null;
+      };
+      const seen = new Set();
+      const links = [];
+      for (const lineLinks of screenLinks(lines)) {
+        for (const link of lineLinks) {
+          if (!link.segments || seen.has(link.segments)) continue;
+          seen.add(link.segments);
+          const first = link.segments[0];
+          const last = link.segments[link.segments.length - 1];
+          const start = cellOf(first, first.start);
+          const end = cellOf(last, last.end - 1);
+          if (!start || !end || y < start.y || y > end.y) continue;
+          links.push({
+            text: link.text,
+            range: { start, end },
+            activate: handlers.activate,
+            hover: handlers.hover,
+            leave: handlers.leave,
+          });
+        }
+      }
+      callback(links);
+    },
+  };
 }
 
 function stringBoundaryToCell(line, index) {
@@ -868,6 +1088,11 @@ export function attachTerminalInteractions({
     allowNonHttpProtocols: true,
   };
   term.options.linkHandler = linkHandler; // explicit OSC 8 hyperlinks
+  // Before the web-links addon: a hard-wrapped URL's first row would
+  // otherwise match there on its own, as just the part on that row.
+  if (typeof term.registerLinkProvider === 'function') {
+    disposables.push(term.registerLinkProvider(hardWrappedLinkProvider(term, linkHandler)));
+  }
   if (globalThis.WebLinksAddon && globalThis.WebLinksAddon.WebLinksAddon) {
     term.loadAddon(new globalThis.WebLinksAddon.WebLinksAddon(
       (event, uri) => activateLink(event, uri), linkHandler,

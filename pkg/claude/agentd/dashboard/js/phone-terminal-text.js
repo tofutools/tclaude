@@ -13,8 +13,10 @@
 //   Select    the screen as it was, as text the phone's own handles select,
 //             links tappable as on the terminal, Copy selection / Copy screen
 //
-// What a phone links is what the desktop links from visible text: an http(s)
-// URL, and an absolute path or file:// URL (visibleLocalFileLinks); and it is
+// What a phone links is what the desktop links: an OSC 8 hyperlink's target,
+// and from visible text an http(s) URL (one its harness hard-wrapped over
+// rows as all of it, screenLinks) and an absolute path or file:// URL
+// (visibleLocalFileLinks); and it is
 // followed under the desktop's rules (widget.link / followLink: a file only
 // where this view may download it). Under tmux the screen is all xterm holds,
 // so Select has what is on screen (a swiped-back view included), not the
@@ -24,7 +26,7 @@ import { useBackLayer } from './back-layers.js';
 import { h } from 'preact';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
-import { safeTerminalLink, trimPathPunctuation, visibleLocalFileLinks } from './terminal-interactions.js';
+import { linksIn, screenLines, screenLinks } from './terminal-interactions.js';
 import { openPhoneSheet, phoneSheet } from './phone-sheet.js';
 
 const html = htm.bind(h);
@@ -35,27 +37,10 @@ const SLOP_PX = 10;
 // A tap is a touch lifted sooner than this.
 const TAP_MS = 350;
 
-// screenLines joins screen rows into logical lines: a soft-wrapped row
-// continues the line before it, and a line's trailing padding is dropped.
-// Each line keeps, per row, the text index each column starts at, so a cell
-// maps to a place in its line (indexAt).
-export function screenLines(rows) {
-  const lines = [];
-  for (const r of rows || []) {
-    let line = r.wrapped ? lines[lines.length - 1] : null;
-    if (!line) { line = { text: '', rows: [] }; lines.push(line); }
-    const offsets = [];
-    let text = '';
-    for (const cell of r.cells) {
-      offsets.push(line.text.length + text.length);
-      text += cell;
-    }
-    line.rows.push({ row: r.row, offsets });
-    line.text += text;
-  }
-  for (const line of lines) line.text = line.text.replace(/\s+$/, '');
-  return lines;
-}
+// screenLines, linksIn and screenLinks (terminal-interactions.js) are the
+// desktop's own model of the rows on screen: logical lines, and the links on
+// each, a hard-wrapped or hyperlinked URL as all of its address.
+export { linksIn, screenLines, screenLinks };
 
 // indexAt is where a cell ({ row, col }, widget.cellAt) falls in lines:
 // { line, index }, or null past a line's end.
@@ -70,28 +55,11 @@ export function indexAt(lines, cell) {
   return null;
 }
 
-const URL_RE = /https?:\/\/[^\s"'<>`]+/gi;
-
-// linksIn is the links a line shows, in order: http(s) URLs as the desktop's
-// web links take them (credentials refused, safeTerminalLink), and the file
-// paths it recovers from plain cells (visibleLocalFileLinks). Each is
-// { start, end, text, kind }.
-export function linksIn(text) {
-  const out = [];
-  for (const match of String(text || '').matchAll(URL_RE)) {
-    const raw = trimPathPunctuation(match[0]);
-    if (safeTerminalLink(raw)?.kind === 'http') out.push({ start: match.index, end: match.index + raw.length, text: raw, kind: 'http' });
-  }
-  for (const file of visibleLocalFileLinks(text)) {
-    if (!out.some((o) => file.start < o.end && o.start < file.end)) out.push({ ...file, kind: 'file' });
-  }
-  return out.sort((a, b) => a.start - b.start);
-}
-
-// linkAt is the link at a place in lines ({ line, index }), or null.
-export function linkAt(lines, at) {
+// linkAt is the link at a place in lines ({ line, index }), or null: for a
+// URL its harness wrapped over rows, the whole URL, from any of its pieces.
+export function linkAt(lines, at, links = null) {
   if (!at) return null;
-  return linksIn(lines[at.line]?.text).find((l) => at.index >= l.start && at.index < l.end) || null;
+  return (links || screenLinks(lines))[at.line]?.find((l) => at.index >= l.start && at.index < l.end) || null;
 }
 
 // wordAt is the run of non-space characters at index in text, as [start,
@@ -195,13 +163,14 @@ export function openLinkSheet(link, { widget, copy }) {
 
 // Line is one line of Select: its text, with each link a tappable span (a
 // span keeps the text selectable across it, as a button would not).
-function Line({ text, index, onLink }) {
+// A piece of a URL wrapped over lines shows its own text and opens the whole.
+function Line({ text, links, index, onLink }) {
   const parts = [];
   let at = 0;
-  for (const link of linksIn(text)) {
+  for (const link of links) {
     if (link.start > at) parts.push(text.slice(at, link.start));
     parts.push(html`<span class="phone-term-link" role="link" tabindex="0" data-link=${link.kind}
-      onClick=${() => onLink(link)} onKeyDown=${(e) => { if (e.key === 'Enter') onLink(link); }}>${link.text}</span>`);
+      onClick=${() => onLink(link)} onKeyDown=${(e) => { if (e.key === 'Enter') onLink(link); }}>${text.slice(link.start, link.end)}</span>`);
     at = link.end;
   }
   if (at < text.length) parts.push(text.slice(at));
@@ -266,6 +235,7 @@ export function TerminalText({ lines, picked = null, onLink, copy, onClose }) {
     return () => d?.removeEventListener('keydown', key);
   }, []);
   const all = lines.map((l) => l.text).join('\n').replace(/\n+$/, '');
+  const links = screenLinks(lines);
   return html`<div class="phone-term-text" role="dialog" aria-modal="true" aria-label="Select text">
     <header class="phone-term-bar">
       <button data-ui-exempt type="button" class="phone-bar-back" aria-label="Back to the terminal" onClick=${onClose}>‹</button>
@@ -273,7 +243,7 @@ export function TerminalText({ lines, picked = null, onLink, copy, onClose }) {
       <button data-ui-exempt type="button" class="phone-term-text-done" onClick=${onClose}>Done</button>
     </header>
     <div class="phone-term-text-body" ref=${body}>
-      ${lines.map((line, i) => html`<${Line} key=${i} index=${i} text=${line.text} onLink=${onLink} />`)}
+      ${lines.map((line, i) => html`<${Line} key=${i} index=${i} text=${line.text} links=${links[i]} onLink=${onLink} />`)}
     </div>
     <div class="phone-term-text-foot">
       <button data-ui-exempt type="button" class="ui-btn phone-btn" disabled=${!all} onClick=${() => copy(all, 'the screen')}>Copy screen</button>
