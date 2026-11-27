@@ -116,6 +116,12 @@ test('a Links row dragged onto the trash bin is removed behind the usual confirm
     target.dispatchEvent(event);
     return event;
   };
+  // Link #2 is drawn at both ends: opening then folding beta's end
+  // unregisters its row, and alpha's row must still reach the bin.
+  const betaToggle = () => section('beta').querySelector('.gf-section-toggle');
+  await harness.act(() => harness.fireEvent(betaToggle(), 'click'));
+  assert.ok(section('beta').querySelector('tr[data-group-link="2"]'));
+  await harness.act(() => harness.fireEvent(betaToggle(), 'click'));
   const row = section('alpha').querySelector('tr[data-group-link="2"]');
   assert.equal(JSON.parse(row.dataset.dndResource).kind, 'link');
   fire('dragstart', row);

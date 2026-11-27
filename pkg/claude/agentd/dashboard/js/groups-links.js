@@ -69,10 +69,13 @@ function LinkRow({ row, group, draggable }) {
   const fields = { 'data-id': link.id, 'data-group': group, 'data-from': link.from, 'data-to': link.to };
   const removeTitle = wizard ? 'Sever this arcane channel' : 'Remove this link';
   // A drop on the trash bin is the 🗑: the same confirmation, then the delete.
+  // A link is drawn at both its ends, so each end's row has its own key: one
+  // end folding (unregistering) leaves the other's drag working.
+  const dragKey = `${link.id}@${group}`;
   useEffect(() => (draggable
-    ? registerResourceRemover(`link:${link.id}`, () => deleteLink({ id: link.id, from: link.from, to: link.to, scope: group }))
-    : undefined), [draggable, link.id, link.from, link.to, group]);
-  const dragAttrs = draggable ? { draggable: 'true', 'data-dnd-resource': JSON.stringify({ kind: 'link', id: link.id, label: `${link.from} → ${link.to}`, group }) } : {};
+    ? registerResourceRemover(`link:${dragKey}`, () => deleteLink({ id: link.id, from: link.from, to: link.to, scope: group }))
+    : undefined), [draggable, dragKey, link.from, link.to, group]);
+  const dragAttrs = draggable ? { draggable: 'true', 'data-dnd-resource': JSON.stringify({ kind: 'link', id: dragKey, label: `${link.from} → ${link.to}`, group }) } : {};
   return html`<tr class="gr-trow" data-group-link=${link.id} ...${dragAttrs}>
     <td class="gr-ctl"><span class="agent-ctl gr-acts"><span class="row-actions">
       <${Button} size="sm" icon=${true} class="icon-btn gl-edit" data-act="link-edit" ...${fields} data-mode=${link.mode}
