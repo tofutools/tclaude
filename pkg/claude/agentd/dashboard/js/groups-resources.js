@@ -106,15 +106,17 @@ export function sortResourceRows(rows) {
 // table's, and the same for the processes' table above the runs and the
 // other resources' table below them, so those two line up with each other.
 // head shows the header row (only on the first of the two); its headers sort.
-export function ResourceTable({ head = true, attrs = {}, children }) {
-  const active = tableSortState(RESOURCE_SORT, RESOURCE_COLS);
+// Another section in the same look (a group's Links, groups-links.js) passes
+// its own cols, sort table and rest column (the one taking the spare width).
+export function ResourceTable({ head = true, attrs = {}, cols = RESOURCE_COLS, sort = RESOURCE_SORT, restCol = 'detail', children }) {
+  const active = tableSortState(sort, cols);
   // A caller's class adds to the table's own: without ui-table-auto its
   // tracks would not apply, and the two tables would not line up.
   const { class: extra = '', ...rest } = attrs;
   const cls = ['gr-rtable', 'ui-table-auto', ...String(extra).split(/\s+/).filter((c) => c && c !== 'gr-rtable')].join(' ');
   return html`<table class=${cls} ...${rest}>
-    <${ColGroup} cols=${RESOURCE_COLS} colClass=${(c) => `${c.key === 'detail' ? 'ui-col-rest' : 'ui-col-track'} gr-col-${c.key}`} />
-    ${head && html`<${TableHead} cols=${RESOURCE_COLS} activeCol=${active?.col} dir=${active?.dir} sortTable=${RESOURCE_SORT} />`}
+    <${ColGroup} cols=${cols} colClass=${(c) => `${c.key === restCol ? 'ui-col-rest' : 'ui-col-track'} gr-col-${c.key}`} />
+    ${head && html`<${TableHead} cols=${cols} activeCol=${active?.col} dir=${active?.dir} sortTable=${sort} />`}
     <tbody>${children}</tbody>
   </table>`;
 }

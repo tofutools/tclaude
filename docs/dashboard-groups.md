@@ -112,8 +112,9 @@ options open** in the group's ⚙ menu.
 | 💰 | Default usage profile | Pick one |
 | 🔗 | Links, when the group has any | Open them |
 
-Inside the group are folding sections: **Subgroups**, **Agents** and
-**Resources**. Each remembers whether you folded it, per group. **Subgroups**
+Inside the group are folding sections: **Subgroups**, **Agents**,
+**Resources**, the **Task board** and **Links**. Each remembers whether you
+folded it, per group. **Subgroups**
 has one button: create a subgroup. **Agents** has three: spawn into this
 group, 🟢 power on everyone offline, and 🛑 shut down everyone running.
 **Resources** has the **＋** menu, resume all and pause all; resume and pause act
@@ -123,7 +124,10 @@ on the first row under the line (the member table's header, for Agents) while
 it is open. A click on a button on a folded line opens the section too, so
 what you create shows up.
 
-Below the sections is the group's list of links, with **+ link**.
+**Links** lists the links into and out of the group, with a → out / ← in
+count on its line. It starts open with up to three links and folded with more.
+Its **＋** adds a link from this group; ✎ on a row changes the link's mode, and
+🗑, or dragging the row onto the trash bin, removes it after a confirmation.
 
 ### The group ⚙ menu
 

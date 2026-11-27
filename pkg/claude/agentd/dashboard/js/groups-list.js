@@ -33,6 +33,7 @@ import {
 import { fusedSectionsRevision, setGroupBoxOpen, subgroupsSectionAuto, subgroupsSectionOpen } from './groups-fused-sections.js';
 import { recordGroupInteraction } from './last-group.js';
 import { TaskboardSection } from './groups-taskboard.js';
+import { GroupLinksSection } from './groups-links.js';
 import { featureState } from './feature-state-registry.js';
 import { firstUnreadHumanNotification } from './human-notification-attention.js';
 import { groupQueuedSpawns } from './queued-spawns.js';
@@ -630,21 +631,6 @@ function ForceBlock({ group }) {
       return html`<span key=${member.agent_id || member.conv_id} class=${`force-member force-member-${liveness}`} title=${`${name} — ${liveness}${pct ? ` · context ${pct}%` : ''}`}>${liveness === 'working' ? '●' : liveness === 'idle' ? '○' : '✕'} ${name}${pct ? html` <span class="force-member-ctx">${pct}%</span>` : null}</span>`;
     })}</span></div>`)}</div>` : null}
     <div class="force-controls"><${Button} size="sm" class="force-rebrief-btn" data-act="rebrief-force" data-group=${group.name} data-label=${group.name} title="Re-brief the force — re-deliver the source template's current work pattern to the live roster, with the mission interpolated. Useful when the roster drifted or the original briefing scrolled out of context.">↻ re-brief<//><${Button} size="sm" variant="danger" class="force-standdown-btn" data-act="stand-down-force" data-group=${group.name} data-label=${group.name} title="Stand down the force — the mirror of deploy. Retires every member and sweeps the deploy-seeded rhythms + pending waves, keeping the group as a dormant record (mission & history preserved). Not a delete.">⏻ stand down<//></div>
-  </div>`;
-}
-
-function GroupLinksSection({ group, snapshot }) {
-  const links = snapshot?.links || [];
-  const rows = [
-    ...links.filter((link) => link.from === group.name).map((link) => ({ link, direction: 'out' })),
-    ...links.filter((link) => link.to === group.name).map((link) => ({ link, direction: 'in' })),
-  ];
-  return html`<div class="group-links-section">
-    ${rows.length ? html`<strong style="font-size:11px"><${ThemeText} regular="Links" wizard="Arcane channels" /></strong><table><thead><tr><th></th><th><${ThemeText} regular="Other group" wizard="Other party" /></th><th>Mode</th><th></th></tr></thead><tbody>${rows.map(({ link, direction }) => {
-      const other = direction === 'out' ? link.to : link.from;
-      return html`<tr key=${`${direction}-${link.id}`}><td><span class="muted">${direction === 'out' ? '→' : '←'}</span></td><td><span class="rowname">${other || '(deleted)'}</span></td><td><span class="id">${link.mode}</span></td><td><div class="row-actions"><${Button} size="sm" data-act="link-edit" data-id=${link.id} data-group=${group.name} data-from=${link.from} data-to=${link.to} data-mode=${link.mode} title=${isWizardActive() ? 'Rebind this arcane channel' : "Change this link's mode"}><${ThemeText} regular="edit" wizard="rebind" /><//><${Button} size="sm" variant="ghost danger" data-act="link-delete" data-id=${link.id} data-group=${group.name} data-from=${link.from} data-to=${link.to} title=${isWizardActive() ? 'Sever this arcane channel' : 'Remove this link'}>×<//></div></td></tr>`;
-    })}</tbody></table>` : html`<span class="muted" style="font-size:11px"><${ThemeText} regular="No links involving this group." wizard="No arcane channels are woven to or from this party." /></span>`}
-    <${Button} size="sm" data-act="link-new" data-group=${group.name} data-from=${group.name} data-label=${group.name} title=${isWizardActive() ? 'Weave an outbound arcane channel from this party' : 'Add an outbound link from this group'}><${ThemeText} regular="+ link" wizard="+ weave channel" /><//>
   </div>`;
 }
 

@@ -589,7 +589,7 @@ for (const status of ['idle', 'unavailable']) {
     const { root, details } = await mountFocus(t, { fused: true, sourceOptions: { status, context: null } });
     assert.ok(details('frontend-squad').querySelector('table'), 'members show');
     assert.ok(details('frontend-squad').querySelector('[data-act="spawn-agent"]'));
-    assert.equal(root.querySelector('[data-fused-section]:not([data-fused-section="subgroups"])'), null, 'no Agents/Processes sections without runs');
+    assert.equal(root.querySelector('[data-fused-section="agents"], [data-fused-section="processes"]'), null, 'no Agents/Processes sections without runs');
     assert.equal(root.querySelector('.groups-processes-placeholder'), null);
   });
 }
