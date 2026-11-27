@@ -394,7 +394,9 @@ func TestRoutesBroker_OrdinaryConsumerExitClosesItsLease(t *testing.T) {
 			LaunchGeneration: lease["consumer_launch_generation"].(string), GroupGeneration: int64(lease["group_generation"].(float64)),
 		}
 	}
-	b := agentd.NewGroupRouteBrokerForTest()
+	// Authority is checked only where the test ticks: a polled check that
+	// overran its interval on a loaded runner failed the survivor closed.
+	b, authority := agentd.NewGroupRouteBrokerManualAuthorityForTest()
 	t.Cleanup(func() { require.NoError(t, b.Close()) })
 	publisherBroker, publisherPeer := net.Pipe()
 	exitingBroker, exitingPeer := net.Pipe()
@@ -431,6 +433,10 @@ func TestRoutesBroker_OrdinaryConsumerExitClosesItsLease(t *testing.T) {
 	open, err := db.GetAgentRouteLease(survivorLease["id"].(string))
 	require.NoError(t, err)
 	require.Equal(t, db.RouteLeaseOpen, open.State)
+	// Every channel's watcher is running, so one tick reaches each: the
+	// exiting consumer's check fails and the others' pass.
+	require.Eventually(t, func() bool { return authority.Channels() == 3 }, time.Second, time.Millisecond)
+	authority.Tick()
 
 	_ = exitingPeer.SetReadDeadline(time.Now().Add(time.Second))
 	_, readErr := exitingPeer.Read(make([]byte, 1))

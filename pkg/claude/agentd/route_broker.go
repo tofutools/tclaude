@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
@@ -59,6 +60,59 @@ func NewGroupRouteBrokerForTest() *routebroker.Broker {
 		panic(err)
 	}
 	return broker
+}
+
+// RouteAuthorityTicksForTest runs a test broker's authority checks when the
+// test says, not on the wall clock (NewGroupRouteBrokerManualAuthorityForTest).
+type RouteAuthorityTicksForTest struct {
+	mu    sync.Mutex
+	ticks []chan time.Time
+}
+
+// Channels is how many channels' watchers have started: each takes one
+// ticker, so a Tick after it reaches the count reaches every one of them.
+func (m *RouteAuthorityTicksForTest) Channels() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return len(m.ticks)
+}
+
+// Tick asks every attached channel to check its authority once. A watcher
+// that has ended, or still has a tick pending, drops it, as a ticker does.
+func (m *RouteAuthorityTicksForTest) Tick() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, c := range m.ticks {
+		select {
+		case c <- time.Now():
+		default:
+		}
+	}
+}
+
+// NewGroupRouteBrokerManualAuthorityForTest is NewGroupRouteBrokerForTest
+// with authority checked only on ticks.Tick. A polled check is bounded by its
+// interval, so a healthy channel whose SQLite read overran 50ms on a loaded
+// CI runner failed closed mid-test. Here a check runs only where the test
+// asks, and its bound is a minute: only a hung authority fails it.
+func NewGroupRouteBrokerManualAuthorityForTest() (*routebroker.Broker, *RouteAuthorityTicksForTest) {
+	ticks := &RouteAuthorityTicksForTest{}
+	broker, err := routebroker.New(routebroker.Config{
+		Authorizer:             databaseRouteAuthority{},
+		AuthorityCheckInterval: time.Minute,
+		AuthorityTicker: func() (<-chan time.Time, func()) {
+			c := make(chan time.Time, 1)
+			ticks.mu.Lock()
+			ticks.ticks = append(ticks.ticks, c)
+			ticks.mu.Unlock()
+			return c, func() {}
+		},
+		OnEvent: routeAdapterBrokerEvent,
+	})
+	if err != nil {
+		panic(err)
+	}
+	return broker, ticks
 }
 
 // databaseRouteAuthority binds the platform-neutral channel seam to M1's
