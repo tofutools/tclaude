@@ -110,12 +110,12 @@ func pushRequest(method, path string, in, out any, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "Error:", err)
 		var de *DaemonError
 		if errors.As(err, &de) {
-			switch {
-			case de.Status == http.StatusNotFound:
+			switch de.Status {
+			case http.StatusNotFound:
 				return rcNotFound
-			case de.Status == http.StatusForbidden || de.Status == http.StatusUnauthorized:
+			case http.StatusForbidden, http.StatusUnauthorized:
 				return rcAuth
-			case de.Status == http.StatusBadRequest || de.Status == http.StatusConflict:
+			case http.StatusBadRequest, http.StatusConflict:
 				return rcInvalidArg
 			}
 		}
