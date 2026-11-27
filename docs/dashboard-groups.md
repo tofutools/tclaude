@@ -110,7 +110,6 @@ options open** in the group's ⚙ menu.
 | 🧠 | Default spawn profile | Pick one |
 | 🛡 | Default sandbox profile | Pick one |
 | 💰 | Default usage profile | Pick one |
-| 🔗 | Links, when the group has any | Open them |
 
 Inside the group are folding sections: **Subgroups**, **Agents**,
 **Resources**, the **Task board** and **Links**. Each remembers whether you
@@ -126,7 +125,7 @@ what you create shows up.
 
 **Links** lists the links into and out of the group, with a → out / ← in
 count on its line. It starts open with up to three links and folded with more.
-Its **＋** adds a link from this group; ✎ on a row changes the link's mode, and
+Its **＋**, on the section line whether folded or open, adds a link from this group; ✎ on a row changes the link's mode, and
 🗑, or dragging the row onto the trash bin, removes it after a confirmation.
 
 ### The group ⚙ menu
