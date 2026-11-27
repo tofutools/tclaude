@@ -11,9 +11,9 @@
 import { h } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
-import { answerDecision, decideAccessRequest, secondsLeft } from './companion-approval.js';
+import { answerDecision, decideAccessRequest } from './companion-approval.js';
 import { postDismiss } from './decision-dismiss.js';
-import { approvalContext, cardOptions, countdown, planDetails } from './phone-now-model.js';
+import { ago, approvalAsk, approvalTiming, cardOptions, countdown, waitWords } from './phone-now-model.js';
 import { openPhoneSheet, requestClosePhoneSheet } from './phone-sheet.js';
 import { DiscardAsk, useDraftGuard } from './phone-draft-guard.js';
 import { Button, Input } from './ui-components.js';
@@ -41,16 +41,19 @@ function useNow(enabled) {
   return now;
 }
 
-// PhoneApprovalCard is an agent's pending access request. Tapping its text
-// opens the request in Mail (onMore), where its details and "Always allow"
-// are. decide(id, decision) replaces the default call (Mail's controller,
-// which updates its list at once).
+// PhoneApprovalCard is an agent's pending access request: who asks, how much
+// and when, every permission it asks for (wrapped, never cut), the agent's
+// reason, and both clocks: when it is declined unanswered and how long the
+// agent still waits. "+5 min" shows only while it can still buy time (see
+// approvalTiming). Tapping its text opens the request in Mail (onMore), where
+// its details and "Always allow" are. decide(id, decision) replaces the
+// default call (Mail's controller, which updates its list at once).
 export function PhoneApprovalCard({ request, fetchImpl, notify, from = '', group = '', ctxState = null, onMore = null, decide: decideWith = null, moreLabel = '' }) {
   const [busy, setBusy] = useState('');
   const now = useNow(!!request.deadline);
-  const left = secondsLeft(request.deadline, now);
+  const { left, waitLeft, extendable, ceilingSecs } = approvalTiming(request, now);
   const expired = left === 0;
-  const plan = String(request.perm || '').startsWith('sudo.');
+  const ask = approvalAsk(request);
   const name = from || request.conv_title || 'An agent';
   async function decide(decision) {
     setBusy(decision);
@@ -64,14 +67,11 @@ export function PhoneApprovalCard({ request, fetchImpl, notify, from = '', group
       setBusy('');
     }
   }
-  const context = approvalContext(request);
-  // A plan's reason is its own line: the plan line already carries the
-  // permissions and how long they last.
-  const details = plan ? planDetails(request) : null;
-  const reason = details?.ok ? details.reason : '';
-  const text = html`<${Who} name=${name} sub=${group || request.target_group || ''} ctxState=${ctxState} /><div class="phone-card-line">${context}</div>
-    ${reason && html`<div class="phone-card-line phone-plan-reason">“${reason}”</div>`}`;
-  return html`<${Card} accent="key" class="phone-now-card" role="group" aria-label=${`${name} asks: ${context}${reason ? `, because: ${reason}` : ''}`}>
+  const when = ago(request.created_at, now);
+  const meta = `asks ${ask.meta}${when ? ` · ${when}` : ''}`;
+  const text = html`<${Who} name=${name} sub=${group || request.target_group || ''} ctxState=${ctxState} /><div class="phone-card-line phone-approval-meta">${meta}</div>`;
+  const label = `${name} ${ask.title}${ask.why ? (ask.plan ? `, because: ${ask.why}` : `: ${ask.why}`) : ''}`;
+  return html`<${Card} accent="key" class="phone-now-card phone-approval-card" role="group" aria-label=${label}>
     <div class="phone-card-row">
       <${Avatar} bot glyph="🤖" badge="🔑" />
       ${onMore
@@ -79,11 +79,18 @@ export function PhoneApprovalCard({ request, fetchImpl, notify, from = '', group
         : html`<div class="phone-card-text">${text}</div>`}
       ${left !== null && html`<${StatePill} tone="key" title="Declined automatically when this runs out">${expired ? 'timing out' : countdown(left)}<//>`}
     </div>
+    ${ask.slugs.length > 0 && html`<div class="phone-approval-slugs" aria-label="Permissions">${ask.slugs.map((slug) => html`<code key=${slug} class="phone-approval-slug">${slug}</code>`)}</div>`}
+    ${ask.why && html`<div class="phone-approval-why">${ask.plan ? `“${ask.why}”` : ask.why}</div>`}
+    ${left !== null && html`<div class="phone-approval-timing">
+      <span>${expired ? 'Declining…' : html`Auto-denies in <b>${countdown(left)}</b>`}</span>
+      ${waitLeft !== null && html`<span>${extendable ? `agent waits ${countdown(waitLeft)}` : 'agent stops waiting then'}</span>`}
+    </div>`}
     <${ButtonRow} buttons=${[
       { key: 'deny', label: busy === 'deny' ? 'Denying…' : 'Deny', tone: 'no', disabled: !!busy || expired, onClick: () => decide('deny') },
-      { key: 'extend', label: '+5 min', title: 'Push the auto-decline back five minutes', disabled: !!busy || expired, onClick: () => decide('extend') },
-      { key: 'approve', label: busy === 'approve' ? 'Approving…' : plan ? 'Approve plan' : 'Approve', tone: 'ok', disabled: !!busy || expired, onClick: () => decide('approve') },
+      ...(extendable ? [{ key: 'extend', label: '+5 min', title: 'Push the auto-decline back five minutes, as far as the agent waits', disabled: !!busy || expired, onClick: () => decide('extend') }] : []),
+      { key: 'approve', label: busy === 'approve' ? 'Approving…' : 'Approve', tone: 'ok', disabled: !!busy || expired, onClick: () => decide('approve') },
     ]} />
+    ${!extendable && !expired && ceilingSecs > 0 && html`<div class="phone-approval-note">Can't be extended: the agent asked to wait ${waitWords(ceilingSecs)}.</div>`}
   <//>`;
 }
 

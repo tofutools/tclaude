@@ -45,7 +45,8 @@ import { createMessageAccessDialogActions } from './message-access-dialog-action
 import { openPhoneCompose } from './phone-compose-sheet.js';
 import { openPhoneSheet } from './phone-sheet.js';
 import { DecisionAnswer, PhoneApprovalCard } from './phone-approval.js';
-import { planDetails } from './phone-now-model.js';
+import { approvalAsk, planDetails } from './phone-now-model.js';
+import { accessTiming, clockTime, slugDescriptions } from './phone-access-facts.js';
 import { shellToast } from './shell-state.js';
 import { trustLock } from './lock-reason.js';
 import { usePhoneBar, usePhonePage } from './phone-page.js';
@@ -666,20 +667,25 @@ function AccessReader({ controller, item, active, back }) {
   useLayoutEffect(() => { globalThis.scrollTo?.(0, 0); }, [item.id]);
   // A sudo plan's body is agentd's "Sudo request:" preview; read as facts
   // (what, how long, why) it replaces the raw body. A body not in that shape
-  // stays raw.
+  // stays raw. The endpoint is left out: the permissions already say what the
+  // request is for, and a path means nothing to approve by.
   const plan = String(item.perm || '').startsWith('sudo.') ? planDetails(item) : null;
   const planned = !!plan?.ok;
+  const ask = approvalAsk(item);
+  const described = slugDescriptions(dashboardState.snapshot.value?.slugs);
   const rows = [
-    ...(planned
-      ? [['Permissions', plan.slugs.join(', '), true], ['For', plan.duration], ['Reason', plan.reason]]
-      : [['Permission', item.perm, true]]),
-    ['Endpoint', item.path, true], ['Group', item.target_group],
+    ...(planned ? [['For', `${plan.duration}${plan.duration ? ', from when you approve' : ''}`], ['Reason', plan.reason]] : []),
+    ['Group', item.target_group],
     ['Target', item.target_conv_title || item.target_conv_id], ['Scope', item.scope_display, true],
+    ['Timing', accessTiming(item)],
   ].filter(([, value]) => value);
   return html`<div class="phone-mail-reader phone-mail-read">
-    <h1 class="phone-mail-title">${controller.accessSubject(item)}</h1>
+    <h1 class="phone-mail-title">${lapsed ? controller.accessSubject(item) : `${who} ${ask.title}`}</h1>
+    ${item.created_at && html`<p class="phone-mail-access-meta">asked at ${clockTime(item.created_at)}</p>`}
     <${PhoneApprovalCard} request=${item} from=${who} notify=${shellToast} decide=${decideThrough(controller)} />
-    <dl class="phone-mail-facts">${rows.map(([k, v, mono]) => html`<div key=${k}><dt>${k}</dt><dd class=${mono ? 'mono' : undefined}>${v}</dd></div>`)}
+    <dl class="phone-mail-facts">
+      ${ask.slugs.length > 0 && html`<div><dt>${ask.slugs.length === 1 ? 'Permission' : 'Permissions'}</dt><dd>${ask.slugs.map((slug) => html`<div key=${slug} class="phone-mail-perm"><code>${slug}</code>${described.get(slug) && html`<span>${described.get(slug)}</span>`}</div>`)}</dd></div>`}
+      ${rows.map(([k, v, mono]) => html`<div key=${k}><dt>${k}</dt><dd class=${mono ? 'mono' : undefined}>${v}</dd></div>`)}
       ${item.body && !planned && html`<div><dt>${item.body_label || 'Body'}</dt><dd><pre class="phone-mail-pre">${item.body}</pre></dd></div>`}</dl>
     ${item.auto_grantable && html`<${ButtonRow} class="phone-mail-always" buttons=${[
       ...(item.scope_display ? [{ key: 'scoped', label: `Always allow — ${item.scope_display}`, title: `Approve now, and from now on for ${item.scope_display} only`,

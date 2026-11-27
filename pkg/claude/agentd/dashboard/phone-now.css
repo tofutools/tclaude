@@ -35,6 +35,23 @@
 }
 :root[data-layout="phone"] .phone-star { color: #e3b341; }
 
+/* An access request's card: every permission as a wrapping chip (never cut),
+   the agent's reason over up to three lines, then the two clocks. */
+:root[data-layout="phone"] .phone-approval-slugs { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 0; }
+:root[data-layout="phone"] .phone-approval-slug {
+  padding: 2px 7px; border-radius: 7px; border: 1px solid var(--phone-line); background: var(--phone-panel2);
+  color: var(--ui-text-strong); font: 13px/18px ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere;
+}
+:root[data-layout="phone"] .phone-approval-why {
+  margin-top: 8px; color: var(--ui-text); font-size: 14px; overflow-wrap: anywhere;
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
+}
+:root[data-layout="phone"] .phone-approval-timing {
+  display: flex; justify-content: space-between; gap: 8px; margin-top: 8px; color: var(--ui-muted-text); font-size: 13px;
+}
+:root[data-layout="phone"] .phone-approval-timing b { color: #e3b341; font-variant-numeric: tabular-nums; }
+:root[data-layout="phone"] .phone-approval-note { margin-top: 8px; color: var(--ui-muted-text); font-size: 12.5px; }
+
 /* A decision in full (its ⋯ sheet). */
 :root[data-layout="phone"] .phone-sheet-head { display: flex; align-items: flex-start; gap: 8px; }
 :root[data-layout="phone"] .phone-sheet-close {

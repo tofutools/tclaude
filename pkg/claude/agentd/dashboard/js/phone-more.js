@@ -4,6 +4,7 @@
 // the desktop site, and Update tclaude (phone-update.js).
 
 import { h } from 'preact';
+import { useEffect, useState } from 'preact/hooks';
 import htm from 'htm';
 import { footerMetaView } from './shell-model.js';
 import { MORE_TABS } from './phone-shell-model.js';
@@ -13,6 +14,9 @@ import { featureState } from './feature-state-registry.js';
 import { openSettingsSection } from './phone-config-island.js';
 import { openPhoneSheet } from './phone-sheet.js';
 import { UpdateSheet, canUpdateHere } from './phone-update.js';
+import { accessAlertsChange, accessAlertsOn } from './phone-access-alerts.js';
+import { requestBrowserNotifyPermission } from './browser-notify.js';
+import { shellToast } from './shell-state.js';
 
 const html = htm.bind(h);
 
@@ -41,6 +45,52 @@ function Entry({ icon, label, after = null, end = null, danger = false, disabled
   </button></li>`;
 }
 
+// AccessAlertsEntry is "Alert me on access requests": one tap sets the
+// three notification settings an access-request banner needs on a phone
+// (phone-access-alerts.js), and asks this browser for permission from that
+// tap. It reads the settings when More opens, and shows nothing until then.
+export function AccessAlertsEntry({ notify = () => {}, fetchImpl = globalThis.fetch, win = globalThis }) {
+  const [settings, setSettings] = useState(null);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    let live = true;
+    if (typeof fetchImpl !== 'function') return undefined;
+    Promise.resolve().then(() => fetchImpl('/api/notifications', { credentials: 'same-origin' }))
+      .then((response) => (response.ok ? response.json() : null))
+      .then((body) => { if (live && body) setSettings(body); })
+      .catch(() => {});
+    return () => { live = false; };
+  }, []);
+  if (!settings) return null;
+  const on = accessAlertsOn(settings);
+  const flip = async () => {
+    setBusy(true);
+    try {
+      const response = await fetchImpl('/api/notifications', {
+        method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(accessAlertsChange(settings, !on)),
+      });
+      if (!response.ok) throw new Error((await response.text()) || `HTTP ${response.status}`);
+      setSettings(await response.json());
+      if (!on) {
+        const permission = await requestBrowserNotifyPermission(win);
+        notify(permission === 'granted'
+          ? 'Access requests now alert this phone while the app is open.'
+          : 'Alerts are on, but this browser has not allowed notifications.', permission !== 'granted');
+      } else {
+        notify('Access-request alerts off.');
+      }
+    } catch (error) {
+      notify(`Could not change access-request alerts: ${error?.message || error}`, true);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return html`<${Entry} icon="🔑" label="Alert me on access requests" disabled=${busy} onClick=${flip}
+    title="Raise a notification on this phone when an agent asks for access (while the app is open)"
+    end=${html`<span class="phone-menu-end phone-menu-note">${busy ? '…' : on ? 'on' : 'off'}</span>`} />`;
+}
+
 // MoreMenu is the More sheet: the node chip, every other tab with what a
 // phone can do there, the power actions, notifications and the layout switch.
 export function MoreMenu({ state, actions, close, fleet = null, doctor = featureState('doctor') }) {
@@ -67,6 +117,7 @@ export function MoreMenu({ state, actions, close, fleet = null, doctor = feature
       <${Entry} icon="🛑" label="Shut down all…" danger onClick=${() => run(actions.shutdownAll)} />
       <${Entry} icon="🔔" label="Notifications" onClick=${() => openNotifications(go)}
         end=${snap && html`<span class="phone-menu-end phone-menu-note">${notifying ? 'on' : 'off'}</span>`} />
+      <${AccessAlertsEntry} notify=${shellToast} />
       <${Entry} icon="⬆" label="Update tclaude" disabled=${!updatable} title=${updatable ? undefined : 'This node does not let you update it (needs node.update)'}
         onClick=${() => openPhoneSheet({ label: 'Update tclaude', Body: UpdateSheet, props: { navigate: actions.navigate } })}
         end=${!updatable && html`<span class="phone-menu-end phone-menu-note">needs node.update</span>`} />

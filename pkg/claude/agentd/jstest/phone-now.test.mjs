@@ -82,7 +82,7 @@ test('an access request is an amber card: countdown, Deny / +5 min / Approve, an
   // earlier tests run, and a slow run read 0:40.
   const deadline = new Date(Date.now() + 42_500).toISOString();
   const { harness, root, calls, posts, tap } = await setup(t, { ...SNAPSHOT, access_requests: [{ ...SNAPSHOT.access_requests[0], deadline }] });
-  const card = harness.getByRole(root, 'group', { name: 'payments-fix asks: git.push: push PR #4351' });
+  const card = harness.getByRole(root, 'group', { name: 'payments-fix asks for git.push: push PR #4351' });
   assert.ok(card.classList.contains('phone-box-key'));
   assert.equal(card.querySelector('.phone-av-badge').textContent, '🔑');
   // What is left is 42.5 s less however long setup took (a loaded run takes

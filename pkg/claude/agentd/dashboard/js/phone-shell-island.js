@@ -38,6 +38,7 @@ import { SearchSheet } from './phone-search.js';
 import { NowView } from './phone-now.js';
 import { BoardView, boardRequest, openBoardTask } from './phone-board.js';
 import { MoreMenu } from './phone-more.js';
+import { pendingAccessCount, syncAppBadge } from './phone-access-alerts.js';
 import { navBadge, navShown, terminalDock } from './phone-nav-toggle.js';
 import { Chevron } from './chevron-icon.js';
 import { STEWARD_FAB_SLOTS, StewardFab } from './phone-steward.js';
@@ -99,6 +100,10 @@ export function PhoneShell({ shell, state, actions, boardSource, fetchImpl = glo
   // hidden the nav (js/phone-nav-toggle.js).
   const waiting = needs + (mail.hidden ? 0 : Number(snapshot?.messages_unread || 0) + Number(snapshot?.access_requests_pending || 0));
   useEffect(() => { navBadge.value = waiting; }, [waiting]);
+  // The installed app's icon counts the access requests waiting on the
+  // operator (phone-access-alerts.js), so one is seen without opening it.
+  const accessWaiting = pendingAccessCount(snapshot);
+  useEffect(() => { void syncAppBadge(accessWaiting); }, [accessWaiting]);
   const connection = state.connection.value.status;
   // A pushed page (js/phone-page.js): back, title and actions in the top
   // bar, and maybe no bottom nav. A page shows over the view it was pushed

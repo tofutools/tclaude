@@ -179,3 +179,10 @@
 :root[data-layout="phone"] .phone-mail-decision { margin-top: 18px; }
 /* Decide opens its box: no space above it. */
 :root[data-layout="phone"] .phone-mail-decision .phone-sheet-subhead { margin-top: 0; }
+
+/* An access request's reader: when it was asked, and each permission with
+   what it means. */
+:root[data-layout="phone"] .phone-mail-access-meta { margin: -4px 0 10px; color: var(--ui-muted-text); font-size: 13px; }
+:root[data-layout="phone"] .phone-mail-perm { margin: 2px 0 6px; white-space: normal; }
+:root[data-layout="phone"] .phone-mail-perm code { display: block; font: 14px ui-monospace, SFMono-Regular, Menlo, monospace; }
+:root[data-layout="phone"] .phone-mail-perm span { display: block; color: var(--ui-muted-text); font-size: 13px; }
