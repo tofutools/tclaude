@@ -139,6 +139,7 @@ export const contextHigh = (agent) => agent?.ctx !== null && agent?.ctx !== unde
 // sheet, nowSettings) each is by group A–Z first, then most recent first.
 export function nowView(snapshot, { byGroup = false } = {}) {
   const facts = agentFacts(snapshot);
+  const archived = new Set((snapshot?.groups || []).filter((group) => group?.archived).map((group) => group.name));
   const agents = [...companionAgents(snapshot).values()].map((agent) => {
     const { ctx = null, ctxState = null, pr = null } = facts.get(agent.agentId) || {};
     return { ...agent, ctx, ctxState, pr };
@@ -166,8 +167,9 @@ export function nowView(snapshot, { byGroup = false } = {}) {
     resting,
     online: agents.filter((agent) => agent.online),
     // Offline members: Problems lists one whose open PR's checks fail, as
-    // nobody is iterating on it.
-    offline: agents.filter((agent) => !agent.online).sort(byRecency),
+    // nobody is iterating on it. An archived group's are left out: the
+    // operator put that work away.
+    offline: agents.filter((agent) => !agent.online && !archived.has(agent.group)).sort(byRecency),
     needs: approvals.length + elsewhere + decisions.length + asking.length,
   };
 }

@@ -72,12 +72,15 @@ function UsageStrip({ snapshot, onOpen }) {
 // terminal. heads put a heading over a row (Idle's groups, Problems' kinds),
 // and the agent's context meter sits by its state pill.
 // NowRow is one agent's row: a tap opens its terminal; a hold, or its ⋯,
-// opens its menu (phone-agent-menu.js) when onMenu is wired.
+// opens its menu (phone-agent-menu.js) when onMenu is wired. An offline
+// agent (Problems' CI rows) has no terminal to open: a tap opens its menu,
+// which can wake it, as the Groups view's rows and the board's links do.
 function NowRow({ agent, state, when, tone, onOpen, onMenu }) {
   const { holding, handlers } = useHold(onMenu ? () => onMenu(agent) : null);
+  const offline = !agent.online && onMenu;
   return html`<div class=${`phone-now-agent${holding ? ' phone-holding' : ''}`}>
-    <button data-ui-exempt type="button" class="phone-row phone-holdable" ...${handlers} onClick=${() => onOpen(agent)}
-      aria-label=${`${agent.name}, ${state}${agent.owner && agent.group ? `, owner of ${agent.group}` : ''}${contextHigh(agent) ? `, context ${agent.ctx}% full` : ''}${when ? `, ${when}` : ''}: open its terminal`}>
+    <button data-ui-exempt type="button" class="phone-row phone-holdable" ...${handlers} onClick=${() => (offline ? onMenu(agent) : onOpen(agent))}
+      aria-label=${`${agent.name}, ${state}${agent.owner && agent.group ? `, owner of ${agent.group}` : ''}${contextHigh(agent) ? `, context ${agent.ctx}% full` : ''}${when ? `, ${when}` : ''}: ${offline ? 'open its menu' : 'open its terminal'}`}>
       <span class="phone-row-text"><span class="phone-who-name">${agent.name}</span>${agent.group && html`<span class="phone-who-sub">${agent.group}</span>`}${agent.owner && agent.group && html`<span class="ui-tag ui-tag-own owner-badge" title=${`Owner of ${agent.group}`}>owner</span>`}
         ${state === 'error' && agent.detail && tone === undefined && html`<span class="phone-card-line">${agent.detail}</span>`}
         ${when && html`<span class=${`phone-now-when${tone ? ` ${tone}` : ''}`}>${when}</span>`}</span>

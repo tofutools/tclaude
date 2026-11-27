@@ -298,6 +298,29 @@ test('a nearly full context is the desktop\'s meter on rows and cards, and no pr
   assert.match(chip.textContent.replace(/\s+/g, ' ').trim(), /^Problems 2$/, 'the chip counts two, not the full contexts');
 });
 
+test('Problems lists a stopped agent\'s red PR as offline, and a tap opens its menu, not a dead terminal', async (t) => {
+  const red = (n) => ({ branch_pr_number: n, branch_pr_url: `https://github.com/o/r/pull/${n}`, branch_pr_state: 'open', branch_checks: { failed: 1, passed: 2 } });
+  const snapshot = { ...SNAPSHOT, groups: [
+    { name: 'webshop', members: [
+      { agent_id: 'agt_00000000000000000000000000000009', conv_id: 'c9', title: 'stopped', online: false, state: { status: 'idle' }, ...red(9) },
+    ] },
+    { name: 'old', archived: true, members: [
+      { agent_id: 'agt_00000000000000000000000000000008', conv_id: 'c8', title: 'shelved', online: false, state: { status: 'idle' }, ...red(8) },
+    ] },
+  ] };
+  const { harness, root, calls, tap } = await setup(t, snapshot);
+  await tap(harness.getByRole(harness.getByRole(root, 'tablist', { name: 'Show on Now' }), 'tab', { name: /^Problems/ }));
+  const problems = harness.getByRole(root, 'group', { name: 'Problems' });
+  assert.deepEqual([...problems.querySelectorAll('.phone-who-name')].map((n) => n.textContent), ['stopped'], 'an archived group\'s agent is left out');
+  assert.equal(problems.querySelector('.phone-now-when').textContent, 'PR #9 checks failing · agent offline');
+  assert.equal(problems.querySelector('.phone-pill').textContent, 'offline');
+  const row = problems.querySelector('.phone-row');
+  assert.match(row.getAttribute('aria-label'), /: open its menu$/);
+  await tap(row);
+  assert.equal(calls.at(-1)[0], 'agentMenu', 'no terminal to open for an offline agent');
+  assert.ok(!calls.some(([name]) => name === 'openTerminal'));
+});
+
 test('a row\'s label says when its context is nearly full', async (t) => {
   const snapshot = { ...SNAPSHOT, groups: [{ name: 'webshop', members: [{ ...SNAPSHOT.groups[0].members[1], state: { status: 'working', context_pct: 92 } }] }] };
   const { harness, root } = await setup(t, snapshot);
