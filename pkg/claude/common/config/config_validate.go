@@ -272,6 +272,7 @@ func validateNotifications(n *NotificationConfig) []string {
 		errs = append(errs, fmt.Sprintf("notifications.delivery %q must be one of %q, %q, %q (or absent)",
 			n.Delivery, NotifyDeliveryOS, NotifyDeliveryBrowser, NotifyDeliveryBoth))
 	}
+	errs = append(errs, validatePush(n.Push)...)
 	for i, tr := range n.Transitions {
 		if tr.From == "" || tr.To == "" {
 			errs = append(errs, fmt.Sprintf("notifications.transitions[%d] needs both from and to (use \"*\" for any state)", i))

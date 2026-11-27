@@ -2718,3 +2718,37 @@ CREATE INDEX idx_process_waiting_cards_message
 
 CREATE INDEX idx_process_waiting_cards_open
 			ON process_waiting_cards(run_id) WHERE closed_at IS NULL;
+
+CREATE TABLE push_vapid (
+			id          INTEGER PRIMARY KEY CHECK(id = 1),
+			private_key BLOB NOT NULL,
+			created_at  INTEGER NOT NULL
+		) STRICT;
+
+CREATE TABLE push_subscriptions (
+			id           INTEGER PRIMARY KEY AUTOINCREMENT,
+			endpoint     TEXT NOT NULL UNIQUE CHECK(length(endpoint) BETWEEN 1 AND 2048),
+			p256dh       TEXT NOT NULL CHECK(length(p256dh) BETWEEN 1 AND 256),
+			auth         TEXT NOT NULL CHECK(length(auth) BETWEEN 1 AND 64),
+			label        TEXT NOT NULL DEFAULT '' CHECK(length(label) <= 200),
+			created_at   INTEGER NOT NULL,
+			seen_at      INTEGER NOT NULL,
+			last_ok_at   INTEGER,
+			last_error   TEXT NOT NULL DEFAULT '',
+			failures     INTEGER NOT NULL DEFAULT 0
+		) STRICT;
+
+CREATE TABLE push_outbox (
+			id              INTEGER PRIMARY KEY AUTOINCREMENT,
+			subscription_id INTEGER NOT NULL REFERENCES push_subscriptions(id) ON DELETE CASCADE,
+			tag             TEXT NOT NULL,
+			payload         TEXT NOT NULL,
+			urgency         TEXT NOT NULL DEFAULT '',
+			created_at      INTEGER NOT NULL,
+			next_at         INTEGER NOT NULL,
+			attempts        INTEGER NOT NULL DEFAULT 0
+		) STRICT;
+
+CREATE INDEX idx_push_outbox_next ON push_outbox(next_at);
+
+CREATE INDEX idx_push_outbox_subscription ON push_outbox(subscription_id);

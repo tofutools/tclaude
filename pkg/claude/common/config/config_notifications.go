@@ -45,6 +45,10 @@ type NotificationConfig struct {
 	// written before tracking existed; it is treated as knowing
 	// notifyTypesBaseline. See MergeDefaultTypes.
 	KnownTypes []string `json:"known_types,omitempty"`
+
+	// Push is Web Push delivery to the operator's subscribed devices; see
+	// PushConfig.
+	Push *PushConfig `json:"push,omitempty"`
 }
 
 // Notification delivery channels — the accepted values of

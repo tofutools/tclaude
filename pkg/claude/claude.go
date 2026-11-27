@@ -54,6 +54,7 @@ func Cmd() *cobra.Command {
 		task.Cmd(),
 		agentCmd,
 		agent.ConfigCmd(),
+		agent.NotificationsCmd(),
 		agent.HarnessCmd(),
 		agent.UpdateCmd(),
 		agent.ServiceCmd(),

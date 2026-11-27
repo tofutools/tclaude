@@ -85,6 +85,8 @@ var configKeyClasses = []struct {
 	{"notifications", configClassGeneral},
 	// A shell command agentd runs for each notification.
 	{"notifications.notification_command", configClassLocal},
+	// Where and what Web Push sends: the operator's own devices.
+	{"notifications.push", configClassLocal},
 	{"pre_compact_guard", configClassGeneral},
 	{"log_level", configClassGeneral},
 	{"startup_timing", configClassGeneral},

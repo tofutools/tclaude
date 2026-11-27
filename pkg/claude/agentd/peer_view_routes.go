@@ -412,6 +412,10 @@ var peerViewOwnNodeRoutes = []string{
 	"/",
 	"/api/auth/session",
 	"/api/browser-notifications",
+	// Web Push is this node's operator's own devices: subscribing one,
+	// removing one, the categories, a test push and the key (push.go).
+	"GET /api/push", "POST /api/push/key", "POST /api/push/devices", "DELETE /api/push/devices/{id}",
+	"POST /api/push/config", "POST /api/push/test", "POST /api/push/reset-keys",
 	"/api/config",
 	"/api/dashboard/prefs",
 	// The tracked-author list spends this node's GitHub quota.
