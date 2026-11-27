@@ -14,7 +14,8 @@ import { featureState } from './feature-state-registry.js';
 import { openSettingsSection } from './phone-config-island.js';
 import { openPhoneSheet } from './phone-sheet.js';
 import { UpdateSheet, canUpdateHere } from './phone-update.js';
-import { accessAlertsChange, accessAlertsOn } from './phone-access-alerts.js';
+import { accessAlertsChange, accessAlertsOn, accessAlertsToast } from './phone-access-alerts.js';
+import { remoteNodeID } from './fleet-model.js';
 import { requestBrowserNotifyPermission } from './browser-notify.js';
 import { shellToast } from './shell-state.js';
 
@@ -49,22 +50,27 @@ function Entry({ icon, label, after = null, end = null, danger = false, disabled
 // three notification settings an access-request banner needs on a phone
 // (phone-access-alerts.js), and asks this browser for permission from that
 // tap. It reads the settings when More opens, and shows nothing until then.
-export function AccessAlertsEntry({ notify = () => {}, fetchImpl = globalThis.fetch, win = globalThis }) {
+export function AccessAlertsEntry({ notify = () => {}, fetchImpl = globalThis.fetch, win = globalThis, remote = !!remoteNodeID() }) {
   const [settings, setSettings] = useState(null);
   const [busy, setBusy] = useState(false);
   useEffect(() => {
     let live = true;
-    if (typeof fetchImpl !== 'function') return undefined;
+    if (remote || typeof fetchImpl !== 'function') return undefined;
     Promise.resolve().then(() => fetchImpl('/api/notifications', { credentials: 'same-origin' }))
       .then((response) => (response.ok ? response.json() : null))
       .then((body) => { if (live && body) setSettings(body); })
       .catch(() => {});
     return () => { live = false; };
   }, []);
-  if (!settings) return null;
+  // On a peer's page the settings are that node's, and its banners never
+  // reach this phone: the row belongs to this node only.
+  if (remote || !settings) return null;
   const on = accessAlertsOn(settings);
   const flip = async () => {
     setBusy(true);
+    // The browser's permission is asked first, straight from the tap: iOS
+    // Safari and Firefox drop a prompt that comes after network round trips.
+    const permission = on ? null : requestBrowserNotifyPermission(win);
     try {
       const response = await fetchImpl('/api/notifications', {
         method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
@@ -73,10 +79,8 @@ export function AccessAlertsEntry({ notify = () => {}, fetchImpl = globalThis.fe
       if (!response.ok) throw new Error((await response.text()) || `HTTP ${response.status}`);
       setSettings(await response.json());
       if (!on) {
-        const permission = await requestBrowserNotifyPermission(win);
-        notify(permission === 'granted'
-          ? 'Access requests now alert this phone while the app is open.'
-          : 'Alerts are on, but this browser has not allowed notifications.', permission !== 'granted');
+        const granted = await permission;
+        notify(accessAlertsToast(granted, win), granted !== 'granted');
       } else {
         notify('Access-request alerts off.');
       }

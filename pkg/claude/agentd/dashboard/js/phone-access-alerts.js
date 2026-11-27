@@ -11,6 +11,8 @@
 // What it cannot do is wake a locked phone: browser delivery is painted by an
 // open dashboard (browser-notify.js polls), so the app must be running.
 
+import { notificationsUnsupportedNote } from './browser-notify.js';
+
 // accessAlertsOn reports whether a notification settings block (GET
 // /api/notifications) raises a browser banner for an access request.
 export function accessAlertsOn(settings) {
@@ -27,6 +29,14 @@ export function accessAlertsChange(settings, on) {
   if (!on) return { access_requests: false };
   const delivery = settings?.delivery === 'browser' || settings?.delivery === 'both' ? settings.delivery : 'both';
   return { enabled: true, access_requests: true, delivery };
+}
+
+// accessAlertsToast is what the operator is told once alerts are on, given
+// the browser's answer to the permission prompt.
+export function accessAlertsToast(permission, win = globalThis) {
+  if (permission === 'granted') return 'Access requests now alert this phone while the app is open.';
+  if (permission === 'unsupported') return `Alerts are on for this node, but ${notificationsUnsupportedNote(win).replace(/^./, (c) => c.toLowerCase())}`;
+  return 'Alerts are on, but this browser has not allowed notifications: allow them in its site settings.';
 }
 
 // pendingAccessCount is how many access requests wait on the operator in a

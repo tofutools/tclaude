@@ -128,11 +128,38 @@ export function approvalAsk(request) {
   const details = plan ? planDetails(request) : null;
   const slugs = summary.slugs;
   const meta = plan ? (details.ok ? `for ${details.duration} of sudo` : 'for sudo') : 'once';
+  const fields = plan ? null : requestFields(request?.body);
   const why = plan
     ? (details.ok ? details.reason : '')
-    : (firstLine(request?.body) || '');
+    : (fields ? fields.map(([key, value]) => `${key}: ${value}`).join(' · ')
+      : firstLine(request?.body) || (request?.path ? `${request.method ? `${request.method} ` : ''}${request.path}` : ''));
   const title = slugs.length === 1 ? `asks for ${slugs[0]}` : `asks for ${slugs.length || 'some'} permissions`;
-  return { plan, slugs, meta, why, title, duration: details?.ok ? details.duration : '' };
+  return { plan, slugs, meta, why: why || '', title, fields, duration: details?.ok ? details.duration : '' };
+}
+
+// requestFields reads a one-off request's body as labelled fields when it is
+// a flat JSON object (the request a gated command sent, such as {"name":
+// "sudo-mobile","owner":"lead"}): [["name", "sudo-mobile"], ["owner",
+// "lead"]], with a list of plain values joined by commas. null for any other
+// shape (plain text, nested objects, nothing), which is then shown as it is.
+// Empty values are left out. Agent text, rendered as text.
+export function requestFields(body) {
+  let value;
+  try {
+    value = JSON.parse(String(body || ''));
+  } catch {
+    return null;
+  }
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const plain = (v) => ['string', 'number', 'boolean'].includes(typeof v);
+  const out = [];
+  for (const [key, v] of Object.entries(value)) {
+    if (v === null || v === '' || (Array.isArray(v) && v.length === 0)) continue;
+    if (plain(v)) out.push([key, String(v)]);
+    else if (Array.isArray(v) && v.every(plain)) out.push([key, v.map(String).join(', ')]);
+    else return null;
+  }
+  return out.length ? out : null;
 }
 
 // goDuration turns a Go duration ("30m0s", "1h30m0s", "45s") into words

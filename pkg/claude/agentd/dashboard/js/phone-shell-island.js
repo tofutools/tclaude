@@ -39,6 +39,7 @@ import { NowView } from './phone-now.js';
 import { BoardView, boardRequest, openBoardTask } from './phone-board.js';
 import { MoreMenu } from './phone-more.js';
 import { pendingAccessCount, syncAppBadge } from './phone-access-alerts.js';
+import { remoteNodeID } from './fleet-model.js';
 import { navBadge, navShown, terminalDock } from './phone-nav-toggle.js';
 import { Chevron } from './chevron-icon.js';
 import { STEWARD_FAB_SLOTS, StewardFab } from './phone-steward.js';
@@ -103,7 +104,11 @@ export function PhoneShell({ shell, state, actions, boardSource, fetchImpl = glo
   // The installed app's icon counts the access requests waiting on the
   // operator (phone-access-alerts.js), so one is seen without opening it.
   const accessWaiting = pendingAccessCount(snapshot);
-  useEffect(() => { void syncAppBadge(accessWaiting); }, [accessWaiting]);
+  // A peer's page shows that node's snapshot: its requests are not this
+  // node's to count, so the badge keeps this node's last count meanwhile.
+  useEffect(() => { if (!remoteNodeID()) void syncAppBadge(accessWaiting); }, [accessWaiting]);
+  // Leaving the phone layout leaves nothing to keep the count current.
+  useEffect(() => () => { void syncAppBadge(0); }, []);
   const connection = state.connection.value.status;
   // A pushed page (js/phone-page.js): back, title and actions in the top
   // bar, and maybe no bottom nav. A page shows over the view it was pushed

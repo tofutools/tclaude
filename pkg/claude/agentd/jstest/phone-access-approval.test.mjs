@@ -28,18 +28,35 @@ test('approvalAsk names a sudo plan and a one-off command in words', async (t) =
   const plan = approvalAsk({ perm: 'sudo.groups.create,agent.spawn,groups.members.spawn',
     body: 'Sudo request:\n  slugs:\n    - groups.create\n    - agent.spawn\n    - groups.members.spawn\n  duration: 15m0s\n  expires_at: 2026-11-27T19:04:09+01:00\n  reason: bootstrap the task force' });
   assert.deepEqual(plan, { plan: true, slugs: ['groups.create', 'agent.spawn', 'groups.members.spawn'], meta: 'for 15 min of sudo',
-    why: 'bootstrap the task force', title: 'asks for 3 permissions', duration: '15 min' });
+    why: 'bootstrap the task force', title: 'asks for 3 permissions', fields: null, duration: '15 min' });
   const once = approvalAsk({ perm: 'git.push', body: 'push PR #4351\nmore' });
   assert.equal(once.title, 'asks for git.push');
   assert.equal(once.meta, 'once');
   assert.equal(once.why, 'push PR #4351');
+  // A gated command's JSON body reads as labelled fields, not raw JSON.
+  const gate = approvalAsk({ perm: 'groups.create', body: '{"name":"sudo-mobile","owner":"lead","tags":["a","b"],"note":""}' });
+  assert.deepEqual(gate.fields, [['name', 'sudo-mobile'], ['owner', 'lead'], ['tags', 'a, b']]);
+  assert.equal(gate.why, 'name: sudo-mobile · owner: lead · tags: a, b');
+});
+
+test('requestFields reads only a flat JSON object; anything else stays as it is', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { requestFields } = await harness.importDashboardModule('js/phone-now-model.js');
+  assert.deepEqual(requestFields('{"n":1,"ok":true}'), [['n', '1'], ['ok', 'true']]);
+  assert.equal(requestFields('push PR #1'), null, 'plain text');
+  assert.equal(requestFields('{"spec":{"deep":1}}'), null, 'a nested object is an unknown shape');
+  assert.equal(requestFields('[1,2]'), null);
+  assert.equal(requestFields('{}'), null);
+  assert.equal(requestFields(''), null);
 });
 
 test('the reader\'s facts: the two clocks as clock times, and each slug\'s first sentence', async (t) => {
   const harness = await createPreactHarness(t);
   const facts = await harness.importDashboardModule('js/phone-access-facts.js');
   assert.match(facts.accessTiming({ deadline: at(40), wait_ceiling: at(580) }), /^Auto-denies [^·]+ · agent waits until [^·]+$/);
-  assert.match(facts.accessTiming({ deadline: at(85), wait_ceiling: at(85) }), /^Auto-denies [^·]+$/);
+  assert.match(facts.accessTiming({ deadline: at(85), wait_ceiling: at(85) }), /^Auto-denies [^·]+ · the agent stops waiting then$/);
+  assert.match(facts.accessTiming({ deadline: at(85) }), /^Auto-denies [^·]+$/, 'an older agentd names no ceiling');
+  assert.match(facts.accessTiming({ deadline: at(40), wait_ceiling: at(580) }, NOW), /^Auto-denies [^·(]+ \(0:40\) · agent waits until [^·]+$/, 'the time left rides along');
   assert.equal(facts.accessTiming({}), '');
   const described = facts.slugDescriptions([{ slug: 'agent.spawn', description: 'Spawn a fresh agent into any group globally. Group-scoped authority uses groups.members.spawn.' }, { slug: 'x' }]);
   assert.equal(described.get('agent.spawn'), 'Spawn a fresh agent into any group globally.');
@@ -102,9 +119,10 @@ test('More\'s "Alert me on access requests" turns on all three settings with one
     return { ok: true, json: async () => settings, text: async () => '' };
   };
   let asked = 0;
-  const win = { isSecureContext: true, Notification: Object.assign(function Notification() {}, { requestPermission: async () => { asked++; return 'granted'; } }) };
+  let postsWhenAsked = -1;
+  const win = { isSecureContext: true, Notification: Object.assign(function Notification() {}, { requestPermission: async () => { asked++; postsWhenAsked = posts.length; return 'granted'; } }) };
   const toasts = [];
-  const { container } = await harness.mount(harness.html`<ul><${AccessAlertsEntry} fetchImpl=${fetchImpl} win=${win} notify=${(m) => toasts.push(m)} /></ul>`);
+  const { container } = await harness.mount(harness.html`<ul><${AccessAlertsEntry} remote=${false} fetchImpl=${fetchImpl} win=${win} notify=${(m) => toasts.push(m)} /></ul>`);
   // Settle the settings read (a few promise hops), bounded.
   const settled = async (ok) => { for (let i = 0; i < 50 && !ok(); i++) await harness.act(async () => {}); };
   await settled(() => container.querySelector('button'));
@@ -115,9 +133,28 @@ test('More\'s "Alert me on access requests" turns on all three settings with one
   await settled(() => container.querySelector('.phone-menu-note')?.textContent === 'on');
   assert.deepEqual(posts, [{ enabled: true, access_requests: true, delivery: 'both' }]);
   assert.equal(asked, 1, 'the tap asks this browser for permission');
+  assert.equal(postsWhenAsked, 0, 'asked before any network round trip, while the tap still counts as a gesture');
   assert.equal(container.querySelector('.phone-menu-note').textContent, 'on');
   assert.match(toasts.at(-1), /alert this phone/);
   await harness.act(async () => { container.querySelector('button').click(); });
   await settled(() => posts.length === 2);
   assert.deepEqual(posts.at(-1), { access_requests: false }, 'off leaves every other notification alone');
+});
+
+test('the More row is this node\'s only: on a peer\'s page it is not shown and reads nothing', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { AccessAlertsEntry } = await harness.importDashboardModule('js/phone-more.js');
+  let fetched = 0;
+  const { container } = await harness.mount(harness.html`<ul><${AccessAlertsEntry} remote=${true} fetchImpl=${async () => { fetched++; return { ok: true, json: async () => ({}) }; }} /></ul>`);
+  await harness.act(async () => {});
+  assert.equal(container.querySelector('button'), null);
+  assert.equal(fetched, 0);
+});
+
+test('the alerts toast says what the operator can do about it', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { accessAlertsToast } = await harness.importDashboardModule('js/phone-access-alerts.js');
+  assert.match(accessAlertsToast('granted'), /alert this phone/);
+  assert.match(accessAlertsToast('denied'), /site settings/);
+  assert.match(accessAlertsToast('unsupported', { isSecureContext: false }), /plain HTTP/);
 });

@@ -44,8 +44,8 @@ import { companionAgents } from './companion-model.js';
 import { createMessageAccessDialogActions } from './message-access-dialog-actions.js';
 import { openPhoneCompose } from './phone-compose-sheet.js';
 import { openPhoneSheet } from './phone-sheet.js';
-import { DecisionAnswer, PhoneApprovalCard } from './phone-approval.js';
-import { approvalAsk, planDetails } from './phone-now-model.js';
+import { ApprovalButtons, DecisionAnswer, PhoneApprovalCard, useNow } from './phone-approval.js';
+import { ago, approvalAsk, planDetails } from './phone-now-model.js';
 import { accessTiming, clockTime, slugDescriptions } from './phone-access-facts.js';
 import { shellToast } from './shell-state.js';
 import { trustLock } from './lock-reason.js';
@@ -673,26 +673,32 @@ function AccessReader({ controller, item, active, back }) {
   const planned = !!plan?.ok;
   const ask = approvalAsk(item);
   const described = slugDescriptions(dashboardState.snapshot.value?.slugs);
+  const group = companionAgents(dashboardState.snapshot.value).get(item.agent_id)?.group || '';
+  const now = useNow(!lapsed && !!item.deadline);
   const rows = [
     ...(planned ? [['For', `${plan.duration}${plan.duration ? ', from when you approve' : ''}`], ['Reason', plan.reason]] : []),
-    ['Group', item.target_group],
+    ...(!planned && ask.fields ? ask.fields.map(([key, value]) => [key, value]) : []),
+    ['Target group', item.target_group],
     ['Target', item.target_conv_title || item.target_conv_id], ['Scope', item.scope_display, true],
-    ['Timing', accessTiming(item)],
+    ['Timing', lapsed ? '' : accessTiming(item, now)],
   ].filter(([, value]) => value);
-  return html`<div class="phone-mail-reader phone-mail-read">
+  const asked = [group, item.created_at && `asked ${clockTime(item.created_at)}${lapsed ? '' : ` (${ago(item.created_at, now)})`}`].filter(Boolean).join(' · ');
+  return html`<div class="phone-mail-reader phone-mail-read phone-mail-access-read">
     <h1 class="phone-mail-title">${lapsed ? controller.accessSubject(item) : `${who} ${ask.title}`}</h1>
-    ${item.created_at && html`<p class="phone-mail-access-meta">asked at ${clockTime(item.created_at)}</p>`}
-    <${PhoneApprovalCard} request=${item} from=${who} notify=${shellToast} decide=${decideThrough(controller)} />
+    ${asked && html`<p class="phone-mail-access-meta">${asked}</p>`}
     <dl class="phone-mail-facts">
       ${ask.slugs.length > 0 && html`<div><dt>${ask.slugs.length === 1 ? 'Permission' : 'Permissions'}</dt><dd>${ask.slugs.map((slug) => html`<div key=${slug} class="phone-mail-perm"><code>${slug}</code>${described.get(slug) && html`<span>${described.get(slug)}</span>`}</div>`)}</dd></div>`}
       ${rows.map(([k, v, mono]) => html`<div key=${k}><dt>${k}</dt><dd class=${mono ? 'mono' : undefined}>${v}</dd></div>`)}
-      ${item.body && !planned && html`<div><dt>${item.body_label || 'Body'}</dt><dd><pre class="phone-mail-pre">${item.body}</pre></dd></div>`}</dl>
+      ${item.body && !planned && !ask.fields && html`<div><dt>${item.body_label || 'Body'}</dt><dd><pre class="phone-mail-pre">${item.body}</pre></dd></div>`}</dl>
     ${item.auto_grantable && html`<${ButtonRow} class="phone-mail-always" buttons=${[
       ...(item.scope_display ? [{ key: 'scoped', label: `Always allow — ${item.scope_display}`, title: `Approve now, and from now on for ${item.scope_display} only`,
         disabled: always || lapsed, onClick: () => allow('always_scoped') }] : []),
       { key: 'always', label: item.scope_display ? 'Always allow — any scope' : 'Always allow', title: 'Approve now, and do not ask again for this permission',
         disabled: always || lapsed, onClick: () => allow('always') },
     ]} />`}
+    <div class="phone-mail-access-bar">
+      <${ApprovalButtons} request=${item} notify=${shellToast} decide=${decideThrough(controller)} now=${now} lapsed=${lapsed} />
+    </div>
   </div>`;
 }
 
