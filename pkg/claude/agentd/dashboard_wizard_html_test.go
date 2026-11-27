@@ -241,10 +241,7 @@ func TestDashboardHTML_WizardLinksDialogs(t *testing.T) {
 	must("body.wizard #links-manage-modal #links-list th", "the links table is re-skinned")
 	must("body.wizard #link-modal .cron-create-row select", "the link fields are re-skinned")
 	must("body.wizard #link-modal #link-modal-submit", "the link submit action is gilded")
-	must(`regular="+ link" wizard="+ weave channel"`, "the native per-party add-link action carries both voices")
-	must("body.wizard .group-links-section > button", "the per-party add-link action keeps wizard styling")
-	must("body.wizard .group-links-section > button {\n  background: #241b3d;\n  border-color: #7a5db0;\n  color: #e7d9f5;", "the compact wizard action uses contrast-safe secondary chrome")
-	must("body.wizard .group-links-section > button:hover {\n  background: #3a2a63;\n  color: #f3e6c0;", "the compact wizard action keeps contrast-safe hover chrome")
+	must("wizard ? 'Weave an outbound arcane channel from this party' : `Add an outbound link from ${group.name}`", "the per-party add-link action carries both voices")
 }
 
 // TestDashboardHTML_WizardGroupsTabCopy pins the Parties tab's wizard voice.
@@ -290,9 +287,9 @@ func TestDashboardHTML_WizardGroupsTabCopy(t *testing.T) {
 	must(`<span class="theme-copy-wizard"><strong>party maneuvers:</strong>`, "the drag-and-drop footer has a wizard version")
 	must(`<em>Plain scroll</em> → party (awaken + bind)`, "the footer explains promotion in wizard terms")
 	must("No arcane channels are woven to or from this party.", "the per-party empty channel state follows the weaving metaphor")
-	must(`regular="Links" wizard="Arcane channels"`, "populated per-party channels keep their wizard heading")
-	must(`regular="Other group" wizard="Other party"`, "populated channel rows name the other party")
-	must(`regular="edit" wizard="rebind"`, "populated channel actions keep their wizard verb")
+	must("label=${wizard ? 'Arcane channels' : 'Links'}", "the per-party channels section keeps its wizard heading")
+	must("wizardLabel: 'Other party'", "populated channel rows name the other party")
+	must("wizard ? 'Rebind this arcane channel'", "populated channel actions keep their wizard verb")
 }
 
 // TestDashboardHTML_WizardRetireModal pins the wizard re-skin of the retire

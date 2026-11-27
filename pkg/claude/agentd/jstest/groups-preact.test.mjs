@@ -486,7 +486,7 @@ test('native group chrome preserves hierarchy, virtual DnD and shared menu contr
   assert.deepEqual(localActions, [['quick', 'parent'], ['force', 'parent']]);
   assert.ok(parent.querySelector('.group-force-block'));
   assert.ok(parent.querySelector('.group-pending-block tr[data-dnd-pending]'));
-  assert.ok(parent.querySelector('.group-links-section button[data-act="link-edit"]'));
+  assert.ok(parent.querySelector('[data-group-links="parent"] button[data-act="link-edit"]'));
   assert.match(parent.querySelector('[data-act="power-on-group"]').title, /nothing new is created/);
   assert.match(parent.querySelector('[data-act="stand-down-force"]').title, /Not a delete/);
   assert.match(parent.querySelector('[data-act="cleanup-worktrees-group"]').title, /protected/);

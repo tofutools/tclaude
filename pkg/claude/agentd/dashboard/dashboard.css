@@ -3328,19 +3328,6 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
 .group-subgroups { margin: 6px 0 10px 0; }
 .group-subgroups > .group-box { margin: 4px 0; }
 .group-subgroups > .group-box > .group-summary { border-left: 2px solid #3d4a5c; padding-left: 6px; margin-left: -6px; }
-.group-links-section { margin-top: 8px; padding: 6px 0 4px 0; border-top: 1px dashed #2a3340; }
-.group-links-section > strong { display: inline-block; color: #8aa0b8; margin-right: 8px; }
-.group-links-section > table { margin: 4px 0 6px 0; }
-/* The "+ link" button sits alongside the row-action edit/× buttons, so it
-   wears the same dark chrome — an unthemed inline <button> would render with
-   the browser's white default (too bright against the dark dashboard). */
-.group-links-section > button {
-  margin-left: 6px;
-  background: #161b22; border: 1px solid #2a3340; border-radius: 4px;
-  color: #7d8590; cursor: pointer; padding: 2px 8px; font-size: 11px;
-  font-family: inherit;
-}
-.group-links-section > button:hover { color: #d4d4d4; background: var(--ui-bg-hover); }
 /* Per-group link chips in the <summary> header — an at-a-glance, always-
    visible (even when the group is collapsed) view of who this group can
    message (→) and who can message it (←). Clicking any chip opens the
@@ -13242,21 +13229,6 @@ body.wizard #links-manage-modal #links-list .rowname { color: #f3e6c0; }
 body.wizard #links-manage-modal #links-list .id,
 body.wizard #links-manage-modal #links-list .muted { color: #b39ddb; }
 
-/* The compact add-link action lives inside each expanded party card rather
-   than either links modal, so it needs its own group-section hook. It keeps
-   the base button's small footprint and uses secondary wizard chrome: violet
-   and parchment at rest, with a restrained gold accent only on hover. */
-body.wizard .group-links-section > button {
-  background: #241b3d;
-  border-color: #7a5db0;
-  color: #e7d9f5;
-  font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
-  letter-spacing: 0.2px;
-}
-body.wizard .group-links-section > button:hover {
-  background: #3a2a63;
-  color: #f3e6c0;
-}
 
 body.wizard #link-modal .modal-meta {
   background: #241b3d; border-color: rgba(122, 93, 176, 0.5); color: #b39ddb;
@@ -18988,6 +18960,11 @@ body.wizard .dock-chip.dock-process-pin { color: #d2a8ff; border-color: #8957e56
 .gr-rtable td.gr-timecell { white-space: normal; }
 .gr-rtable .gr-col-kind { --ui-track: 104px; }
 .gr-rtable .gr-col-lock { --ui-track: 150px; }
+/* A group's Links (groups-links.js) wear the Resources table's look with
+   their own columns: ✎ and 🗑, the other group, direction, age, mode. */
+.gl-table .gr-col-ctl { --ui-track: 72px; }
+.gl-table .gr-col-name { --ui-track: min(24em, 40%); }
+.gl-table .gr-col-dir { --ui-track: 88px; }
 .gr-rtable td { vertical-align: middle; }
 .gr-rtable td.gr-namecell { white-space: normal; overflow-wrap: anywhere; }
 .gr-rtable td.gr-namecell .gr-name.ui-btn { max-width: 100%; min-width: 0; height: auto; white-space: normal; text-align: left; justify-content: flex-start; }
