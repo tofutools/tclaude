@@ -2987,7 +2987,8 @@ func SetApprovalClockForTest(now func() time.Time) func() {
 // services.
 func SetPushTransportForTest(client *http.Client, hosts ...string) func() {
 	prevClient, prevHosts := pushHTTPClient, pushServiceHosts
-	pushHTTPClient = client
+	copied := *client
+	pushHTTPClient = noRedirects(&copied)
 	pushServiceHosts = append(slices.Clone(pushServiceHosts), hosts...)
 	return func() { pushHTTPClient, pushServiceHosts = prevClient, prevHosts }
 }

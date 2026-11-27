@@ -66,8 +66,20 @@ var pushServiceHosts = []string{
 }
 
 // pushHTTPClient sends pushes; tests swap it for one that trusts their fake
-// push service.
-var pushHTTPClient = &http.Client{Timeout: 15 * time.Second}
+// push service. It never follows a redirect: the allowlist vouches for the
+// endpoint's host only, so a 3xx is a refused push.
+var pushHTTPClient = noRedirects(&http.Client{Timeout: 10 * time.Second})
+
+// noRedirects makes c answer a redirect with the 3xx itself.
+func noRedirects(c *http.Client) *http.Client {
+	c.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	return c
+}
+
+// pushPruneRejections is how many refused pushes in a row (a 4xx that is
+// not 404/410, such as a VAPID mismatch after a key reset) remove a device:
+// it will never take a push again.
+const pushPruneRejections = 5
 
 // pushClock is the sender's clock; tests pin it.
 var pushClock = time.Now
@@ -165,18 +177,40 @@ func (s *pushSender) drain(ctx context.Context) int {
 		slog.Warn("push: reading the VAPID key", "err", err)
 		return 0
 	}
+	// Devices are sent to in parallel, each one's pushes in order, so a
+	// device whose push service hangs delays only itself. A device that
+	// failed is left for the next pass.
+	byDevice := map[int64][]db.PushJob{}
+	var order []int64
 	for _, job := range jobs {
-		sendPushJob(ctx, vapid, job, now)
+		if _, ok := byDevice[job.Sub.ID]; !ok {
+			order = append(order, job.Sub.ID)
+		}
+		byDevice[job.Sub.ID] = append(byDevice[job.Sub.ID], job)
 	}
+	var wg sync.WaitGroup
+	for _, id := range order {
+		wg.Add(1)
+		go func(device []db.PushJob) {
+			defer wg.Done()
+			for _, job := range device {
+				if !sendPushJob(ctx, vapid, job, now) {
+					return
+				}
+			}
+		}(byDevice[id])
+	}
+	wg.Wait()
 	return len(jobs)
 }
 
-// sendPushJob sends one push and records what came of it.
-func sendPushJob(ctx context.Context, vapid *webpush.VAPID, job db.PushJob, now time.Time) {
+// sendPushJob sends one push and records what came of it. It reports
+// whether the device took it, so the rest of its pushes may follow.
+func sendPushJob(ctx context.Context, vapid *webpush.VAPID, job db.PushJob, now time.Time) bool {
 	sub := webpush.Subscription{Endpoint: job.Sub.Endpoint, P256DH: job.Sub.P256DH, Auth: job.Sub.Auth}
 	if err := pushEndpointAllowed(sub.Endpoint); err != nil {
 		_, _ = db.PushFailed(job, err.Error(), nil)
-		return
+		return false
 	}
 	// What is left of the push's time, so a retried push does not outlive
 	// the outbox's bound at the push service either.
@@ -189,19 +223,26 @@ func sendPushJob(ctx context.Context, vapid *webpush.VAPID, job db.PushJob, now 
 	}, now)
 	if err != nil {
 		_, _ = db.PushFailed(job, err.Error(), nil)
-		return
+		return false
 	}
 	resp, err := pushHTTPClient.Do(req)
 	if err != nil {
+		// The error names the endpoint, whose path is the subscription's
+		// secret: keep only the cause, which the device list shows.
+		var ue *url.Error
+		if errors.As(err, &ue) {
+			err = ue.Err
+		}
 		retry := now.Add(pushRetryBase << job.Attempts)
 		_, _ = db.PushFailed(job, "push service unreachable: "+err.Error(), &retry)
-		return
+		return false
 	}
 	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
 	_ = resp.Body.Close()
 	switch webpush.Classify(resp.StatusCode) {
 	case webpush.Delivered:
 		_ = db.PushDelivered(job, now)
+		return true
 	case webpush.Gone:
 		// The browser dropped the subscription (unsubscribed, app removed,
 		// permission revoked): forget the device.
@@ -213,7 +254,12 @@ func sendPushJob(ctx context.Context, vapid *webpush.VAPID, job db.PushJob, now 
 	default:
 		slog.Warn("push: push service refused a push", "device", job.Sub.ID, "status", resp.StatusCode)
 		_, _ = db.PushFailed(job, fmt.Sprintf("push service refused the push (%d)", resp.StatusCode), nil)
+		if job.Sub.Failures+1 >= pushPruneRejections {
+			slog.Info("push: device refused every recent push, removing it", "device", job.Sub.ID, "label", job.Sub.Label)
+			_ = db.DeletePushSubscription(job.Sub.ID)
+		}
 	}
+	return false
 }
 
 // retryAfter reads a Retry-After header (seconds or an HTTP date), capped
@@ -359,6 +405,11 @@ type pushSubscribeBody struct {
 		Auth   string `json:"auth"`
 	} `json:"keys"`
 	Label string `json:"label"`
+	// ApplicationServerKey is the key the browser subscribed with
+	// (PushSubscription.options.applicationServerKey, base64url). When
+	// given, it must be this node's current key: a subscription made for an
+	// old one (before a reset-keys) can never be pushed to.
+	ApplicationServerKey string `json:"application_server_key"`
 }
 
 // POST …/push/devices → {device, new, …state}: subscribe (or refresh) a
@@ -379,9 +430,16 @@ func handlePushSubscribe(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "push subscription: "+err.Error(), http.StatusBadRequest)
 		return
 	}
-	if raw, err := db.PushVAPIDKeyIfAny(); err != nil || raw == nil {
+	raw, err := db.PushVAPIDKeyIfAny()
+	if err != nil || raw == nil {
 		http.Error(w, "no push key yet: POST …/push/key first and subscribe with it", http.StatusConflict)
 		return
+	}
+	if k := strings.TrimRight(body.ApplicationServerKey, "="); k != "" {
+		if v, err := webpush.ParseVAPID(raw); err != nil || v.PublicKey() != k {
+			http.Error(w, "the subscription was made with another push key: unsubscribe and subscribe again with the current one", http.StatusConflict)
+			return
+		}
 	}
 	label := strings.TrimSpace(body.Label)
 	if label == "" {

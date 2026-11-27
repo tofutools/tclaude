@@ -78,7 +78,7 @@ func onStateTransition(sessionID, convID, from, matchTo, displayStatus, cwd, con
 	// toggles) each decide for themselves; the master switch above, the
 	// mute filters and the cooldown below are shared.
 	desktop := cfg.Notifications.MatchesTransition(from, matchTo)
-	push := cfg.Notifications.PushWanted(matchTo)
+	push := cfg.Notifications.PushWanted(matchTo) && pushDevicesSubscribed()
 	if !desktop && !push {
 		return
 	}
@@ -87,23 +87,21 @@ func onStateTransition(sessionID, convID, from, matchTo, displayStatus, cwd, con
 		return
 	}
 
-	// Check cooldown via database
+	// The cooldown, checked via the database, is per channel: a push does
+	// not swallow a desktop banner that follows it, nor the reverse.
 	cooldown := time.Duration(cfg.Notifications.CooldownSeconds) * time.Second
-	if lastNotify, found, err := db.GetNotifyTime(sessionID); err == nil && found {
-		if time.Since(lastNotify) < cooldown {
-			return
-		}
+	cooling := func(key string) bool {
+		last, found, err := db.GetNotifyTime(key)
+		return err == nil && found && time.Since(last) < cooldown
 	}
-
-	if desktop {
+	if desktop && !cooling(sessionID) {
 		sendWithHarness(sessionID, formatStatus(displayStatus), cwd, convTitle, harness)
+		_ = db.SetNotifyTime(sessionID)
 	}
-	if push {
+	if push && !cooling(pushCooldownKey(sessionID)) {
 		queuePush(cfg.Notifications, statePushNote(matchTo, harness, displayStatus, convTitle, cwd))
+		_ = db.SetNotifyTime(pushCooldownKey(sessionID))
 	}
-
-	// Record notification time
-	_ = db.SetNotifyTime(sessionID)
 }
 
 // AllowedForConv evaluates the per-agent / per-group notification

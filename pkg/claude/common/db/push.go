@@ -66,6 +66,20 @@ func PushVAPIDKey(gen func() ([]byte, error), now time.Time) ([]byte, error) {
 	return key, err
 }
 
+// HasPushSubscriptions reports whether any device is subscribed.
+func HasPushSubscriptions() (bool, error) {
+	d, err := Open()
+	if err != nil {
+		return false, err
+	}
+	var one int
+	err = d.QueryRow(`SELECT 1 FROM push_subscriptions LIMIT 1`).Scan(&one)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	return err == nil, err
+}
+
 // PushVAPIDKeyIfAny returns the stored VAPID private key, or nil when none
 // was made yet.
 func PushVAPIDKeyIfAny() ([]byte, error) {

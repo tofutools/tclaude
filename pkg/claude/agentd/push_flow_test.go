@@ -499,3 +499,34 @@ func TestPush_QuestionsForTheOperatorArePushedMessagesAreNot(t *testing.T) {
 	assert.Equal(t, "tclaude: Layout?", got[0].Payload.Title, "a decision card waits on the operator")
 	assert.NotContains(t, got[0].Payload.Body, "Pick one.")
 }
+
+// Scenario: after `reset-keys`, a device still holding a subscription made
+// with the old key is refused when it re-posts it; and a device whose push
+// service keeps refusing every push (a VAPID mismatch) is removed after a
+// few, instead of failing silently forever.
+func TestPush_StaleKeyRefusedAndRejectingDevicePruned(t *testing.T) {
+	p := newPushFixture(t)
+	rec := testharness.Serve(p.dashboard, testharness.JSONRequest(t, http.MethodPost, "/api/push/key", nil))
+	require.Equal(t, http.StatusOK, rec.Code)
+	other, err := webpush.NewVAPID()
+	require.NoError(t, err)
+	key, _ := ecdh.P256().GenerateKey(rand.Reader)
+	rec = testharness.Serve(p.dashboard, testharness.JSONRequest(t, http.MethodPost, "/api/push/devices", map[string]any{
+		"endpoint":               p.svc.srv.URL + "/push/stale",
+		"keys":                   map[string]string{"p256dh": base64.RawURLEncoding.EncodeToString(key.PublicKey().Bytes()), "auth": base64.RawURLEncoding.EncodeToString(make([]byte, 16))},
+		"application_server_key": other.PublicKey(),
+	}))
+	assert.Equal(t, http.StatusConflict, rec.Code, "a subscription for another key is refused: %s", rec.Body.String())
+
+	id := p.svc.subscribe(t, p.dashboard, "phone")
+	p.svc.answer("phone", http.StatusForbidden, "")
+	for i := range 5 {
+		_, err := db.GetPushSubscription(id)
+		require.NoError(t, err, "still subscribed before refusal %d", i+1)
+		rec := testharness.Serve(p.dashboard, testharness.JSONRequest(t, http.MethodPost, "/api/push/test", nil))
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+		require.Equal(t, 1, agentd.DrainPushForTest())
+	}
+	_, err = db.GetPushSubscription(id)
+	assert.ErrorIs(t, err, db.ErrPushSubscriptionNotFound, "five refusals in a row remove the device")
+}

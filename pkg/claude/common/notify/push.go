@@ -79,6 +79,17 @@ func pushText(s string, max int) string {
 	return string(r[:max-1]) + "…"
 }
 
+// pushCooldownKey is the cooldown row of a session's pushes, beside the
+// desktop's (keyed by the bare session id).
+func pushCooldownKey(sessionID string) string { return "push:" + sessionID }
+
+// pushDevicesSubscribed reports whether any device is subscribed; an
+// unreadable answer counts as none.
+func pushDevicesSubscribed() bool {
+	ok, err := db.HasPushSubscriptions()
+	return err == nil && ok
+}
+
 // queuePush queues note for every subscribed device when the config wants
 // its category. Best-effort, like the browser queue: a failure is logged
 // and never fails the notification's other channels.
