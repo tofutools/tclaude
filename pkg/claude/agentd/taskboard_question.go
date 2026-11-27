@@ -365,14 +365,18 @@ var operatorQuestionNotify = notify.SendOperatorQuestion
 // goroutine. An agent's mutes apply, as they do to its messages.
 func pushOperatorQuestion(r *http.Request, group, title string) {
 	who := taskboardPeerAuthor(r)
+	askerID := ""
+	if who != "" {
+		askerID = "peer:" + who
+	}
 	conv := confirmedAgentConv(r)
 	if conv != "" {
-		who = notifyHumanCallerTitle(conv)
+		who, askerID = notifyHumanCallerTitle(conv), "conv:"+conv
 	}
 	goBackground(func() {
 		if conv != "" && !notify.AllowedForConv(conv) {
 			return
 		}
-		operatorQuestionNotify(who, group, title)
+		operatorQuestionNotify(askerID, who, group, title)
 	})
 }

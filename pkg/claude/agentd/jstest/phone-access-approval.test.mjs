@@ -1,7 +1,7 @@
 // The phone's access-request card and its helpers (js/phone-now-model.js
 // approvalTiming / approvalAsk, js/phone-access-facts.js,
 // js/phone-access-alerts.js): both clocks, "+5 min" only while it can still
-// buy time, every permission shown, and the one-tap alert settings.
+// buy time, every permission shown, and the app badge.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createPreactHarness } from './preact-harness.mjs';
@@ -63,15 +63,9 @@ test('the reader\'s facts: the two clocks as clock times, and each slug\'s first
   assert.equal(described.has('x'), false);
 });
 
-test('access alerts: on needs master, knob and a browser delivery; turning on keeps the desktop, off touches only the knob', async (t) => {
+test('the app badge counts the access requests that wait', async (t) => {
   const harness = await createPreactHarness(t);
   const alerts = await harness.importDashboardModule('js/phone-access-alerts.js');
-  assert.equal(alerts.accessAlertsOn({ enabled: true, access_requests: true, delivery: 'os' }), false, 'the desktop never reaches a phone');
-  assert.equal(alerts.accessAlertsOn({ enabled: true, access_requests: true, delivery: 'both' }), true);
-  assert.equal(alerts.accessAlertsOn({ enabled: false, access_requests: true, delivery: 'browser' }), false);
-  assert.deepEqual(alerts.accessAlertsChange({ delivery: 'os' }, true), { enabled: true, access_requests: true, delivery: 'both' });
-  assert.deepEqual(alerts.accessAlertsChange({ delivery: 'browser' }, true), { enabled: true, access_requests: true, delivery: 'browser' });
-  assert.deepEqual(alerts.accessAlertsChange({ delivery: 'both', enabled: true }, false), { access_requests: false });
   assert.equal(alerts.pendingAccessCount({ access_requests_pending: 2 }), 2);
   assert.equal(alerts.pendingAccessCount(null), 0);
   const badge = [];
@@ -105,56 +99,3 @@ test('the card shows every permission, both clocks, and +5 min only when it can 
   assert.equal(once.querySelector('.phone-approval-note').textContent, "Can't be extended: the agent asked to wait 2 min.");
 });
 
-test('More\'s "Alert me on access requests" turns on all three settings with one tap and asks the browser', async (t) => {
-  const harness = await createPreactHarness(t);
-  const { AccessAlertsEntry } = await harness.importDashboardModule('js/phone-more.js');
-  let settings = { enabled: false, access_requests: false, delivery: 'os' };
-  const posts = [];
-  const fetchImpl = async (url, init = {}) => {
-    if (init.method === 'POST') {
-      const body = JSON.parse(init.body);
-      posts.push(body);
-      settings = { ...settings, ...body };
-    }
-    return { ok: true, json: async () => settings, text: async () => '' };
-  };
-  let asked = 0;
-  let postsWhenAsked = -1;
-  const win = { isSecureContext: true, Notification: Object.assign(function Notification() {}, { requestPermission: async () => { asked++; postsWhenAsked = posts.length; return 'granted'; } }) };
-  const toasts = [];
-  const { container } = await harness.mount(harness.html`<ul><${AccessAlertsEntry} remote=${false} fetchImpl=${fetchImpl} win=${win} notify=${(m) => toasts.push(m)} /></ul>`);
-  // Settle the settings read (a few promise hops), bounded.
-  const settled = async (ok) => { for (let i = 0; i < 50 && !ok(); i++) await harness.act(async () => {}); };
-  await settled(() => container.querySelector('button'));
-  const row = container.querySelector('button');
-  assert.match(row.textContent, /Alert me on access requests/);
-  assert.equal(container.querySelector('.phone-menu-note').textContent, 'off');
-  await harness.act(async () => { row.click(); });
-  await settled(() => container.querySelector('.phone-menu-note')?.textContent === 'on');
-  assert.deepEqual(posts, [{ enabled: true, access_requests: true, delivery: 'both' }]);
-  assert.equal(asked, 1, 'the tap asks this browser for permission');
-  assert.equal(postsWhenAsked, 0, 'asked before any network round trip, while the tap still counts as a gesture');
-  assert.equal(container.querySelector('.phone-menu-note').textContent, 'on');
-  assert.match(toasts.at(-1), /alert this phone/);
-  await harness.act(async () => { container.querySelector('button').click(); });
-  await settled(() => posts.length === 2);
-  assert.deepEqual(posts.at(-1), { access_requests: false }, 'off leaves every other notification alone');
-});
-
-test('the More row is this node\'s only: on a peer\'s page it is not shown and reads nothing', async (t) => {
-  const harness = await createPreactHarness(t);
-  const { AccessAlertsEntry } = await harness.importDashboardModule('js/phone-more.js');
-  let fetched = 0;
-  const { container } = await harness.mount(harness.html`<ul><${AccessAlertsEntry} remote=${true} fetchImpl=${async () => { fetched++; return { ok: true, json: async () => ({}) }; }} /></ul>`);
-  await harness.act(async () => {});
-  assert.equal(container.querySelector('button'), null);
-  assert.equal(fetched, 0);
-});
-
-test('the alerts toast says what the operator can do about it', async (t) => {
-  const harness = await createPreactHarness(t);
-  const { accessAlertsToast } = await harness.importDashboardModule('js/phone-access-alerts.js');
-  assert.match(accessAlertsToast('granted'), /alert this phone/);
-  assert.match(accessAlertsToast('denied'), /site settings/);
-  assert.match(accessAlertsToast('unsupported', { isSecureContext: false }), /plain HTTP/);
-});

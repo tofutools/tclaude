@@ -88,6 +88,9 @@ import { startSnapshotPoll, waitForInitialSnapshot } from './snapshot-poll.js';
 import { bindShortcutOverrides, dashboardState, onFleetOverviewChange, fleetOverviewShown } from './snapshot-store.js';
 import { agentLabel } from './terminal-nav-route.js';
 import { startBrowserNotifyPoll } from './browser-notify.js';
+import { pushToastText, startPushClient } from './push-client.js';
+import { remoteNodeID } from './fleet-model.js';
+import { shellToast } from './shell-state.js';
 
 // Last successful snapshot, kept so the filter inputs can re-render
 // without a server roundtrip when the user types.
@@ -524,6 +527,12 @@ async function settleInitialLayout() {
   // Self-gating: it costs one no-op function call per tick until the human
   // has granted the browser notification permission.
   pageCleanups.push(startBrowserNotifyPoll());
+  // Web Push: keep a subscribed device's subscription current, and show a
+  // push the service worker hands this focused window as a toast. This
+  // node's own page only: a peer's pushes come from the peer.
+  if (!remoteNodeID()) {
+    pageCleanups.push(startPushClient({ onPush: (payload) => shellToast(pushToastText(payload)) }));
+  }
   await bootFinished;
   clearTimeout(bootTimeout);
   document.removeEventListener('tclaude:snapshot', onFirstSnapshot);

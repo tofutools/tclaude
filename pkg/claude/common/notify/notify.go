@@ -94,12 +94,15 @@ func onStateTransition(sessionID, convID, from, matchTo, displayStatus, cwd, con
 		last, found, err := db.GetNotifyTime(key)
 		return err == nil && found && time.Since(last) < cooldown
 	}
+	var browserID int64
 	if desktop && !cooling(sessionID) {
-		sendWithHarness(sessionID, formatStatus(displayStatus), cwd, convTitle, harness)
+		browserID = sendWithHarness(sessionID, formatStatus(displayStatus), cwd, convTitle, harness)
 		_ = db.SetNotifyTime(sessionID)
 	}
 	if push && !cooling(pushCooldownKey(sessionID)) {
-		queuePush(cfg.Notifications, statePushNote(matchTo, harness, displayStatus, convTitle, cwd))
+		note := statePushNote(matchTo, harness, displayStatus, convTitle, cwd)
+		note.browserID = browserID
+		queuePush(cfg.Notifications, note)
 		_ = db.SetNotifyTime(pushCooldownKey(sessionID))
 	}
 }
@@ -224,12 +227,12 @@ func formatStatus(status string) string {
 // Code (the historical default). Callers that know the session's harness
 // reach the harness-aware path through OnStateTransition instead.
 func Send(sessionID, status, cwd, convTitle string) {
-	sendWithHarness(sessionID, status, cwd, convTitle, "")
+	_ = sendWithHarness(sessionID, status, cwd, convTitle, "")
 }
 
 // sendWithHarness builds and dispatches a notification, attributing the
 // banner title to the session's harness ("Codex: …" vs "Claude: …").
-func sendWithHarness(sessionID, status, cwd, convTitle, harness string) {
+func sendWithHarness(sessionID, status, cwd, convTitle, harness string) int64 {
 	slog.Debug("sending notification",
 		"sessionID", sessionID,
 		"status", status,
@@ -252,7 +255,7 @@ func sendWithHarness(sessionID, status, cwd, convTitle, harness string) {
 	}
 	body = truncate(body, notifyBodyMaxLen)
 
-	dispatch(sessionID, title, body)
+	return dispatch(sessionID, title, body)
 }
 
 // projectName is the banner's name for a session's directory.
@@ -275,7 +278,11 @@ func projectName(cwd string) string {
 // Delivery failure falls back to stderr, but only when NO channel got the
 // notification out — a queued browser banner is a real delivery, so a
 // missing D-Bus under "both" must not print a scary fallback line.
-func dispatch(sessionID, title, body string) {
+//
+// It returns the browser queue's id for the notification, or 0 when it was
+// not queued for the browser: a push of the same notification takes it, so a
+// device that gets both shows one banner (pwa/sw.js, browser-notify.js).
+func dispatch(sessionID, title, body string) int64 {
 	cfg, cfgErr := config.Load()
 	var n *config.NotificationConfig
 	if cfgErr == nil {
@@ -283,11 +290,13 @@ func dispatch(sessionID, title, body string) {
 	}
 
 	delivered := false
+	var browserID int64
 	if n.DeliverToBrowser() {
-		if err := db.EnqueueBrowserNotification(sessionID, title, body); err != nil {
+		if id, err := db.EnqueueBrowserNotificationID(sessionID, title, body); err != nil {
 			slog.Warn("queueing browser notification failed", "err", err, "title", title)
 		} else {
 			delivered = true
+			browserID = id
 		}
 	}
 	if n.DeliverToOS() {
@@ -305,6 +314,7 @@ func dispatch(sessionID, title, body string) {
 		// Final fallback to stderr
 		fmt.Fprintf(os.Stderr, "[notify] %s: %s\n", title, body)
 	}
+	return browserID
 }
 
 // SendHumanMessage raises an OS notification for a `tclaude agent
@@ -332,15 +342,18 @@ func SendHumanQuestion(senderSessionID, fromTitle, group, subject, body string) 
 }
 
 // SendOperatorQuestion pushes a taskboard ask-operator question: who asks,
-// in which group, and the question's title. It has no desktop banner (the
-// Task board and its Needs-you count are the desktop's surface); it no-ops
+// in which group, and the question's title. askerID names the asker for the
+// per-asker collapse (its conversation, or a federation peer's author); with
+// none, the question is not collapsed. It has no desktop banner (the Task
+// board and its Needs-you count are the desktop's surface); it no-ops
 // unless operator_questions is on for push.
-func SendOperatorQuestion(fromTitle, group, question string) {
+func SendOperatorQuestion(askerID, fromTitle, group, question string) {
 	cfg, err := config.Load()
 	if err != nil {
 		return
 	}
 	note := humanMessagePushNote(config.PushOperatorQuestions, fromTitle, group, question)
+	note.asker = askerKey(askerID, group)
 	note.urgency = "high"
 	queuePush(cfg.Notifications, note)
 }
@@ -352,17 +365,17 @@ func sendHumanMessage(category, senderSessionID, fromTitle, group, subject, body
 	}
 	// A push carries who and the subject, never the message itself.
 	note := humanMessagePushNote(category, fromTitle, group, subject)
+	note.asker = askerKey(senderSessionID, group)
 	if category == config.PushOperatorQuestions {
 		note.urgency = "high"
 	}
-	queuePush(cfg.Notifications, note)
-	if !cfg.Notifications.NotifyHumanMessages() {
-		return
+	if cfg.Notifications.NotifyHumanMessages() {
+		title, notifBody := formatHumanMessage(fromTitle, group, subject, body)
+		slog.Debug("sending human-message notification",
+			"senderSessionID", senderSessionID, "from", fromTitle, "group", group)
+		note.browserID = dispatch(senderSessionID, title, notifBody)
 	}
-	title, notifBody := formatHumanMessage(fromTitle, group, subject, body)
-	slog.Debug("sending human-message notification",
-		"senderSessionID", senderSessionID, "from", fromTitle, "group", group)
-	dispatch(senderSessionID, title, notifBody)
+	queuePush(cfg.Notifications, note)
 }
 
 // humanMessagePushNote is a notify-human message as a push: the subject (or
@@ -379,7 +392,18 @@ func humanMessagePushNote(category, fromTitle, group, subject string) pushNote {
 	if s := strings.TrimSpace(subject); s != "" {
 		title = "tclaude: " + s
 	}
-	return pushNote{category: category, title: title, body: who, url: "/messages", urgency: "normal"}
+	return pushNote{category: category, title: title, body: who, url: "/messages", urgency: "normal",
+		who: who, question: strings.TrimSpace(subject)}
+}
+
+// askerKey is the per-asker collapse's key: a stable id of the asker (a
+// session, a conversation, a peer's author) with the group, or "" when
+// there is no id, so askers without one are never lumped together.
+func askerKey(id, group string) string {
+	if strings.TrimSpace(id) == "" {
+		return ""
+	}
+	return strings.TrimSpace(id) + "\x00" + strings.TrimSpace(group)
 }
 
 // SendAccessRequest raises an optional OS notification for an agent
@@ -403,7 +427,8 @@ func SendAccessRequest(senderSessionID, fromTitle, group, perm, path string) {
 	if g := strings.TrimSpace(group); g != "" {
 		pushBody += " · " + g
 	}
-	queuePush(cfg.Notifications, pushNote{category: config.PushAccessRequests, title: "tclaude: access request", body: pushBody, url: "/messages", urgency: "high"})
+	note := pushNote{category: config.PushAccessRequests, title: "tclaude: access request", body: pushBody, url: "/messages", urgency: "high"}
+	defer func() { queuePush(cfg.Notifications, note) }()
 	if !cfg.AccessRequestSystemNotification() {
 		return
 	}
@@ -424,7 +449,7 @@ func SendAccessRequest(senderSessionID, fromTitle, group, perm, path string) {
 		b.WriteString("\n")
 		b.WriteString(g)
 	}
-	dispatch(senderSessionID, title, truncate(b.String(), notifyBodyMaxLen))
+	note.browserID = dispatch(senderSessionID, title, truncate(b.String(), notifyBodyMaxLen))
 }
 
 // SendPresentedPR raises an optional OS notification for a `tclaude agent
@@ -447,14 +472,15 @@ func SendPresentedPR(agentSessionID, agentTitle, group, prURL, summary string) {
 	if who == "" {
 		who = "An agent"
 	}
-	queuePush(cfg.Notifications, pushNote{category: config.PushPresentPR, title: "tclaude: pull request", body: who + " presented a pull request", url: "/", urgency: "normal"})
+	note := pushNote{category: config.PushPresentPR, title: "tclaude: pull request", body: who + " presented a pull request", url: "/", urgency: "normal"}
+	defer func() { queuePush(cfg.Notifications, note) }()
 	if !cfg.PresentPRNotification() {
 		return
 	}
 	title, notifBody := formatPresentedPR(agentTitle, group, prURL, summary)
 	slog.Debug("sending presented-PR notification",
 		"agentSessionID", agentSessionID, "agent", agentTitle, "group", group, "url", prURL)
-	dispatch(agentSessionID, title, notifBody)
+	note.browserID = dispatch(agentSessionID, title, notifBody)
 }
 
 // formatPresentedPR builds the title/body of a presented-PR notification.

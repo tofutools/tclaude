@@ -4,8 +4,10 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -32,6 +34,10 @@ type PushPayload struct {
 	Title string `json:"title,omitempty"`
 	Body  string `json:"body,omitempty"`
 	URL   string `json:"url"`
+	// BN is the browser queue id of the same notification, when it also
+	// went to the open-tab queue: the service worker then shows it under
+	// the tag browser-notify.js uses, so the device shows one banner.
+	BN int64 `json:"bn,omitempty"`
 }
 
 // pushTitleMax and pushBodyMax keep a push to what a lock screen shows.
@@ -51,6 +57,63 @@ type pushNote struct {
 	body     string
 	url      string
 	urgency  string
+	// browserID is the browser queue's id for the same notification (see
+	// PushPayload.BN), 0 when it was not queued there.
+	browserID int64
+	// asker and question name an operator question's asker (its sender
+	// and group) and its title, for the per-asker collapse.
+	asker    string
+	who      string
+	question string
+}
+
+// questionWindow is how long an asker's question pushes collapse into one.
+// The first question in a window alerts; each further one within it
+// replaces that notification in place (same tag, so the device does not
+// sound again) with how many are waiting, and the window runs on from the
+// latest. The operator still sees that more questions wait, without a
+// buzz per question.
+const questionWindow = time.Minute
+
+// questionCollapse is one asker's open window.
+type questionCollapse struct {
+	tag   string
+	count int
+	last  time.Time
+}
+
+var (
+	questionMu      sync.Mutex
+	questionWindows = map[string]*questionCollapse{}
+)
+
+// collapseQuestion applies the per-asker collapse to an operator question:
+// it returns the tag to push under, and rewrites a repeat's text to the
+// count waiting.
+func collapseQuestion(note *pushNote, now time.Time) string {
+	questionMu.Lock()
+	defer questionMu.Unlock()
+	for k, w := range questionWindows {
+		if now.Sub(w.last) >= questionWindow {
+			delete(questionWindows, k)
+		}
+	}
+	w := questionWindows[note.asker]
+	if w == nil {
+		w = &questionCollapse{tag: newPushTag()}
+		questionWindows[note.asker] = w
+	}
+	w.count++
+	w.last = now
+	if w.count > 1 {
+		who := note.who
+		if who == "" {
+			who = "an agent"
+		}
+		note.title = fmt.Sprintf("tclaude: %d questions from %s", w.count, who)
+		note.body = "Latest: " + note.question
+	}
+	return w.tag
 }
 
 // OnPushQueued is called after pushes are queued in this process; agentd
@@ -97,7 +160,12 @@ func queuePush(n *config.NotificationConfig, note pushNote) {
 	if !n.PushWanted(note.category) {
 		return
 	}
-	payload := PushPayload{V: 1, Tag: newPushTag(), URL: "/"}
+	payload := PushPayload{V: 1, Tag: newPushTag(), URL: "/", BN: note.browserID}
+	if note.category == config.PushOperatorQuestions && note.asker != "" {
+		// A question's tag is its asker's window, which the browser
+		// queue's id would break: the window wins.
+		payload.Tag, payload.BN = collapseQuestion(&note, pushNow()), 0
+	}
 	if !n.PushContentFree() {
 		payload.Title = pushText(note.title, pushTitleMax)
 		payload.Body = pushText(note.body, pushBodyMax)
@@ -156,5 +224,21 @@ func statePushNote(category, harness, displayStatus, convTitle, cwd string) push
 		body:     body,
 		url:      "/",
 		urgency:  urgency,
+	}
+}
+
+// SetPushClockForTest pins the clock pushes are stamped and collapsed by,
+// and forgets every asker's collapse window. It returns the restore.
+func SetPushClockForTest(now func() time.Time) func() {
+	questionMu.Lock()
+	prev := pushNow
+	pushNow = now
+	questionWindows = map[string]*questionCollapse{}
+	questionMu.Unlock()
+	return func() {
+		questionMu.Lock()
+		pushNow = prev
+		questionWindows = map[string]*questionCollapse{}
+		questionMu.Unlock()
 	}
 }
