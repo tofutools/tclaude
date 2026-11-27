@@ -339,6 +339,13 @@ window expires or a human revokes early. Duration is capped at **1 hour**
 time-bounded grant is the whole point of the model, and a sudo that could
 mint durable grants would defeat it.
 
+The request waits for the human's answer for up to `--wait` (default 10m,
+capped at 30m). The popup still auto-denies after the daemon's popup timeout
+(60s by default) unless the operator extends it, and an extension never runs
+past the agent's `--wait`. If the agent gives up first (it is killed, or its
+command ends), the request is withdrawn on the spot, so an approval after that
+is refused and no grant appears behind the agent's back.
+
 The human form `sudo request --target <agent> <slugs…>` grants proactively
 with no popup — the operator's own shell is the consent. Agents cannot use
 `--target`.
@@ -406,7 +413,9 @@ timeout means deny). When the permission check fails, instead of a flat 403
 the daemon creates an **access request** the operator sees in the
 [dashboard](dashboard.md) Messages tab, with **Approve**, **Decline**, and
 **+5m** actions (**Approve**, **Deny** and **+5 min** in the companion). The agent's command blocks until the human answers or the
-timeout expires.
+timeout expires. An extension never runs past the agent's `--ask-human` timeout,
+since the agent stops waiting there, and a request whose agent has gone away is
+withdrawn, so a late approval does not run the action.
 
 At most 8 requests from one agent, and 64 in all, wait for you at a time. Past
 that a new request is refused at once with a message to ask again later, and the

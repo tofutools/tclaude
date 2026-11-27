@@ -29,6 +29,7 @@ type accessReqSnapshot struct {
 		Body          string `json:"body"`
 		CreatedAt     string `json:"created_at"`
 		Deadline      string `json:"deadline"`
+		WaitCeiling   string `json:"wait_ceiling"`
 		Status        string `json:"status"`
 		DecidedAt     string `json:"decided_at"`
 	} `json:"access_requests"`

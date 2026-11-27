@@ -100,6 +100,9 @@ type dashboardAccessRequest struct {
 	// countdown. RFC3339.
 	CreatedAt string `json:"created_at"`
 	Deadline  string `json:"deadline,omitempty"`
+	// WaitCeiling (RFC3339), when set, is when the requesting caller stops
+	// waiting: "+extend" cannot push Deadline past it.
+	WaitCeiling string `json:"wait_ceiling,omitempty"`
 	// Status is "pending" for an actionable request, or the decided outcome
 	// ("approved" | "declined" | "always" | "timed out") for a recently-handled
 	// one the folder shows as history. DecidedAt (RFC3339) is set only for a
@@ -137,6 +140,9 @@ func toDashboardAccessRequest(req *approvalRequest) dashboardAccessRequest {
 		ScopeDisplay:    req.scopeDisplay,
 		CreatedAt:       req.createdAt.Format(time.RFC3339),
 		Deadline:        deadline.Format(time.RFC3339),
+	}
+	if ceiling := req.waitCeiling(); !ceiling.IsZero() {
+		out.WaitCeiling = ceiling.Format(time.RFC3339)
 	}
 	if req.peerAccess != nil {
 		req.mu.Lock()
@@ -384,11 +390,20 @@ func serveAccessRequestDecision(w http.ResponseWriter, r *http.Request) {
 			}
 			extendBy = time.Duration(n) * time.Second
 		}
+		// The waiter clamps the new deadline to the caller's wait ceiling;
+		// say so here, so the operator is not told about time the caller
+		// will not wait for.
+		capped := false
+		if ceiling := req.waitCeiling(); !ceiling.IsZero() {
+			if left := ceiling.Sub(approvalNow()); extendBy > left {
+				extendBy, capped = max(left, 0), true
+			}
+		}
 		select {
 		case req.extend <- extendBy:
 		default:
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"decision": "extend", "extended_by_secs": int(extendBy / time.Second)})
+		writeJSON(w, http.StatusOK, map[string]any{"decision": "extend", "extended_by_secs": int(extendBy / time.Second), "capped": capped})
 	default:
 		writeError(w, http.StatusBadRequest, "invalid_arg", "decision must be approve, always, always_scoped, deny, or extend")
 	}
