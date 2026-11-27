@@ -201,8 +201,21 @@ type approvalRequest struct {
 	scopeDisplay string
 	createdAt    time.Time
 	timeout      time.Duration
-	decision     chan approvalOutcome // the human's choice: deny / approve / approve-always
-	extend       chan time.Duration   // +N seconds — bounded extension so an unattended popup still eventually times out
+	// waitLimit, when > 0, is how long the requesting caller declared it will
+	// wait, measured from createdAt. The caller's client gives up shortly after
+	// it, so no deadline, "+extend" included, may run past createdAt+waitLimit:
+	// a countdown that promised more time than the caller has left would let
+	// the operator approve a request nobody is waiting for.
+	waitLimit time.Duration
+	// callerDone, when non-nil, closes when the requesting caller has gone
+	// away (its HTTP request context ended: client timeout, Ctrl-C, killed
+	// process). The waiter then withdraws the request, so an approval that
+	// lands after the caller gave up is refused instead of quietly running
+	// the action, or minting a grant, for a caller that already reported
+	// failure. A nil channel never fires.
+	callerDone <-chan struct{}
+	decision   chan approvalOutcome // the human's choice: deny / approve / approve-always
+	extend     chan time.Duration   // +N seconds — bounded extension so an unattended popup still eventually times out
 
 	// mu guards the mutable field(s) below; the rest of approvalRequest is
 	// set once at construction and read lock-free.
@@ -499,9 +512,11 @@ func waitHumanApproval(req *approvalRequest, popupBaseURL string) bool {
 	// timer fires the auto-deny. "+N" extensions reset it so the human
 	// can buy more time mid-review without leaving the popup unattended
 	// indefinitely.
-	timer := time.NewTimer(req.timeout)
+	start := approvalNow()
+	deadline := req.capDeadline(start.Add(req.timeout))
+	timer := time.NewTimer(deadline.Sub(start))
 	defer timer.Stop()
-	req.setDeadline(time.Now().Add(req.timeout))
+	req.setDeadline(deadline)
 	if err := db.UpsertAccessRequest(accessRequestDB(req, db.AccessRequestStatusPending, time.Time{})); err != nil {
 		slog.Warn("access request: failed to persist pending request",
 			"id", req.id, "perm", req.perm, "conv", req.convID, "err", err)
@@ -535,10 +550,20 @@ func waitHumanApproval(req *approvalRequest, popupBaseURL string) bool {
 				default:
 				}
 			}
-			timer.Reset(d)
-			req.setDeadline(time.Now().Add(d))
+			now := approvalNow()
+			deadline := req.capDeadline(now.Add(d))
+			timer.Reset(deadline.Sub(now))
+			req.setDeadline(deadline)
 			slog.Info("popup: timeout extended",
-				"id", req.id, "perm", req.perm, "by", d)
+				"id", req.id, "perm", req.perm, "by", d, "deadline", deadline)
+		case <-req.callerDone:
+			// The caller hung up. Withdraw rather than wait on: a decision
+			// from here on has nobody to deliver it to, and an approval
+			// would act (or grant) behind a caller that already failed.
+			slog.Info("popup: caller gone, request withdrawn",
+				"id", req.id, "perm", req.perm)
+			approvals.recordResolved(req, approvalWithdrawn)
+			return false
 		case <-timer.C:
 			slog.Info("popup: timeout fired (auto-deny)",
 				"id", req.id, "perm", req.perm)
@@ -546,6 +571,32 @@ func waitHumanApproval(req *approvalRequest, popupBaseURL string) bool {
 			return false
 		}
 	}
+}
+
+// approvalWithdrawn is the history status of a request whose caller went away
+// before anyone decided it. The dashboard already renders it ("↩ Withdrawn").
+const approvalWithdrawn = "withdrawn"
+
+// approvalNow is the approval waiter's clock, a seam so a test can pin the
+// deadline arithmetic.
+var approvalNow = time.Now
+
+// waitCeiling is the latest instant the caller is still waiting for an answer,
+// or zero when it declared no limit.
+func (req *approvalRequest) waitCeiling() time.Time {
+	if req.waitLimit <= 0 || req.createdAt.IsZero() {
+		return time.Time{}
+	}
+	return req.createdAt.Add(req.waitLimit)
+}
+
+// capDeadline clamps a proposed auto-deny deadline to the caller's wait
+// ceiling.
+func (req *approvalRequest) capDeadline(t time.Time) time.Time {
+	if ceiling := req.waitCeiling(); !ceiling.IsZero() && t.After(ceiling) {
+		return ceiling
+	}
+	return t
 }
 
 // newAgentApprovalRequest is the shared core of an agent-initiated approval
@@ -568,10 +619,15 @@ func newAgentApprovalRequest(r *http.Request, perm, callerConv, callerTitle stri
 		method:    r.Method,
 		path:      path,
 		rawQuery:  query,
-		createdAt: time.Now(),
+		createdAt: approvalNow(),
 		timeout:   timeout,
-		decision:  make(chan approvalOutcome, 1),
-		extend:    make(chan time.Duration, 1),
+		// Every caller of this constructor waits for the X-Tclaude-Ask-Human
+		// duration it sent, which is timeout; the CLI's client budget is that
+		// plus headroom (daemonClientTimeout).
+		waitLimit:  timeout,
+		callerDone: r.Context().Done(),
+		decision:   make(chan approvalOutcome, 1),
+		extend:     make(chan time.Duration, 1),
 	}
 }
 

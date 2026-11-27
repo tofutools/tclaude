@@ -439,9 +439,21 @@ func daemonClientTimeout(opts DaemonOpts) time.Duration {
 	if opts.AskHuman > 0 {
 		// The popup can run to its full timeout, plus headroom for the daemon
 		// to notice and answer.
-		return opts.AskHuman + 30*time.Second + opts.Timeout
+		return approvalClientTimeout(opts.AskHuman) + opts.Timeout
 	}
 	return opts.Timeout
+}
+
+// approvalClientMargin is the headroom a client waiting on a human approval
+// keeps past the wait it declared to the daemon. The daemon never lets the
+// approval deadline, "+extend" included, run past that declared wait, so the
+// margin only has to cover the daemon answering once it fires.
+const approvalClientMargin = 30 * time.Second
+
+// approvalClientTimeout is the client budget for a request whose daemon side
+// blocks on a human for up to wait.
+func approvalClientTimeout(wait time.Duration) time.Duration {
+	return wait + approvalClientMargin
 }
 
 func daemonReq(method, path string, in, out any, opts DaemonOpts) error {
@@ -553,7 +565,7 @@ func rawGetRequest(path string, opts DaemonOpts) (*http.Request, *http.Client, e
 	if opts.AskHuman > 0 {
 		req.Header.Set("X-Tclaude-Ask-Human", opts.AskHuman.String())
 		// Defensive: ParseAskHuman caps the popup well inside the raw budget.
-		client = httpClientWithTimeout(max(daemonRawTimeout, opts.AskHuman+30*time.Second))
+		client = httpClientWithTimeout(max(daemonRawTimeout, approvalClientTimeout(opts.AskHuman)))
 	}
 	return req, client, nil
 }
@@ -633,7 +645,7 @@ func daemonPostRawBytes(path, contentType string, body []byte, headers http.Head
 	client := httpClientWithTimeout(daemonRawTimeout)
 	if opts.AskHuman > 0 {
 		req.Header.Set("X-Tclaude-Ask-Human", opts.AskHuman.String())
-		client = httpClientWithTimeout(max(daemonRawTimeout, opts.AskHuman+30*time.Second))
+		client = httpClientWithTimeout(max(daemonRawTimeout, approvalClientTimeout(opts.AskHuman)))
 	}
 	policy, err := retryPolicyForRequest(client, req, retryOutput(opts.RetryOutput))
 	if err != nil {

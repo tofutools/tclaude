@@ -210,6 +210,30 @@ type sudoRequestBody struct {
 	// is intentionally deferred. Empty/unset → original
 	// agent-initiated, popup-gated behaviour.
 	Target string `json:"target,omitempty"`
+	// Wait is how long the caller will wait for the human's answer (a Go
+	// duration). The popup still auto-denies after the configured popup
+	// timeout; Wait is the ceiling "+extend" cannot push past, because the
+	// caller's client gives up just after it. Empty (an older client): no
+	// ceiling beyond the popup timeout and its extensions.
+	Wait string `json:"wait,omitempty"`
+}
+
+// sudoMaxWait caps body.wait. A caller blocked for longer than this on one
+// approval is better served by failing and asking again.
+const sudoMaxWait = 30 * time.Minute
+
+// parseSudoWait reads body.wait: 0 for unset, an error for a malformed or
+// non-positive value, else the duration capped at sudoMaxWait.
+func parseSudoWait(raw string) (time.Duration, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return 0, nil
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil || d <= 0 {
+		return 0, fmt.Errorf("wait %q must be a positive duration (e.g. 10m)", raw)
+	}
+	return min(d, sudoMaxWait), nil
 }
 
 type sudoGrantJSON struct {
@@ -313,13 +337,22 @@ func handleSudoRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	reason := strings.TrimSpace(body.Reason)
+	wait, err := parseSudoWait(body.Wait)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
+		return
+	}
 
 	// Build the popup payload. The body preview surfaces the slug
 	// list + reason + resolved expiry so the human sees exactly what
 	// they're approving (vs the per-call escape hatch's request body).
-	now := time.Now()
+	now := approvalNow()
 	expires := now.Add(dur)
 	preview := buildSudoApprovalPreview(body.Slugs, dur, expires, reason)
+	popupTimeout := policy.PopupTimeout
+	if wait > 0 {
+		popupTimeout = min(popupTimeout, wait)
+	}
 	req := &approvalRequest{
 		id:          newApprovalID(),
 		perm:        "sudo." + strings.Join(body.Slugs, ","),
@@ -329,7 +362,9 @@ func handleSudoRequest(w http.ResponseWriter, r *http.Request) {
 		path:        r.URL.Path,
 		bodyPreview: preview,
 		createdAt:   now,
-		timeout:     policy.PopupTimeout,
+		timeout:     popupTimeout,
+		waitLimit:   wait,
+		callerDone:  r.Context().Done(),
 		decision:    make(chan approvalOutcome, 1),
 		extend:      make(chan time.Duration, 1),
 	}

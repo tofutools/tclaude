@@ -2969,3 +2969,12 @@ func OrphanedDependentsCheckTitleForTest() string {
 	}
 	return checks[0].Title
 }
+
+// SetApprovalClockForTest pins the approval waiter's clock (request
+// creation, deadline and wait-ceiling arithmetic) to now. Returns a restore
+// function.
+func SetApprovalClockForTest(now func() time.Time) func() {
+	prev := approvalNow
+	approvalNow = now
+	return func() { approvalNow = prev }
+}

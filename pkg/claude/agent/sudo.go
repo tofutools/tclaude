@@ -69,7 +69,26 @@ type sudoRequestParams struct {
 	Duration string   `long:"duration" short:"d" help:"How long the elevation lasts (e.g. 5m, 1h). Capped at 1h. Default: 5m." default:""`
 	Reason   string   `long:"reason" short:"r" help:"Optional justification surfaced in the popup + audit trail" default:""`
 	Target   string   `long:"target" short:"t" optional:"true" help:"Proactively grant the elevation TO another conv (title / prefix / conv-id). Human-only — no popup; the CLI shell IS the consent. Agents cannot use this (manager-pattern approval is deferred). Without --target the call goes through the popup as usual."`
+	Wait     string   `long:"wait" short:"w" help:"How long to wait for the human's answer (e.g. 2m, 15m). The popup still auto-denies after the daemon's popup timeout unless the human extends it; this is the most an extension can buy. Capped at 30m. Ignored with --target." default:"10m"`
 	JSON     bool     `long:"json" help:"Output JSON"`
+}
+
+// sudoMaxWait mirrors agentd's cap on the request's wait. The daemon clamps
+// too; capping here keeps the client budget from outliving the daemon's.
+const sudoMaxWait = 30 * time.Minute
+
+// parseSudoWait resolves --wait: "" is the 10m default, anything else a
+// positive Go duration capped at sudoMaxWait.
+func parseSudoWait(raw string) (time.Duration, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		raw = "10m"
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil || d <= 0 {
+		return 0, fmt.Errorf("--wait %q must be a positive duration (e.g. 10m)", raw)
+	}
+	return min(d, sudoMaxWait), nil
 }
 
 func sudoRequestCmd() *cobra.Command {
@@ -96,8 +115,24 @@ func runSudoRequest(p *sudoRequestParams, stdout, stderr io.Writer) int {
 		"duration": p.Duration,
 		"reason":   p.Reason,
 	}
+	opts := DaemonOpts{}
 	if t := strings.TrimSpace(p.Target); t != "" {
 		body["target"] = t
+	} else {
+		// The daemon blocks on the human's answer for up to wait, so the
+		// client must outlast it: hanging up first reports a failure while
+		// the request is still open (the daemon withdraws it when it sees
+		// the hang-up, so no grant lands behind the caller's back either way).
+		wait, err := parseSudoWait(p.Wait)
+		if err != nil {
+			fmt.Fprintf(stderr, "Error: %v\n", err)
+			return rcInvalidArg
+		}
+		body["wait"] = wait.String()
+		opts.Timeout = approvalClientTimeout(wait)
+		if !p.JSON {
+			fmt.Fprintf(stderr, "Asking the human to approve sudo (waiting up to %s)...\n", wait)
+		}
 	}
 	var resp struct {
 		Grants    []sudoGrantJSON `json:"grants"`
@@ -105,7 +140,7 @@ func runSudoRequest(p *sudoRequestParams, stdout, stderr io.Writer) int {
 		ConvID    string          `json:"conv_id"`
 		AgentID   string          `json:"agent_id"`
 	}
-	if err := DaemonPost("/v1/sudo", body, &resp); err != nil {
+	if err := DaemonRequest(http.MethodPost, "/v1/sudo", body, &resp, opts); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return MapDaemonErrorToRC(err)
 	}

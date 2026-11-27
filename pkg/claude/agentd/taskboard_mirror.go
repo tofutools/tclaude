@@ -245,9 +245,11 @@ func approvalResolved(req *approvalRequest, outcome string) {
 		return
 	}
 	source := approvalQuestionSource(req.id)
-	pick := ""
+	pick, closed := "", "Timed out: denied"
 	switch outcome {
 	case "timed out":
+	case approvalWithdrawn:
+		closed = "Withdrawn: the agent stopped waiting"
 	case "approved":
 		pick = approvalPickApprove
 	case "always":
@@ -261,7 +263,7 @@ func approvalResolved(req *approvalRequest, outcome string) {
 	}
 	var err error
 	if pick == "" {
-		err = db.CloseGroupTaskQuestionBySource(source, "Timed out: denied", mirrorActorSystem, true)
+		err = db.CloseGroupTaskQuestionBySource(source, closed, mirrorActorSystem, true)
 	} else {
 		_, _, err = db.AnswerGroupTaskQuestionBySource(source, []string{pick}, "", mirrorActorOperator, true)
 	}
